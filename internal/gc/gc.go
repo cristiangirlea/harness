@@ -22,6 +22,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/gitretry"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -1314,6 +1315,7 @@ func ghPRs(ctx context.Context, repo string, gh []string, url, state string, lim
 	defer cancel()
 	args := append(append([]string{}, gh[1:]...), "pr", "list", "-R", url, "--state", state, "--limit", strconv.Itoa(limit), "--json", prFields)
 	cmd := exec.CommandContext(ctx, gh[0], args...)
+	nowindow.Set(cmd)
 	cmd.Dir = repo
 	cmd.Env = cleanEnv()
 	var stderr bytes.Buffer
@@ -1360,6 +1362,7 @@ func cleanEnv() []string {
 
 func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	nowindow.Set(cmd)
 	cmd.Env = cleanEnv()
 	return cmd
 }

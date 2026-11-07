@@ -17,6 +17,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/envpolicy"
 	"github.com/cristiangirlea/harness/internal/gitenv"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -224,6 +225,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
+	nowindow.Set(cmd)
 	cmd.Dir = task.Dir
 	// The api backend's key is for hrn itself; a CLI that found it would bill
 	// per token instead of logging in on its own.

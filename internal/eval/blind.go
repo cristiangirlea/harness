@@ -13,6 +13,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/gitenv"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 // Hide variant names in paths and git metadata to avoid judge bias.
@@ -74,6 +75,7 @@ func blindEnv() []string {
 
 func blindGit(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	nowindow.Set(cmd)
 	cmd.Env = blindEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {

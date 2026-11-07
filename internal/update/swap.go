@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 // VersionFunc reads a binary's version.
@@ -24,6 +26,7 @@ func RunVersion(ctx context.Context, path string) (Version, error) {
 	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "version")
+	nowindow.Set(cmd)
 	cmd.Stdin = nil
 	out, err := cmd.Output()
 	if err != nil {
