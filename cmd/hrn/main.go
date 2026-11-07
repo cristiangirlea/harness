@@ -157,6 +157,7 @@ Run flags:
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
       --shape-tools    summarises large terminal, log and test results and keeps the original behind a handle (api backend; off by default)
       --parse-check    refuse edit_file and write_file changes that leave a .go or .json file unparseable (api backend; off by default)
+      --gate           run run_command through adanext-exec from PATH; the run does not start without it (api backend only; off by default)
       --retrieval MODE  off | optional | required
       --retrieval-tenant ID
       --retrieval-project ID

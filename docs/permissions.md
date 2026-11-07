@@ -164,6 +164,32 @@ environment of its own git commands, of agent CLIs, of the api backend's command
 servers, and of gates (an MCP server's own `env` in its config still applies). A git hook or a `!` alias that starts hrn sets some of them, and git would then act
 on that repository instead of the task's.
 
+#### The command gate
+
+With `--gate` (`command_gate`), the api backend's `run_command` runs each command through
+[adanext-exec](https://github.com/cristiangirlea/adanext-exec) instead of starting the shell
+itself: `adanext-exec run --shell <bash|powershell|sh> --agent hrn --timeout <t> --run-id <run>
+-- <command>`, with the same shell hrn would pick, the same working directory and the same
+guarded environment. hrn's guard still runs first, so a command it refuses never reaches the
+gate. The gate applies its own policy (`policy.json` in the user's adanext-exec config, or its
+built-in rules), kills the command's whole tree at the timeout and writes one audit line per
+command in its own state directory. Its output and exit code pass through unchanged.
+
+hrn reads the gate's exit codes as [its protocol](https://github.com/cristiangirlea/adanext-exec/blob/main/docs/protocol.md)
+gives them. 125 with the gate's own message is a refusal, returned to the model as an error it
+should not retry unchanged; an `ask` from the policy is refused the same way, since hrn passes
+no approval to the gate yet. 121, 123, 126 and 127 with the gate's message mean the gate did not
+run the command, which is an error naming the gate's reason. 124 after the timeout is a
+timeout. The same codes from a command that ran (its output does not start with the gate's
+message, or 124 before the timeout) stay the command's own. A gate that cannot be started is an
+error too: the command never falls back to the shell. hrn kills the gate itself 15 seconds
+after the timeout if it has not ended by then.
+
+The run checks the gate once before it starts (`adanext-exec check --json` must answer
+`adanext-exec/1`); the CLI backends refuse `--gate` until their commands are routed. Neither
+the gate's decision nor its rule is in the run record yet: the tool result carries the gate's
+message, and the audit line is the gate's record.
+
 #### The guard for every backend
 
 A command line can be spelled many ways, so every backend also runs under a guarded

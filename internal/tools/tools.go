@@ -47,6 +47,8 @@ type Workspace struct {
 	OriginalInfo func(string)
 	// AllowDangerous is per-run; tools are shared.
 	AllowDangerous bool
+	// Gate is the adanext-exec binary run_command runs through; empty runs the shell directly.
+	Gate string
 	// Commands use Root; confinement needs its junction target.
 	real string
 	// Bytes of originals in this run and in every run, measured at the first

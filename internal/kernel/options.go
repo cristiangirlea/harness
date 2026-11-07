@@ -52,6 +52,9 @@ type Options struct {
 	// AllowDangerous lifts command and environment guards.
 	AllowDangerous bool `json:"allow_dangerous,omitempty" desc:"Lift the guard: let agents push, merge and deploy with your credentials, and let run_command run sudo, rm -rf / and the like."`
 
+	// Gate is not named gate in JSON: a batch spec's gate is its list of check commands.
+	Gate bool `json:"command_gate,omitempty" flag:"gate" desc:"Run run_command through the adanext-exec binary in PATH (its policy, timeout, tree kill and audit); the run does not start when it is missing or does not speak adanext-exec/1 (api backend only; default off)."`
+
 	// InheritEnv starts an agent CLI with the operator's whole environment
 	// instead of the allowlisted one (sanitizedEnv); the guard still applies.
 	InheritEnv bool `json:"inherit_env,omitempty" flag:"inherit-env" desc:"Start agent CLIs with your whole environment instead of an allowlisted one; the guard still applies (CLI backends)."`

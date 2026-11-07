@@ -182,6 +182,10 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusError, fmt.Errorf("model %q is not a model id", task.Model))
 	}
 
+	// Commands of a CLI backend do not reach the gate yet: refuse rather than run them ungated.
+	if task.Gate {
+		return fail(StatusError, fmt.Errorf("gate: the %s backend's commands do not run through %s yet; use the api backend, or run without --gate", c.name, tools.GateName))
+	}
 	if task.NoTools && !c.mapsNoTools {
 		return fail(StatusError, fmt.Errorf("no_tools is not supported by the %s backend", c.name))
 	}

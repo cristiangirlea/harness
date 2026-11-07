@@ -88,7 +88,12 @@ func runCommand() Tool {
 				defer os.RemoveAll(guardDir)
 				env, _ = GuardEnv(env, guardDir)
 			}
-			res, err := runShell(ctx, ws.Root, args.Command, timeout, env, ws.ShapeTools)
+			var res ShellResult
+			if ws.Gate != "" {
+				res, err = runGated(ctx, ws, args.Command, timeout, env)
+			} else {
+				res, err = runShell(ctx, ws.Root, args.Command, timeout, env, ws.ShapeTools)
+			}
 			if err != nil {
 				return "", err
 			}

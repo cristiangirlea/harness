@@ -198,6 +198,14 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	ws.ShapeTools, ws.RunDir = task.ShapeTools, task.RunDir
 	ws.ParseCheck = task.ParseCheck
 	ws.OriginalInfo = func(text string) { emit(Event{Time: time.Now(), Kind: EventInfo, Text: text}) }
+	if task.Gate {
+		gate, err := tools.FindGate(ctx, append(os.Environ(), task.ChildEnv...))
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		ws.Gate = gate
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "gate: run_command runs through " + gate})
+	}
 	maxTurns := task.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 50
@@ -222,6 +230,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	env := fmt.Sprintf("Workspace root: %s\nOS: %s\nShell for run_command: %s\nPermission mode: %s\nCommand guard: %s",
 		ws.Root, runtime.GOOS, shell, task.Mode, guard)
+	if ws.Gate != "" {
+		env += "\nCommand gate: on (run_command runs through adanext-exec, whose policy may refuse a command)"
+	}
 	ephemeral := block{"type": "ephemeral"}
 
 	system := []block{{"type": "text", "text": systemPrompt}}
