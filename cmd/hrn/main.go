@@ -708,7 +708,7 @@ func cmdShow(args []string) error {
 	if rec.Done {
 		r.Summary(rec.ID, rec.Result)
 		for _, f := range rec.Result.RefusalFlags {
-			r.Line(mask.Text(fmt.Sprintf("refusal flag (%s): refused %s: %s ... later %s", f.Kind, f.Rule, f.Refused, f.Later)))
+			r.Line(printable(mask.Text(fmt.Sprintf("refusal flag (%s): refused %s: %s ... later %s", f.Kind, f.Rule, f.Refused, f.Later))))
 		}
 	}
 	return nil

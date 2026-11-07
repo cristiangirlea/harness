@@ -10,7 +10,7 @@ and `run_command`/`write_file`/`edit_file` names; other backends and durable run
 Results optionally include `refusal_flags`, computed from tool
 events without additional file reads or model calls. Each flag holds `kind` (`script`,
 `written` or `wrapped`), `rule` (the guard rule or `permission`), `refused` and `later`
-call summaries (at most 200 bytes each), and zero-based `refused_call` and `later_call`
+call summaries (masked, then cut to at most 200 bytes each), and zero-based `refused_call` and `later_call`
 ordinals among non-partial tool calls seen by that invocation of `agent.Run`.
 Info events and results do not count, and a carry-on invocation starts counting at zero.
 The pass considers at most 20 distinct refusals, deduplicated by rule and command,

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
@@ -34,7 +35,6 @@ func RefusalFlags(events []Event) []RefusalFlag {
 	calls := 0
 	type refusalKey struct{ rule, command string }
 	seen := map[refusalKey]bool{}
-	paths := map[string]*regexp.Regexp{}
 	for i, e := range events {
 		if e.Partial {
 			continue
@@ -52,9 +52,6 @@ func RefusalFlags(events []Event) []RefusalFlag {
 						input.Content = input.NewString
 					}
 					input.normal = refusalNormalize(input.Content)
-					if input.Path != "" {
-						paths[input.Path] = nil
-					}
 				case "run_command":
 					input.runs = refusalExecutions(input.Command)
 				}
@@ -80,20 +77,6 @@ func RefusalFlags(events []Event) []RefusalFlag {
 	}
 	if len(refusals) == 0 {
 		return nil
-	}
-	for filename := range paths {
-		paths[filename] = refusalPathPattern(filename)
-	}
-	executed := make(map[int][]string)
-	for i, in := range inputs {
-		for filename, pattern := range paths {
-			for _, operand := range in.runs {
-				if pattern.MatchString(operand) {
-					executed[i] = append(executed[i], filename)
-					break
-				}
-			}
-		}
 	}
 	var flags []RefusalFlag
 	type matchKey struct{ rule, program, text string }
@@ -135,6 +118,20 @@ func RefusalFlags(events []Event) []RefusalFlag {
 			return result
 		}
 		files := map[string]bool{}
+		// Counting matching files by full path and base name keeps each operand one lookup.
+		byPath, byBase := map[string]int{}, map[string]int{}
+		setFile := func(filename string, match bool) {
+			if files[filename] != match {
+				delta := 1
+				if !match {
+					delta = -1
+				}
+				filename := strings.ReplaceAll(filename, `\`, "/")
+				byPath[filename] += delta
+				byBase[path.Base(filename)] += delta
+			}
+			files[filename] = match
+		}
 		for i, e := range events {
 			if e.Partial || e.Kind != EventToolCall || refused[i] {
 				continue
@@ -149,9 +146,10 @@ func RefusalFlags(events []Event) []RefusalFlag {
 					}
 				case "run_command":
 					script := matches(in.Command)
-					for _, filename := range executed[i] {
-						if files[filename] {
+					for _, operand := range in.runs {
+						if script || byPath[operand] > 0 || byBase[operand[strings.LastIndex(operand, "/")+1:]] > 0 {
 							script = true
+							break
 						}
 					}
 					if script {
@@ -171,9 +169,9 @@ func RefusalFlags(events []Event) []RefusalFlag {
 			if in.Path != "" {
 				switch e.Tool {
 				case "write_file":
-					files[in.Path] = matches(in.Content)
+					setFile(in.Path, matches(in.Content))
 				case "edit_file":
-					files[in.Path] = files[in.Path] || matches(in.Content)
+					setFile(in.Path, files[in.Path] || matches(in.Content))
 				}
 			}
 		}
@@ -226,17 +224,9 @@ func refusalProgramPattern(program string) *regexp.Regexp {
 }
 
 func refusalWrapped(command string, program *regexp.Regexp) bool {
-	for _, loc := range refusalWrapper.FindAllStringIndex(command, -1) {
-		if program.MatchString(refusalNormalize(command[loc[1]:])) {
-			return true
-		}
-	}
-	return false
-}
-
-func refusalPathPattern(filename string) *regexp.Regexp {
-	filename = strings.ReplaceAll(filename, `\`, "/")
-	return regexp.MustCompile(`^(?:` + regexp.QuoteMeta(filename) + `|(?:.*/)?` + regexp.QuoteMeta(path.Base(filename)) + `)$`)
+	// Later wrappers lie inside the first one's text, so it alone decides.
+	loc := refusalWrapper.FindStringIndex(command)
+	return loc != nil && program.MatchString(refusalNormalize(command[loc[1]:]))
 }
 
 var refusalWords = regexp.MustCompile(`"[^"]*"|'[^']*'|[^\s"']+`)
@@ -310,7 +300,8 @@ func refusalSummary(e Event) string {
 	if s == "" {
 		s = e.Tool + " " + string(e.Input)
 	}
-	s = refusalNormalize(s)
+	// Masking before the cut keeps a secret cut in half recognisable.
+	s = mask.Text(refusalNormalize(s))
 	if len(s) > 200 {
 		s = s[:200]
 		for !utf8.ValidString(s) {

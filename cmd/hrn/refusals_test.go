@@ -58,3 +58,21 @@ func TestShowMasksSecretLookingRefusalSummaries(t *testing.T) {
 		t.Fatalf("output = %s", out)
 	}
 }
+
+func TestShowReplacesControlCharactersInRefusalSummaries(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	w, err := runlog.Create("api", agent.Task{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(agent.Result{Status: agent.StatusOK, RefusalFlags: []agent.RefusalFlag{{Kind: "script", Rule: "git-push", Refused: "git push \u001b]52;c;aGk=\u0007", Later: "bash send.sh \u009b2J"}}}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdShow([]string{w.ID()}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(string(out), "\u001b\u0007\u009b") || !strings.Contains(string(out), "refusal flag (script)") {
+		t.Fatalf("output = %q", out)
+	}
+}

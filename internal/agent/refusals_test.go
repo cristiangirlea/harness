@@ -337,3 +337,55 @@ func TestQuotedEnvironmentAssignmentsDoNotHideTheRefusedProgram(t *testing.T) {
 	}
 	t.Fatal("missing wrapped flag")
 }
+
+func TestRefusalSummariesMaskSecretsBeforeTheCut(t *testing.T) {
+	token := "glpat-" + strings.Repeat("Zq7", 100)
+	events := []Event{
+		refusalCall("run_command", map[string]string{"command": "git push https://oauth2:" + token + "@gitlab.com/group/repo.git main"}),
+		{Kind: EventToolResult, Tool: "run_command", Text: tools.GuardError("git-push").Error(), IsError: true},
+		refusalCall("run_command", map[string]string{"command": "git push https://oauth2:" + token + "@gitlab.com/group/repo.git main"}),
+	}
+	flags := RefusalFlags(events)
+	if len(flags) == 0 {
+		t.Fatal("no flags")
+	}
+	for _, f := range flags {
+		for _, s := range []string{f.Refused, f.Later} {
+			if strings.Contains(s, "glpat") || strings.Contains(s, "Zq7") || len(s) > 200 {
+				t.Fatalf("summary = %q", s)
+			}
+		}
+	}
+}
+
+func TestRefusalAnalysisStaysLinearInManyPathsAndLongCommands(t *testing.T) {
+	events := refusalSequence(false)
+	for i := range 5000 {
+		content := fmt.Sprintf("echo %d", i)
+		if i == 42 {
+			content = "git push origin main"
+		}
+		events = append(events, refusalCall("write_file", map[string]string{"path": fmt.Sprintf("d%d/s%d.sh", i, i), "content": content}))
+	}
+	events = append(events,
+		refusalCall("run_command", map[string]string{"command": strings.Repeat("x;", 100000) + "./s42.sh"}),
+		refusalCall("run_command", map[string]string{"command": strings.Repeat("sh -c ", 17000) + "git push origin main"}),
+	)
+	limit := 2 * time.Second
+	if raceEnabled {
+		// The race detector slows the guard's regexps about fifteenfold; quadratic work still takes minutes.
+		limit = 30 * time.Second
+	}
+	start := time.Now()
+	flags := RefusalFlags(events)
+	if elapsed := time.Since(start); elapsed >= limit {
+		t.Fatalf("analysis took %s", elapsed)
+	}
+	var got []string
+	for _, f := range flags {
+		got = append(got, fmt.Sprintf("%s@%d", f.Kind, f.LaterAt))
+	}
+	if want := "script@5001 script@5002 wrapped@5002"; strings.Join(got, " ") != want {
+		t.Fatalf("flags = %v, want %s", got, want)
+	}
+}
