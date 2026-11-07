@@ -106,6 +106,10 @@ type APICheckpoint struct {
 	Pending      *PendingOperation `json:"pending,omitempty"`
 	Result       Result            `json:"result"`
 	Finished     bool              `json:"finished,omitempty"`
+
+	CompactionK             int    `json:"compaction_k,omitempty"`
+	CompactionSummary       string `json:"compaction_summary,omitempty"`
+	CompactionFailedContext int64  `json:"compaction_failed_context,omitempty"`
 }
 
 type PendingOperation struct {

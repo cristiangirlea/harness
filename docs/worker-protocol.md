@@ -49,3 +49,11 @@ and handles `finishWorkspaceRecovery` when validation fails. Fencing remains in 
 worker calls the control service, always with the job generation. A fenced or canceled heartbeat
 causes it to send `cancel`. These responsibilities remain in the worker when execution moves to
 the child; the service's behavior does not change in this step.
+
+The crash-point integration table faults each two-turn control request: kill before service,
+kill after commit with the reply withheld, or return 500 after commit and let the worker exit.
+Heartbeats are recorded separately and excluded from fault indices and targets.
+Recovery follows `ResolveRecovery`: no checkpoint or a settled one resumes, a finished one
+completes, and a pending effect stays `recovery_required`. The oracle then requires the expected
+final state, at most one model call per turn (so a resume never replays an acknowledged turn),
+acknowledged checkpoints kept with monotonic sequences, and the untracked workspace marker kept.

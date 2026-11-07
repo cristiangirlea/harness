@@ -289,6 +289,9 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 		if err != nil {
 			return s.fail(err)
 		}
+		if err := agent.CheckCompactWindow(name, opts.CompactWindow); err != nil {
+			return s.fail(err)
+		}
 		if len(s.tr.Attempts) > 0 {
 			text, continued := retryContext(s.tr.Attempts)
 			plan.prompt, plan.continued = s.t.Prompt+text, continued

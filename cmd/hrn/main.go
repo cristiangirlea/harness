@@ -354,6 +354,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if err := agent.ValidateOptions(opts); err != nil {
 		return 2, err
 	}
+	if err := agent.CheckCompactWindow(backend, opts.CompactWindow); err != nil {
+		return 2, err
+	}
 	ws, err := tools.NewWorkspace(dir)
 	if err != nil {
 		return 2, fmt.Errorf("-C %s: %w", dir, err)
@@ -405,6 +408,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	b, err := followup.Backend(backend)
 	if err != nil {
+		return 2, err
+	}
+	if err := agent.CheckCompactWindow(backend, opts.CompactWindow); err != nil {
 		return 2, err
 	}
 
@@ -1048,6 +1054,13 @@ func printEval(r *renderer, rec eval.Record) {
 		}
 		r.Line(line)
 		var notes []string
+		for _, c := range v.Criteria {
+			line := fmt.Sprintf("    %s: %d/%d met", printable(c.ID), c.Met, c.Scored)
+			if (v.JudgeRepeats > 1 || rec.Spec.Judge != nil && rec.Spec.Judge.Repeats > 1) && c.Disagreed > 0 {
+				line += fmt.Sprintf(", %d disagreed", c.Disagreed)
+			}
+			r.Line(line)
+		}
 		notes = append(notes, fmt.Sprintf("start rate %s", report.Share(v.BackendStartRate)))
 		if v.Reruns > 0 {
 			notes = append(notes, fmt.Sprintf("%d reruns (%d exhausted)", v.Reruns, v.RerunsExhausted))
@@ -1078,6 +1091,10 @@ func printEval(r *renderer, rec eval.Record) {
 		if len(notes) > 0 {
 			r.Line(r.c(dim, "  "+strings.Repeat(" ", 20)+strings.Join(notes, " · ")))
 		}
+	}
+
+	for _, v := range rec.Table.Variants {
+		printToolStats(r, fmt.Sprintf("%s (%d attempts)", v.Name, v.AttemptsWithToolStats), v.ToolStats, nil, false)
 	}
 
 	if len(rec.Table.Tasks) > 0 {

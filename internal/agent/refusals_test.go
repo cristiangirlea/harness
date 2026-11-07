@@ -116,6 +116,15 @@ func TestRunStoresRefusalFlagsWithoutChangingStatusOrCallOrdinals(t *testing.T) 
 	}
 }
 
+func TestRunRecordsToolStatsAlongsideRefusalFlags(t *testing.T) {
+	events := append(refusalSequence(false), refusalCall("run_command", map[string]string{"command": "git push elsewhere"}))
+	res := Run(context.Background(), refusalBackend{emitting{events}}, Task{}, func(Event) {})
+	want := kernel.ToolStat{Calls: 2, Errors: 1, ResultBytes: len(events[1].Text)}
+	if len(res.RefusalFlags) != 1 || len(res.ToolStats) != 1 || res.ToolStats["run_command"] != want {
+		t.Fatalf("flags = %+v, stats = %+v", res.RefusalFlags, res.ToolStats)
+	}
+}
+
 func TestEverySupportedWrapperFlagsTheRefusedProgramAndSubcommand(t *testing.T) {
 	for _, wrapper := range []string{"sh -c", "bash -c", "pwsh -Command", "powershell -Command", "cmd /c", "python -c", "python3 -c", "node -e", "perl -e", "ruby -e"} {
 		t.Run(wrapper, func(t *testing.T) {

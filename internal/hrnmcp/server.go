@@ -266,6 +266,9 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if err := agent.ValidateOptions(args.Options); err != nil {
 				return mcp.CallResult{}, err
 			}
+			if err := agent.CheckCompactWindow(args.Backend, args.CompactWindow); err != nil {
+				return mcp.CallResult{}, err
+			}
 			// Inherited workspaces require the same validation as explicit ones.
 			dir := args.Dir
 			if dir == "" {
@@ -303,6 +306,9 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			b, err := followup.Backend(args.Backend)
 			if err != nil {
+				return mcp.CallResult{}, err
+			}
+			if err := agent.CheckCompactWindow(args.Backend, args.CompactWindow); err != nil {
 				return mcp.CallResult{}, err
 			}
 			task := agent.Task{Prompt: args.Prompt, Purpose: args.Purpose, Dir: dir, Options: args.Options, Knowledge: remote.SearcherFromEnv}

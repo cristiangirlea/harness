@@ -287,6 +287,24 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-07: #813, the worker's recovery is tested at every control call, not one (PR #855).
+  `TestPostgresWorkerRecoversFromEveryControlCallFault` records a two-turn job's control calls
+  (heartbeats apart, since their 10 s interval is longer than a run), then runs each call × {kill
+  before it is served, kill after it commits, a 500 after it commits}, 27 cases. Recovery follows
+  `ResolveRecovery`; the oracle counts model calls per turn from the request's messages, so a
+  resume that replays an acknowledged turn fails whatever the worker reports. A worker mutated to
+  start without its checkpoint failed the table. The pending `tool_intent` path is not reached
+  by the no-tool scenario.
+- 2026-11-07: #854, the test-output summary falls back when a failed test's name appears again,
+  as a result line or a marker (PR #856). A PASS after a FAIL of the same name had cleared who
+  owned the next lines while the failure stayed, so a trailing diagnostic was dropped. Repeated
+  passing results (`-count=N`) still summarize. Found by `FuzzSummarize` in a full `/check` of
+  #814's branch; both inputs are seeds.
+- 2026-11-07: #814, a pull request template (what was wrong, the guard, the failing test, what
+  to challenge) and a `fix-test` check on `pull_request_target` (PR #858): a body that closes an
+  issue and changes non-test Go code needs an added `func Test`/`Fuzz` or a changed hunk in one,
+  unless a maintainer applies `no-repro`. It runs the base branch's code only and reads the PR as
+  data. Creating the `no-repro` label and making `fix-test` required are a maintainer's steps.
 - 2026-11-06: #791, knowledge search ranking `simple-rare-floor-v4` (PR #847). On versions of 20 or
   more entries, query words found in more than 25% of entries are dropped, each remaining match
   scores ln(n/df)/ln(n) (doubled in the key), and a total below 1.31 returns no context

@@ -20,14 +20,21 @@ type RefusalFlag struct {
 	LaterAt   int    `json:"later_call"`
 }
 
+type ToolStat struct {
+	Calls       int `json:"calls,omitempty"`
+	Errors      int `json:"errors,omitempty"`
+	ResultBytes int `json:"result_bytes,omitempty"`
+}
+
 type Result struct {
-	RefusalFlags          []RefusalFlag     `json:"refusal_flags,omitempty"`
-	Evidence              []Evidence        `json:"evidence,omitempty"`
-	ChangedFiles          []string          `json:"changed_files,omitempty"`
-	ChangedFilesTruncated bool              `json:"changed_files_truncated,omitempty"`
-	Commits               []string          `json:"commits,omitempty"`
-	EndHead               string            `json:"end_head,omitempty"`
-	Retrieval             *retrieval.Record `json:"retrieval,omitempty"`
+	RefusalFlags          []RefusalFlag       `json:"refusal_flags,omitempty"`
+	ToolStats             map[string]ToolStat `json:"tool_stats,omitempty"`
+	Evidence              []Evidence          `json:"evidence,omitempty"`
+	ChangedFiles          []string            `json:"changed_files,omitempty"`
+	ChangedFilesTruncated bool                `json:"changed_files_truncated,omitempty"`
+	Commits               []string            `json:"commits,omitempty"`
+	EndHead               string              `json:"end_head,omitempty"`
+	Retrieval             *retrieval.Record   `json:"retrieval,omitempty"`
 	// Usage describes the run-level token and cost totals.
 	Usage *UsageMetadata `json:"usage_metadata,omitempty"`
 	// RecoveryRequired requires reconciliation before replay.
@@ -109,6 +116,15 @@ func (r Result) KnownCost() (float64, bool, bool) {
 		}
 	}
 	return r.CostUSD, r.CostUSD > 0, r.CostEstimate
+}
+
+func (r Result) ValidToolStats() error {
+	for tool, stat := range r.ToolStats {
+		if stat.Calls < 0 || stat.Errors < 0 || stat.ResultBytes < 0 {
+			return fmt.Errorf("negative tool stats for %q", tool)
+		}
+	}
+	return nil
 }
 
 func (r Result) ValidateUsage() error {

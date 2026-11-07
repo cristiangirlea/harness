@@ -243,12 +243,11 @@ func TestLeanIsTriState(t *testing.T) {
 	}
 }
 
-// compact_window is an integer from 100000 to 1000000 or "auto", the values
-// claude --autocompact accepts, checked before a run starts.
-func TestCompactWindow(t *testing.T) {
+func TestCompactWindowValidatesAndRoundTripsSharedValues(t *testing.T) {
 	for _, tc := range []struct {
 		json, want string
 	}{{`{}`, ""}, {`{"compact_window":200000}`, "200000"}, {`{"compact_window":"200000"}`, "200000"},
+		{`{"compact_window":20480}`, "20480"}, {`{"compact_window":"20480"}`, "20480"},
 		{`{"compact_window":"100000"}`, "100000"}, {`{"compact_window":"1000000"}`, "1000000"},
 		{`{"compact_window":"auto"}`, "auto"}} {
 		var o Options
@@ -271,19 +270,19 @@ func TestCompactWindow(t *testing.T) {
 		t.Errorf("a window is written as a number: %s", b)
 	}
 	for _, bad := range []string{`{"compact_window":"200k"}`, `{"compact_window":true}`, `{"compact_window":2.5e5}`,
-		`{"compact_window":"99999"}`, `{"compact_window":"1000001"}`, `{"compact_window":"0200000"}`,
+		`{"compact_window":"20479"}`, `{"compact_window":"1000001"}`, `{"compact_window":"0200000"}`,
 		`{"compact_window":"+200000"}`, `{"compact_window":"2.5e5"}`, `{"compact_window":""}`} {
 		var o Options
 		if err := json.Unmarshal([]byte(bad), &o); err == nil {
 			t.Errorf("%s must be refused, got %q", bad, o.CompactWindow)
 		}
 	}
-	for _, v := range []string{"100000", "1000000"} {
+	for _, v := range []string{"20480", "99999", "100000", "1000000"} {
 		if err := ValidateOptions(Options{CompactWindow: CompactWindow(v)}); err != nil {
 			t.Errorf("%s is in range: %v", v, err)
 		}
 	}
-	for _, v := range []string{"99999", "1000001", "0", "-5", "200k", "AUTO", "0200000", "+200000"} {
+	for _, v := range []string{"16000", "20479", "1000001", "0", "-5", "200k", "AUTO", "0200000", "+200000"} {
 		if err := ValidateOptions(Options{CompactWindow: CompactWindow(v)}); err == nil || !strings.Contains(err.Error(), "compact_window") {
 			t.Errorf("%s must be refused naming compact_window, got %v", v, err)
 		}

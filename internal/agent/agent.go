@@ -139,6 +139,7 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 	// After retrieval, so the block is not part of its query.
 	task.Prompt = commitBlock(task) + task.Prompt
 	calls := 0
+	var stats map[string]kernel.ToolStat
 	analyze := task.Durable == nil && b.Name() == "api"
 	var events []Event
 	observe := func(e Event) {
@@ -157,6 +158,21 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		if e.Kind == EventToolCall && !e.Partial {
 			calls++
 		}
+		if task.Durable == nil && ((e.Kind == EventToolCall && !e.Partial) || e.Kind == EventToolResult) {
+			if stats == nil {
+				stats = make(map[string]kernel.ToolStat)
+			}
+			s := stats[e.Tool]
+			if e.Kind == EventToolCall {
+				s.Calls++
+			} else {
+				s.ResultBytes += len(e.Text)
+				if e.IsError {
+					s.Errors++
+				}
+			}
+			stats[e.Tool] = s
+		}
 		emit(e)
 	}
 	if state != nil {
@@ -171,6 +187,7 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 	}
 	if task.Durable == nil {
 		res.ToolCalls = calls
+		res.ToolStats = stats
 	}
 	if analyze {
 		res.RefusalFlags = RefusalFlags(events)
