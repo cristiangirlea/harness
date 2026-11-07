@@ -287,6 +287,16 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-07: no repository split yet; plugins first (#878; `docs/repository-extraction-spec.md`,
+  PR #889). Measured at `056c21f`: CI wall time is the root test suite and the server jobs finish
+  in under 3 min in parallel; the server and hrn ship from one revision; the knowledge fixtures are
+  copied between the modules; 13 of the last 179 merged PRs touched both; no release tag exists. A
+  part leaves the PR after hrn loads it as a plugin (`hrn-<name>`, JSONL on stdio, installed from a
+  checksummed release as `hrn update` does), its wire types in a nested `contracts/` module anyone
+  can import. Issues #879–#888 in order; the first part in its own repository is the search plugin
+  (#882), the server follows its triggers. ADR 0001's extraction table carries the status and the
+  triggers, and its open question 5 is answered: watch stays until it reads only records and
+  versioned `--json` (#887) (#888).
 - 2026-11-07: increment 4, the retrieval pilot (`docs/retrieval-pilot-report.md`), run on the
   maintainer's word as an override of step 0's no-go: 60 codex `gpt-6.1-sol` runs at `11a5094`,
   10 held-out tasks × `off`/`text` × 3 repeats, counterbalanced. Equal success read by hand (30 of
