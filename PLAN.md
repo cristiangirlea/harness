@@ -287,6 +287,10 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-07: #838, CI may fetch a pinned `govulncheck` with `go run` (PR #860): the `vuln`
+  workflow checks both modules every Monday and on demand, on GitHub's runners, read-only, and
+  stays off pull requests so an overnight advisory does not block unrelated work. The modules
+  stay standard-library only; a new tool version is a reviewed edit of the `go run` line.
 - 2026-11-07: #799, refused actions reached another way are flagged (PR #863). After an api run, a
   pass over its events (no model call, no file read) flags a later `run_command` that runs a file
   this run wrote with a line breaking the same rule (`script`), a write whose content holds the
