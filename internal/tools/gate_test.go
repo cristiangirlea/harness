@@ -100,8 +100,10 @@ func fakeGate(args []string) int {
 			script, limit = rest, 0
 		}
 		if rest, ok := strings.CutPrefix(script, "fake-deaf "); ok {
+			// stop also cancels ctx, so the deaf gate runs its command on a fresh one.
 			stop()
 			signal.Ignore(syscall.SIGTERM)
+			ctx = context.Background()
 			script, limit = rest, 0
 		}
 		wd, _ := os.Getwd()

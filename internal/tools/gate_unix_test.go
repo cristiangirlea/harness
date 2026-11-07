@@ -67,8 +67,12 @@ func TestAGateThatIgnoresTerminateIsStillEnded(t *testing.T) {
 		t.Fatalf("run_command = %q, %v; want a timeout", out, err)
 	}
 	// Two seconds of timeout, one of grace and five of WaitDelay, well before the sleep ends.
-	if took := time.Since(start); took > 11*time.Second {
+	took := time.Since(start)
+	if took > 11*time.Second {
 		t.Fatalf("the deaf gate was ended after %s", took)
+	}
+	if took < 7*time.Second {
+		t.Fatalf("the gate ended after %s, before WaitDelay: it did not ignore terminate", took)
 	}
 }
 
