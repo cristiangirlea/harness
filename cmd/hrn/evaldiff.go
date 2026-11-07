@@ -82,7 +82,7 @@ func printEvalDiff(r *renderer, d eval.Diff) {
 				}
 			}
 			for _, id := range ids {
-				line := fmt.Sprintf("  %-20s %-20s %-16s", v.Name, id, arrow(criterionCount(v.A, id, false), criterionCount(v.B, id, false)))
+				line := fmt.Sprintf("  %-20s %-20s %-16s", v.Name, printable(id), arrow(criterionCount(v.A, id, false), criterionCount(v.B, id, false)))
 				if spread {
 					line += " " + arrow(criterionCount(v.A, id, true), criterionCount(v.B, id, true))
 				}

@@ -29,7 +29,7 @@ func printToolStats(r *renderer, label string, a, b map[string]kernel.ToolStat, 
 			}
 			calls, errors, bytes = arrow(calls, bc), arrow(errors, be), arrow(bytes, bb)
 		}
-		name := p.Name
+		name := printable(p.Name)
 		if name == "" {
 			name = `""`
 		}

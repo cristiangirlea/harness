@@ -1039,7 +1039,7 @@ func printEval(r *renderer, rec eval.Record) {
 		r.Line(line)
 		var notes []string
 		for _, c := range v.Criteria {
-			line := fmt.Sprintf("    %s: %d/%d met", c.ID, c.Met, c.Scored)
+			line := fmt.Sprintf("    %s: %d/%d met", printable(c.ID), c.Met, c.Scored)
 			if (v.JudgeRepeats > 1 || rec.Spec.Judge != nil && rec.Spec.Judge.Repeats > 1) && c.Disagreed > 0 {
 				line += fmt.Sprintf(", %d disagreed", c.Disagreed)
 			}

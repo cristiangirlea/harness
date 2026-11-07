@@ -126,3 +126,24 @@ func TestEvalDiffWithToolStatsAndCriteriaPrintsEachTableAfterABlankLine(t *testi
 		t.Fatalf("tables out of order %v:\n%s", at, buf.String())
 	}
 }
+
+func TestEvalOutputStripsControlCharactersFromToolNamesAndCriterionIDs(t *testing.T) {
+	const hostile = "x\x1b]8;;http://evil\x07y\x1b[2J"
+	a, b := diffPair()
+	for _, rec := range []*eval.Record{&a, &b} {
+		rec.Table.Variants[0].Criteria = []eval.CriterionSummary{{ID: hostile, Met: 1, Scored: 2}}
+		rec.Table.Variants[0].ToolStats = map[string]kernel.ToolStat{hostile: {Calls: 1}}
+		rec.Table.Variants[0].AttemptsWithToolStats = 1
+	}
+	var out bytes.Buffer
+	r := newRenderer(false)
+	r.out = &out
+	printEval(r, a)
+	printEvalDiff(r, eval.Compare(a, b))
+	if strings.ContainsAny(out.String(), "\x1b\x07") {
+		t.Fatalf("raw control characters reached the terminal: %q", out.String())
+	}
+	if strings.Count(out.String(), "x�]8;;http://evil�y�[2J") < 4 {
+		t.Fatalf("names were not shown in printable form: %q", out.String())
+	}
+}
