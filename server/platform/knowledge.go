@@ -22,6 +22,7 @@ var exactWords = regexp.MustCompile(`[A-Za-z0-9_./:\\-]+`)
 var knowledgeIdentifier = regexp.MustCompile(`^[A-Za-z0-9_./:\\-]+( +[A-Za-z0-9_./:\\-]+)*$`)
 var knowledgeToken = regexp.MustCompile(`\bakia[a-z0-9]{16}\b|\beyj[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+\b`)
 var ErrRetrievalBusy = errors.New("retrieval capacity unavailable")
+var ErrRankingChanged = errors.New("knowledge ranking changed: re-admit the version with hrn knowledge admit under the current ranking")
 
 func knowledgeQueryIdentifiers(query string) []string {
 	words := []string{}
@@ -234,7 +235,7 @@ func (s *Store) ImportKnowledge(ctx context.Context, in KnowledgeImport) (string
 	if err = knowledgeProject(ctx, tx, in.KnowledgeScope); err != nil {
 		return "", err
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO knowledge_versions(tenant_id,project_id,id,backend,model,revision,reviewed_by,review_evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`, in.TenantID, in.ProjectID, id, in.Backend, in.Model, in.Revision, in.ReviewedBy, in.ReviewEvidence)
+	tag, err := tx.Exec(ctx, `INSERT INTO knowledge_versions(tenant_id,project_id,id,backend,model,revision,reviewed_by,review_evidence,ranking) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, in.TenantID, in.ProjectID, id, in.Backend, in.Model, in.Revision, in.ReviewedBy, in.ReviewEvidence, KnowledgeRankingVersion)
 	if err != nil {
 		return "", err
 	}
@@ -266,6 +267,12 @@ func checkKnowledgeVersion(ctx context.Context, tx pgx.Tx, sc KnowledgeScope, id
 		return ErrNotFound
 	}
 	return nil
+}
+
+func knowledgeVersionRanking(ctx context.Context, tx pgx.Tx, sc KnowledgeScope, id string) (string, error) {
+	var ranking string
+	err := tx.QueryRow(ctx, `SELECT COALESCE(a.ranking,v.ranking,'') FROM knowledge_versions v LEFT JOIN knowledge_admissions a ON (a.tenant_id,a.project_id,a.version_id)=(v.tenant_id,v.project_id,v.id) WHERE v.tenant_id=$1 AND v.project_id=$2 AND v.id=$3`, sc.TenantID, sc.ProjectID, id).Scan(&ranking)
+	return ranking, err
 }
 
 func (s *Store) InspectKnowledge(ctx context.Context, sc KnowledgeScope, id string) (KnowledgeVersion, error) {
@@ -370,6 +377,15 @@ func changeKnowledgeTx(ctx context.Context, tx pgx.Tx, in KnowledgeChange) (Know
 	} else if in.Operation == "activate" {
 		return out, ErrNotFound
 	}
+	if in.Operation == "activate" {
+		ranking, err := knowledgeVersionRanking(ctx, tx, in.KnowledgeScope, target)
+		if err != nil {
+			return out, err
+		}
+		if ranking != KnowledgeRankingVersion {
+			return out, ErrRankingChanged
+		}
+	}
 	if target == out.VersionID {
 		return out, nil
 	}
@@ -463,6 +479,11 @@ func (s *Store) SearchKnowledge(ctx context.Context, in KnowledgeSearch) (Knowle
 		if err = checkKnowledgeVersion(ctx, tx, in.KnowledgeScope, out.VersionID); err != nil {
 			return out, err
 		}
+		out.VersionRanking, err = knowledgeVersionRanking(ctx, tx, in.KnowledgeScope, out.VersionID)
+		if err != nil {
+			return out, err
+		}
+		out.RankingMismatch = out.VersionRanking != KnowledgeRankingVersion
 		words := knowledgeQueryIdentifiers(in.Query)
 		var members int64
 		if err = tx.QueryRow(ctx, `SELECT count(*) FROM knowledge_members WHERE tenant_id=$1 AND project_id=$2 AND version_id=$3`, in.TenantID, in.ProjectID, out.VersionID).Scan(&members); err != nil {
@@ -620,7 +641,7 @@ func (s *Store) RecordAdmission(ctx context.Context, in KnowledgeAdmission) erro
 	if in.SourceRuns == nil {
 		in.SourceRuns = []string{}
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO knowledge_admissions(tenant_id,project_id,version_id,verdict,baseline_version_id,eval_ids,pass_rate_baseline,pass_rate_candidate,median_tokens_baseline,median_tokens_candidate,failed_attempt_tokens_baseline,failed_attempt_tokens_candidate,source_runs) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (tenant_id,project_id,version_id) DO UPDATE SET verdict=EXCLUDED.verdict,baseline_version_id=EXCLUDED.baseline_version_id,eval_ids=EXCLUDED.eval_ids,pass_rate_baseline=EXCLUDED.pass_rate_baseline,pass_rate_candidate=EXCLUDED.pass_rate_candidate,median_tokens_baseline=EXCLUDED.median_tokens_baseline,median_tokens_candidate=EXCLUDED.median_tokens_candidate,failed_attempt_tokens_baseline=EXCLUDED.failed_attempt_tokens_baseline,failed_attempt_tokens_candidate=EXCLUDED.failed_attempt_tokens_candidate,source_runs=EXCLUDED.source_runs,created_at=now()`, in.TenantID, in.ProjectID, in.VersionID, in.Verdict, in.BaselineVersionID, in.EvalIDs, in.PassRateBaseline, in.PassRateCandidate, in.MedianTokensBaseline, in.MedianTokensCandidate, in.FailedAttemptTokensBaseline, in.FailedAttemptTokensCandidate, in.SourceRuns)
+	_, err = tx.Exec(ctx, `INSERT INTO knowledge_admissions(tenant_id,project_id,version_id,verdict,baseline_version_id,eval_ids,pass_rate_baseline,pass_rate_candidate,median_tokens_baseline,median_tokens_candidate,failed_attempt_tokens_baseline,failed_attempt_tokens_candidate,source_runs,ranking) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT (tenant_id,project_id,version_id) DO UPDATE SET verdict=EXCLUDED.verdict,baseline_version_id=EXCLUDED.baseline_version_id,eval_ids=EXCLUDED.eval_ids,pass_rate_baseline=EXCLUDED.pass_rate_baseline,pass_rate_candidate=EXCLUDED.pass_rate_candidate,median_tokens_baseline=EXCLUDED.median_tokens_baseline,median_tokens_candidate=EXCLUDED.median_tokens_candidate,failed_attempt_tokens_baseline=EXCLUDED.failed_attempt_tokens_baseline,failed_attempt_tokens_candidate=EXCLUDED.failed_attempt_tokens_candidate,source_runs=EXCLUDED.source_runs,ranking=EXCLUDED.ranking,created_at=now()`, in.TenantID, in.ProjectID, in.VersionID, in.Verdict, in.BaselineVersionID, in.EvalIDs, in.PassRateBaseline, in.PassRateCandidate, in.MedianTokensBaseline, in.MedianTokensCandidate, in.FailedAttemptTokensBaseline, in.FailedAttemptTokensCandidate, in.SourceRuns, KnowledgeRankingVersion)
 	if err != nil {
 		return err
 	}

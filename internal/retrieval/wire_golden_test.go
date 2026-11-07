@@ -86,3 +86,36 @@ func TestKnowledgeWireMatchesTheGoldenJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestPacketRankingProvenance(t *testing.T) {
+	var p Packet
+	if err := json.Unmarshal([]byte(`{"ranking":"current"}`), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.VersionRanking != "" || p.RankingMismatch {
+		t.Fatalf("legacy packet: %+v", p)
+	}
+	for _, mismatch := range []bool{false, true} {
+		p.VersionRanking, p.RankingMismatch = "older", mismatch
+		data, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if string(fields["version_ranking"]) != `"older"` || (len(fields["ranking_mismatch"]) > 0) != mismatch {
+			t.Fatalf("ranking fields: %s", data)
+		}
+		var got Packet
+		if err := json.Unmarshal(data, &got); err != nil || got.VersionRanking != "older" || got.RankingMismatch != mismatch {
+			t.Fatalf("round trip: %+v %v", got, err)
+		}
+	}
+	p.VersionRanking = ""
+	data, err := json.Marshal(p)
+	if err != nil || bytes.Contains(data, []byte(`"version_ranking"`)) {
+		t.Fatalf("empty ranking: %s %v", data, err)
+	}
+}

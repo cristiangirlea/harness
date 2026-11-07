@@ -50,6 +50,14 @@ Index eligible content with PostgreSQL `tsvector` and a GIN index. Use the `simp
 
 Proposed service operations: search/preview context, inspect sources, import a candidate, inspect an evaluation, activate a version, disable retrieval and roll back. Final endpoint and CLI names should follow existing project conventions. Authenticated identity is resolved by the server; client filters can narrow its allowed scope but never widen it.
 
+Ranking changes keep active versions serving with the current algorithm. Packets include
+`version_ranking` from the latest recorded admission, falling back to the creation ranking,
+and `ranking_mismatch` when it differs from the current ranking (including an untracked ranking).
+A version from an older ranking can be activated only after an admission under the
+current ranking with `hrn knowledge admit`. Disable and rollback remain available regardless.
+Operator activation still permits overriding a pending or rejected verdict; only an admitted
+verdict activates automatically.
+
 ## Context and continuity
 
 - Initial defaults: at most five deduplicated excerpts, with the entire injected packet capped at 8 KiB including labels and source references. These are proposed tuning defaults; measure them.
