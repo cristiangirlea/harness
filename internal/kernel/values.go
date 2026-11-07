@@ -155,10 +155,10 @@ func (d *Duration) Set(s string) error {
 	return nil
 }
 
-// CompactWindow is auto or 100000-1000000; records store the count as a number.
+// CompactWindow preserves numeric token counts in records while allowing auto.
 type CompactWindow string
 
-const minCompactWindow, maxCompactWindow = 100000, 1000000
+const minCompactWindow, maxCompactWindow = 20480, 1000000
 
 func (w CompactWindow) Check() error {
 	if w == "" || w == "auto" {

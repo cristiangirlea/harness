@@ -64,6 +64,9 @@ func prepareDurable(task Task, req *apiRequest, res *Result) (*durableAPI, error
 			return nil, fmt.Errorf("checkpoint request: %w", err)
 		}
 		req.betas = append([]string(nil), cp.Betas...)
+		if cp.CompactionK < 0 || cp.CompactionK > len(req.Messages) || (cp.CompactionK == 0) != (cp.CompactionSummary == "") || cp.CompactionFailedContext < 0 {
+			return nil, errors.New("checkpoint compaction state does not match history")
+		}
 		*res = cp.Result
 	}
 	return &durableAPI{checkpoint: cp, save: task.Durable.Save}, nil
