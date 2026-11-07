@@ -39,7 +39,7 @@ flowchart LR
 
 ## Try it in a minute
 
-You need Go 1.26.4 or later, and at least one backend. Install hrn, then see which backends
+You need Go 1.26.10 or later, and at least one backend. Install hrn, then see which backends
 it can use:
 
 ```bash
