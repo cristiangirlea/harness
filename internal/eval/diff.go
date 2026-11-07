@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 )
 
 // Diff matches named eval rows, retaining unmatched rows with a nil side.
@@ -28,6 +29,7 @@ type Diff struct {
 	// JudgeChanged ignores repeats, which leave the scoring scale unchanged.
 	JudgeChanged bool `json:"judge_changed,omitempty"`
 	Judged       bool `json:"judged,omitempty"`
+	Criteria     bool `json:"criteria,omitempty"`
 	// SetupChanged excludes the variant's own harness options.
 	SetupChanged []SetupChange `json:"setup_changed,omitempty"`
 }
@@ -51,6 +53,43 @@ type VariantPair struct {
 	WithinNoise bool `json:"within_noise,omitempty"`
 }
 
+type ToolStatPair struct {
+	Name string
+	A, B kernel.ToolStat
+}
+
+// ToolStatPairs ranks the union by combined calls, with stable ties for readable comparisons.
+func ToolStatPairs(a, b map[string]kernel.ToolStat) []ToolStatPair {
+	names := make(map[string]bool)
+	for name := range a {
+		names[name] = true
+	}
+	for name := range b {
+		names[name] = true
+	}
+	var pairs []ToolStatPair
+	for name := range names {
+		pairs = append(pairs, ToolStatPair{Name: name, A: a[name], B: b[name]})
+	}
+	slices.SortFunc(pairs, func(a, b ToolStatPair) int {
+		ac, bc := a.A.Calls+a.B.Calls, b.A.Calls+b.B.Calls
+		if ac > bc {
+			return -1
+		}
+		if ac < bc {
+			return 1
+		}
+		if a.Name < b.Name {
+			return -1
+		}
+		if a.Name > b.Name {
+			return 1
+		}
+		return 0
+	})
+	return pairs
+}
+
 // TaskPair is one task under one variant in both evals.
 type TaskPair struct {
 	Task    string   `json:"task"`
@@ -64,6 +103,7 @@ type TaskPair struct {
 // Compare matches rows in a's order, then appends b-only rows in b's order.
 func Compare(a, b Record) Diff {
 	d := Diff{A: a.ID, B: b.ID}
+	d.Criteria = (a.Spec.Judge != nil && len(a.Spec.Judge.Criteria) > 0) || (b.Spec.Judge != nil && len(b.Spec.Judge.Criteria) > 0)
 
 	variants := map[string]int{}
 	for i := range a.Table.Variants {
@@ -80,6 +120,7 @@ func Compare(a, b Record) Diff {
 		}
 	}
 	for i, v := range d.Variants {
+		d.Criteria = d.Criteria || (v.A != nil && len(v.A.Criteria) > 0) || (v.B != nil && len(v.B.Criteria) > 0)
 		d.Judged = d.Judged || (v.A != nil && v.A.Judged > 0) || (v.B != nil && v.B.Judged > 0)
 		if v.A != nil && v.B != nil {
 			d.Variants[i].WithinNoise = withinNoise(v.A.judge(), v.B.judge())

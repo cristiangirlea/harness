@@ -146,6 +146,7 @@ type claudeLine struct {
 		Usage   apiUsage `json:"usage"`
 		Model   string   `json:"model"`
 		Content []struct {
+			ID        string          `json:"id"`
 			Type      string          `json:"type"`
 			Text      string          `json:"text"`
 			Thinking  string          `json:"thinking"`
@@ -183,7 +184,7 @@ type claudeLine struct {
 
 // Message lines repeat usage; emit its largest output once, flushing on nil.
 func newClaudeParse() func([]byte, func(Event), *Result) bool {
-	m := &claudeMessage{seen: map[string]bool{}}
+	m := &claudeMessage{seen: map[string]bool{}, tools: map[string]string{}}
 	return func(line []byte, emit func(Event), res *Result) bool {
 		if line == nil {
 			m.flush(emit)
@@ -197,6 +198,7 @@ type claudeMessage struct {
 	id      string
 	pending *Event
 	seen    map[string]bool
+	tools   map[string]string
 }
 
 func (m *claudeMessage) flush(emit func(Event)) {
@@ -272,9 +274,16 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, m *claudeMessag
 					emit(Event{Time: now, Kind: EventThinking, Text: c.Thinking})
 				}
 			case "tool_use":
+				if m != nil {
+					m.tools[c.ID] = c.Name
+				}
 				emit(Event{Time: now, Kind: EventToolCall, Tool: c.Name, Input: c.Input, Text: tools.InputSummary(c.Input)})
 			case "tool_result":
-				emit(Event{Time: now, Kind: EventToolResult, Text: contentText(c.Content), IsError: c.IsError})
+				name := ""
+				if m != nil {
+					name = m.tools[c.ToolUseID]
+				}
+				emit(Event{Time: now, Kind: EventToolResult, Tool: name, Text: contentText(c.Content), IsError: c.IsError})
 			}
 		}
 	case "rate_limit_event":
