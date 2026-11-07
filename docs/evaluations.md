@@ -500,7 +500,10 @@ count against the change. With criteria, the final verdict line has this shape:
 Every specified id must occur exactly once; missing, duplicate or unknown ids make the
 judgement an error. Evidence must contain a `path:line` reference to a file changed
 by this cell's diff or an untracked file, comparing forward slashes and ignoring a leading
-`./` or `b/` on references. Alternatively, after trimming trailing whitespace, it must
+`./`, `a/` or `b/` on references; the line must fall inside one of that file's hunks on the
+new side (the old side for a deleted or renamed-away file), while an untracked file or one
+the diff shows without hunks accepts any positive line. Only the first 500 bytes of evidence
+are searched for references. Alternatively, after trimming trailing whitespace, it must
 match an added, removed or context line in the diff with at least three non-space
 characters after its `+`, `-` or space marker. A `met: true` verdict without qualifying evidence is downgraded
 to `met: false` and saved with `downgraded: true`. Stored evidence is clipped after 500

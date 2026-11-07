@@ -73,10 +73,12 @@ const (
 	defaultJudgeTimeout = 5 * time.Minute
 	maxJudgeDiff        = 60_000 // bytes of diff shown to the judge
 	maxJudgeAnswer      = 8_000
+	maxEvidence         = 500 // bytes of a criterion's evidence stored and scanned for references
 )
 
 var criterionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 var diffHeaderPaths = regexp.MustCompile(`^diff --git ("(?:\\.|[^"])*"|a/.*?) ("(?:\\.|[^"])*"|b/.*)$`)
+var hunkHeader = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 
 func (j *Judge) rubricFor(task string) string {
 	if r, ok := j.Rubrics[task]; ok {
@@ -253,6 +255,7 @@ type evidence struct {
 	err       error
 	diff      string
 	untracked []string
+	changes   *changedLines // built once per cell when the judge has criteria
 }
 
 // Report cancellation rather than an incidental git failure it caused.
@@ -276,7 +279,11 @@ func evidenceOf(ctx context.Context, res batch.Result, tr batch.TaskResult, prom
 	if err != nil {
 		return evidence{err: fmt.Errorf("preparing the judge's checkout: %w", err)}
 	}
-	return evidence{prompt: judgePrompt(prompt, rubric, final, diff, untracked, j), dir: dir, diff: diff, untracked: untracked}
+	ev := evidence{prompt: judgePrompt(prompt, rubric, final, diff, untracked, j), dir: dir, diff: diff, untracked: untracked}
+	if len(j.Criteria) > 0 {
+		ev.changes = indexChanges(diff, untracked)
+	}
+	return ev
 }
 
 func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResult, ev evidence) Judgement {
@@ -389,6 +396,14 @@ func judgePrompt(prompt, rubric, final, diff string, untracked []string, j *Judg
 }
 
 func clip(s string, limit int) string {
+	kept := head(s, limit)
+	if len(kept) == len(s) {
+		return s
+	}
+	return kept + fmt.Sprintf("\n[... %d more bytes not shown]", len(s)-len(kept))
+}
+
+func head(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
@@ -396,7 +411,7 @@ func clip(s string, limit int) string {
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
-	return s[:cut] + fmt.Sprintf("\n[... %d more bytes not shown]", len(s)-cut)
+	return s[:cut]
 }
 
 func fence(s string) string {
@@ -427,7 +442,10 @@ func parseVerdict(text string) (int, string, error) {
 }
 
 func parseCriteriaVerdict(text string, criteria []Criterion, ev evidence) (int, string, []CriterionVerdict, error) {
-	supported := evidenceMatcher(ev)
+	changes := ev.changes
+	if changes == nil {
+		changes = indexChanges(ev.diff, ev.untracked)
+	}
 	broken := -1
 	for i := strings.LastIndex(text, "{"); i >= 0; i = strings.LastIndex(text[:i], "{") {
 		var v struct {
@@ -470,8 +488,8 @@ func parseCriteriaVerdict(text string, criteria []Criterion, ev evidence) (int, 
 			if c.Met == nil {
 				return 0, "", nil, fmt.Errorf("criterion %q has no boolean met", c.ID)
 			}
-			downgraded := *c.Met && !supported(c.Evidence)
-			byID[c.ID] = CriterionVerdict{ID: c.ID, Met: *c.Met && !downgraded, Evidence: clip(c.Evidence, 500), Downgraded: downgraded}
+			downgraded := *c.Met && !changes.supports(c.Evidence)
+			byID[c.ID] = CriterionVerdict{ID: c.ID, Met: *c.Met && !downgraded, Evidence: clip(c.Evidence, maxEvidence), Downgraded: downgraded}
 		}
 		var out []CriterionVerdict
 		met := 0
@@ -490,34 +508,49 @@ func parseCriteriaVerdict(text string, criteria []Criterion, ev evidence) (int, 
 	return 0, "", nil, errors.New(`the answer has no {"criteria": ...} object`)
 }
 
-func evidenceMatcher(ev evidence) func(string) bool {
-	paths, lines := map[string]bool{}, map[string]bool{}
-	normalize := func(path string) string { return strings.TrimPrefix(strings.ReplaceAll(path, `\`, "/"), "./") }
-	addPath := func(path, prefix string) {
-		if decoded, err := strconv.Unquote(path); err == nil {
-			path = decoded
-		}
-		path = strings.TrimPrefix(path, prefix)
-		if path != "/dev/null" && path != "" {
-			paths[normalize(path)] = true
-		}
+// changedLines holds a diff's paths with their changed line ranges and its quotable lines.
+type changedLines struct {
+	files  map[string]*changedFile
+	quoted map[string]bool
+	gaps   int // most reference boundaries inside one path, such as spaces
+}
+
+type changedFile struct {
+	hunked bool
+	ranges [][2]int
+}
+
+func indexChanges(diff string, untracked []string) *changedLines {
+	c := &changedLines{files: map[string]*changedFile{}, quoted: map[string]bool{}}
+	for _, path := range untracked {
+		c.file(normalizePath(path))
 	}
-	for _, path := range ev.untracked {
-		paths[normalize(path)] = true
-	}
+	var oldPath, newPath string
 	inHunk := false
-	for _, line := range strings.Split(ev.diff, "\n") {
+	for _, line := range strings.Split(diff, "\n") {
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
-			inHunk = false
+			inHunk, oldPath, newPath = false, "", ""
 			if pair := diffHeaderPaths.FindStringSubmatch(line); pair != nil {
-				addPath(pair[1], "a/")
-				addPath(pair[2], "b/")
+				oldPath, newPath = diffPath(pair[1], "a/"), diffPath(pair[2], "b/")
+				c.file(oldPath)
+				c.file(newPath)
 			}
+		case !inHunk && strings.HasPrefix(line, "--- "):
+			oldPath = diffPath(strings.TrimPrefix(line, "--- "), "a/")
+			c.file(oldPath)
 		case !inHunk && strings.HasPrefix(line, "+++ "):
-			addPath(strings.TrimPrefix(line, "+++ "), "b/")
+			newPath = diffPath(strings.TrimPrefix(line, "+++ "), "b/")
+			c.file(newPath)
 		case strings.HasPrefix(line, "@@ "):
 			inHunk = true
+			if m := hunkHeader.FindStringSubmatch(line); m != nil {
+				c.addRange(newPath, m[3], m[4])
+				// A deleted or renamed-away file has only old line numbers to cite.
+				if oldPath != newPath {
+					c.addRange(oldPath, m[1], m[2])
+				}
+			}
 		case inHunk && len(line) > 0 && strings.ContainsAny(line[:1], "+- "):
 			count := 0
 			for _, r := range line[1:] {
@@ -526,25 +559,127 @@ func evidenceMatcher(ev evidence) func(string) bool {
 				}
 			}
 			if count >= 3 {
-				lines[strings.TrimRightFunc(line, unicode.IsSpace)] = true
+				c.quoted[strings.TrimRightFunc(line, unicode.IsSpace)] = true
 			}
 		}
 	}
-	var references []*regexp.Regexp
-	for path := range paths {
-		references = append(references, regexp.MustCompile(`(?:^|[\s("'\x60<\[{])(?:\./)?(?:b/)?`+regexp.QuoteMeta(path)+`:\d+`))
+	return c
+}
+
+func normalizePath(path string) string {
+	return strings.TrimPrefix(strings.ReplaceAll(path, `\`, "/"), "./")
+}
+
+func diffPath(path, prefix string) string {
+	if decoded, err := strconv.Unquote(path); err == nil {
+		path = decoded
 	}
-	return func(text string) bool {
-		if lines[strings.TrimRightFunc(text, unicode.IsSpace)] {
-			return true
-		}
-		for _, reference := range references {
-			if reference.MatchString(strings.ReplaceAll(text, `\`, "/")) {
-				return true
+	path = strings.TrimPrefix(path, prefix)
+	if path == "/dev/null" {
+		return ""
+	}
+	return normalizePath(path)
+}
+
+func (c *changedLines) file(path string) *changedFile {
+	if path == "" {
+		return nil
+	}
+	f := c.files[path]
+	if f == nil {
+		f = &changedFile{}
+		c.files[path] = f
+		gaps := 0
+		for i := range len(path) {
+			if referenceBoundary(path[i]) {
+				gaps++
 			}
 		}
+		c.gaps = max(c.gaps, gaps)
+	}
+	return f
+}
+
+func (c *changedLines) addRange(path, start, count string) {
+	f := c.file(path)
+	if f == nil {
+		return
+	}
+	f.hunked = true
+	first, err := strconv.Atoi(start)
+	n := 1
+	if err == nil && count != "" {
+		n, err = strconv.Atoi(count)
+	}
+	if err == nil && n > 0 {
+		f.ranges = append(f.ranges, [2]int{first, first + n - 1})
+	}
+}
+
+// Files the diff shows without hunks (untracked, renamed, binary) accept any positive line.
+func (c *changedLines) covers(path string, line int) bool {
+	f := c.files[path]
+	if f == nil || line < 1 {
 		return false
 	}
+	if !f.hunked {
+		return true
+	}
+	for _, r := range f.ranges {
+		if line >= r[0] && line <= r[1] {
+			return true
+		}
+	}
+	return false
+}
+
+func referenceBoundary(b byte) bool {
+	return strings.IndexByte(" \t\n\f\r(\"'`<[{", b) >= 0
+}
+
+func (c *changedLines) supports(text string) bool {
+	if c.quoted[strings.TrimRightFunc(text, unicode.IsSpace)] {
+		return true
+	}
+	text = strings.ReplaceAll(head(text, maxEvidence), `\`, "/")
+	for colon := range len(text) {
+		if text[colon] != ':' {
+			continue
+		}
+		end := colon + 1
+		for end < len(text) && text[end] >= '0' && text[end] <= '9' {
+			end++
+		}
+		line, err := strconv.Atoi(text[colon+1 : end])
+		if err != nil {
+			continue
+		}
+		// A path may hold boundaries itself, so try starts back to as many as any changed path has.
+		for start, gaps := colon-1, 0; start >= -1 && gaps <= c.gaps; start-- {
+			if start >= 0 && !referenceBoundary(text[start]) {
+				continue
+			}
+			if c.cites(text[start+1:colon], line) {
+				return true
+			}
+			gaps++
+		}
+	}
+	return false
+}
+
+func (c *changedLines) cites(ref string, line int) bool {
+	ref = strings.TrimPrefix(ref, "./")
+	if c.covers(ref, line) {
+		return true
+	}
+	if rest, ok := strings.CutPrefix(ref, "a/"); ok {
+		return c.covers(rest, line)
+	}
+	if rest, ok := strings.CutPrefix(ref, "b/"); ok {
+		return c.covers(rest, line)
+	}
+	return false
 }
 
 // A broken replacement must not turn an earlier verdict into the final one.

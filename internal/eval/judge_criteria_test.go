@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -132,7 +133,7 @@ func TestCriteriaRequireReferencesAndStoreClippedEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			diff := "diff --git a/internal/x.go b/internal/x.go\n--- a/internal/x.go\n+++ b/internal/x.go\n@@ -1,2 +1,3 @@\n- return err\n+ return nil\n return nil\n+ab\n+" + strings.Repeat("é", 500) + "\n" +
+			diff := "diff --git a/internal/x.go b/internal/x.go\n--- a/internal/x.go\n+++ b/internal/x.go\n@@ -10,2 +10,4 @@\n- return err\n+ return nil\n return nil\n+ab\n+" + strings.Repeat("é", 500) + "\n" +
 				"diff --git a/deleted.go b/deleted.go\n--- a/deleted.go\n+++ /dev/null\n@@ -1 +0,0 @@\n-deleted\n" +
 				"diff --git \"a/space file.go\" \"b/space file.go\"\n" +
 				"diff --git a/from.go b/to.go\nsimilarity index 100%\nrename from from.go\nrename to to.go\n"
@@ -244,5 +245,83 @@ func TestOldJudgementsRoundTripWithoutCriteria(t *testing.T) {
 	b, err := json.Marshal(got)
 	if err != nil || string(b) != old {
 		t.Fatalf("round trip = %s, %v", b, err)
+	}
+}
+
+func criteriaText(t *testing.T, evidence ...string) string {
+	t.Helper()
+	var verdicts []map[string]any
+	for i, e := range evidence {
+		verdicts = append(verdicts, map[string]any{"id": fmt.Sprint("c", i), "met": true, "evidence": e})
+	}
+	text, err := json.Marshal(map[string]any{"criteria": verdicts, "reason": "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(text)
+}
+
+func criteriaFor(n int) []Criterion {
+	var out []Criterion
+	for i := range n {
+		out = append(out, Criterion{ID: fmt.Sprint("c", i), Check: "x"})
+	}
+	return out
+}
+
+func TestCriteriaEvidenceSurvivesAChangedPathThatIsNotUTF8(t *testing.T) {
+	diff := `diff --git "a/\377" "b/\377"` + "\n" + `--- "a/\377"` + "\n" + `+++ "b/\377"` + "\n@@ -1 +1 @@\n-old\n+new\n" +
+		"diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-old\n+new\n"
+	_, _, got, err := parseCriteriaVerdict(criteriaText(t, "x.go:1"), criteriaFor(1), evidence{diff: diff})
+	if err != nil || len(got) != 1 || !got[0].Met {
+		t.Fatalf("verdict = %+v, %v", got, err)
+	}
+}
+
+func TestCriteriaPathReferencesMustFallInsideAChangedHunk(t *testing.T) {
+	diff := "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -10,3 +20,4 @@\n ctx\n-old\n+new\n+more\n ctx\n" +
+		"@@ -40 +50,0 @@\n-gone\n" +
+		"diff --git a/n.go b/n.go\nnew file mode 100644\n--- /dev/null\n+++ b/n.go\n@@ -0,0 +1,2 @@\n+a\n+b\n"
+	for _, tc := range []struct {
+		evidence string
+		met      bool
+	}{
+		{"x.go:20", true}, {"x.go:23", true}, {"x.go:19", false}, {"x.go:24", false}, {"x.go:1", false},
+		{"x.go:50", false}, {"x.go:0", false}, {"n.go:2", true}, {"n.go:3", false},
+		{"untracked.go:400", true}, {"untracked.go:0", false}, {"x.go:99999999999999999999999", false},
+	} {
+		_, _, got, err := parseCriteriaVerdict(criteriaText(t, tc.evidence), criteriaFor(1), evidence{diff: diff, untracked: []string{"untracked.go"}})
+		if err != nil || len(got) != 1 || got[0].Met != tc.met || got[0].Downgraded == tc.met {
+			t.Errorf("%s: verdict = %+v, %v", tc.evidence, got, err)
+		}
+	}
+}
+
+func TestCriteriaEvidenceMatchingStaysFastOnLargeDiffs(t *testing.T) {
+	var diff strings.Builder
+	for i := range 20000 {
+		fmt.Fprintf(&diff, "diff --git a/pkg/f%d.go b/pkg/f%d.go\n--- a/pkg/f%d.go\n+++ b/pkg/f%d.go\n@@ -1 +1 @@\n-old\n+new line %d\n", i, i, i, i, i)
+	}
+	var cited []string
+	for i := range 30 {
+		cited = append(cited, strings.Repeat("filler words ", 30)+fmt.Sprintf("pkg/f%d.go:1", i*600))
+	}
+	cited[29] = strings.Repeat("filler words ", 30) + "pkg/missing.go:1"
+	// evidenceOf builds the index once per cell; only matching repeats per judgement.
+	ev := evidence{diff: diff.String(), changes: indexChanges(diff.String(), nil)}
+	start := time.Now()
+	for range 3 {
+		score, _, got, err := parseCriteriaVerdict(criteriaText(t, cited...), criteriaFor(30), ev)
+		if err != nil || len(got) != 30 || score != 10 || got[29].Met || !got[29].Downgraded {
+			t.Fatalf("score = %d, verdict = %+v, %v", score, got, err)
+		}
+		for _, v := range got[:29] {
+			if !v.Met {
+				t.Fatalf("lost evidence: %+v", v)
+			}
+		}
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("three judgements of a 20000-file diff took %v", took)
 	}
 }
