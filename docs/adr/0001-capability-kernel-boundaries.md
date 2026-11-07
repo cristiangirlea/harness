@@ -312,15 +312,24 @@ and covered by golden-file tests that both sides run. Because the root module ta
 an extracted part talks to hrn as a **binary** (subprocess, JSONL or JSON), over **HTTP**, or
 through **files on disk** (run records), never as an imported Go library.
 
-| Candidate | Why it could leave | Preconditions | When |
-|---|---|---|---|
-| `server/` (control service, worker) | already its own module and deploy | steps 19–21b; knowledge and run APIs versioned; its CI on its own runner | first |
-| `watch` (dashboard, Ada) | 5,071 lines plus assets, its own release rhythm | reads only records, flow events and stable `hrn` JSON; archtest shows no internal reach | after step 18 |
-| `game` | a pack reading records | `Evidence` and record formats stable | after watch |
-| `eval` | large, depends on batch | batch's result format stable, a batch run reachable as `hrn batch` JSON | last, if ever |
+| Candidate | Why it could leave | Preconditions | When | Status, 2026-11-07 |
+|---|---|---|---|---|
+| `server/` (control service, worker) | already its own module and deploy | steps 19–21b; knowledge and run APIs versioned; its CI on its own runner | first | Go precondition met: no root imports, `replace` gone (step 21, PR #765). Waits for versioned worker frames (#884), a knowledge schema version (#885), the first release (#879) and a trigger (#886). |
+| `watch` (dashboard, Ada) | 5,071 lines plus assets, its own release rhythm | reads only records, flow events and stable `hrn` JSON; archtest shows no internal reach | after step 18 | not met: calls `agent`, `batch`, `runlog`, `game`, `flow` and `workmap` directly, about 170 references (#887) |
+| `game` | a pack reading records | `Evidence` and record formats stable | after watch | not started |
+| `eval` | large, depends on batch | batch's result format stable, a batch run reachable as `hrn batch` JSON | last, if ever | not planned |
 
 Kept in harness: the kernel, the provider adapters, the coding pack, `cmd/hrn`, `hrnmcp`,
 `execproto`. adanext-exec stays an external binary behind the policy contract.
+
+Status, 2026-11-07: no split yet. Measured at `056c21f`, CI wall time is the root test suite and
+the server jobs finish in under 3 min in parallel; the server and hrn ship from one revision; the
+knowledge fixtures are copied between the modules; 13 of the last 179 merged PRs touched both; no
+`v*` tag exists. The mechanism is the plugin model of
+[repository-extraction-spec](../repository-extraction-spec.md), tracked by #878: a part leaves the
+PR after hrn loads it as a plugin, so the first part in its own repository is the search plugin
+(#882), born there, and the server follows when a maintainer names one of its triggers: a real
+deployment (infra item P4), a second consumer of its API, or a worker protocol v2.
 
 Release compatibility: hrn keeps one version (`Version` in `internal/agent/agent.go`); every
 cross-repository contract carries its own version field, readers accept the previous version for
@@ -371,3 +380,5 @@ tests exercise task execution without a provider.
 3. `ws` mixes the generic slot lease with issue leases and git: split it in this plan, or later?
 4. `APICheckpoint` names one provider inside the kernel; rename it to a generic checkpoint later?
 5. Does extraction of `watch` (with Ada) matter enough to plan, or should it stay in harness?
+   Answered 2026-11-07: it stays until it reads only records and versioned `--json` (#887);
+   whether it then leaves is decision (d) of #878.
