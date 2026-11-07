@@ -1,0 +1,31 @@
+name: fix-test
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  fix-test:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: require a changed test for a closing fix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files?per_page=100" > files.json
+          jq -s 'add' files.json > all-files.json
+          jq --slurpfile files all-files.json '{body: .pull_request.body, labels: [.pull_request.labels[].name], changed_files: .pull_request.changed_files, files: $files[0]}' "$GITHUB_EVENT_PATH" > input.json
+          bash scripts/fix-test-check.sh input.json

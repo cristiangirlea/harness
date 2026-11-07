@@ -22,6 +22,8 @@ Read [AGENTS.md](AGENTS.md) for the complete checks, repository rules, and revie
 requirements before changing code. Tests use fake API servers and helper processes;
 do not make paid model calls as part of validation.
 
+The pull request template asks for the failure, change, evidence and review questions; closing fixes that change non-test Go code require an added or changed test, unless a maintainer applies the `no-repro` label.
+
 CI tests pull requests and pushes to `main` on standard GitHub-hosted Linux and Windows
 runners. Releases build on `ubuntu-latest`. These runners are free for public repositories;
 both workflows skip their jobs if the repository is private. No self-hosted runner is needed.
