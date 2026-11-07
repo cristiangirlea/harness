@@ -360,6 +360,11 @@ func TestRefusalSummariesMaskSecretsBeforeTheCut(t *testing.T) {
 
 func TestRefusalAnalysisStaysLinearInManyPathsAndLongCommands(t *testing.T) {
 	events := refusalSequence(false)
+	// Distinct operands: each one is matched against every written file unless the lookup is by key.
+	var distinctOperands strings.Builder
+	for i := range 20000 {
+		fmt.Fprintf(&distinctOperands, "./o%d.sh;", i)
+	}
 	for i := range 5000 {
 		content := fmt.Sprintf("echo %d", i)
 		if i == 42 {
@@ -368,17 +373,13 @@ func TestRefusalAnalysisStaysLinearInManyPathsAndLongCommands(t *testing.T) {
 		events = append(events, refusalCall("write_file", map[string]string{"path": fmt.Sprintf("d%d/s%d.sh", i, i), "content": content}))
 	}
 	events = append(events,
-		refusalCall("run_command", map[string]string{"command": strings.Repeat("x;", 100000) + "./s42.sh"}),
+		refusalCall("run_command", map[string]string{"command": distinctOperands.String() + "./s42.sh"}),
 		refusalCall("run_command", map[string]string{"command": strings.Repeat("sh -c ", 17000) + "git push origin main"}),
 	)
-	limit := 2 * time.Second
-	if raceEnabled {
-		// The race detector slows the guard's regexps about fifteenfold; quadratic work still takes minutes.
-		limit = 30 * time.Second
-	}
 	start := time.Now()
 	flags := RefusalFlags(events)
-	if elapsed := time.Since(start); elapsed >= limit {
+	// Linear work takes about 3s on hosted runners and quadratic work about 45s on a desktop; the race detector hides the difference.
+	if elapsed := time.Since(start); elapsed >= 10*time.Second && !raceEnabled {
 		t.Fatalf("analysis took %s", elapsed)
 	}
 	var got []string
