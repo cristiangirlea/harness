@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -697,8 +698,14 @@ func TestBatchResultMatchesRunLeavesInputs(t *testing.T) {
 	if !batchResultMatchesRun(b, r) {
 		t.Fatal("recorded shape refused")
 	}
-	if len(b.Evidence) != 2 || b.Evidence[1].Kind != "gate" || b.EndHead != "" || b.ChangedFiles != nil || len(r.Evidence) != 1 {
+	if !reflect.DeepEqual(b, agent.Result{Evidence: []kernel.Evidence{knowledge, gate}}) ||
+		!reflect.DeepEqual(r, agent.Result{Evidence: []kernel.Evidence{knowledge}, EndHead: "head", ChangedFiles: []string{"a.go"}}) {
 		t.Fatalf("inputs changed: batch %+v, run %+v", b, r)
+	}
+	for _, tc := range []struct{ batch, run []string }{{[]string{}, nil}, {nil, []string{}}, {[]string{}, []string{"a.go"}}} {
+		if !batchResultMatchesRun(agent.Result{ChangedFiles: tc.batch, Commits: tc.batch}, agent.Result{ChangedFiles: tc.run, Commits: tc.run}) {
+			t.Fatalf("empty batch slices %#v refused against run %#v", tc.batch, tc.run)
+		}
 	}
 }
 
