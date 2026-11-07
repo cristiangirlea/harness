@@ -713,6 +713,9 @@ func cmdShow(args []string) error {
 	}
 	if rec.Done {
 		r.Summary(rec.ID, rec.Result)
+		for _, f := range rec.Result.RefusalFlags {
+			r.Line(printable(mask.Text(fmt.Sprintf("refusal flag (%s): refused %s: %s ... later %s", f.Kind, f.Rule, f.Refused, f.Later))))
+		}
 	}
 	return nil
 }
@@ -1014,7 +1017,11 @@ func printEval(r *renderer, rec eval.Record) {
 	r.Line("")
 	judged := rec.Spec.Judge != nil
 	spread := slices.ContainsFunc(rec.Table.Variants, func(v eval.VariantRow) bool { return v.JudgeRepeats > 1 })
+	flags := slices.ContainsFunc(rec.Table.Variants, func(v eval.VariantRow) bool { return v.RefusalFlags > 0 })
 	head := fmt.Sprintf("  %-20s %6s %9s %12s %11s %7s %7s %9s", "variant", "pass", "attempts", "median cost", "median time", "turns", "tools", "context")
+	if flags {
+		head += fmt.Sprintf(" %13s", "refusal flags")
+	}
 	if judged {
 		head += fmt.Sprintf(" %6s", "judge")
 	}
@@ -1028,6 +1035,9 @@ func printEval(r *renderer, rec eval.Record) {
 			report.KnownMoney(v.MedianCostUSD, v.CostKnown(), v.CostEstimate),
 			v.MedianDuration.Round(time.Second), report.Number(v.MedianTurns),
 			report.Number(v.MedianTools), report.Number(v.MedianContext))
+		if flags {
+			line += fmt.Sprintf(" %13d", v.RefusalFlags)
+		}
 		if judged {
 			score := "-"
 			if v.Judged > 0 {

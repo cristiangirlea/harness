@@ -274,6 +274,7 @@ func firstOf(values ...string) string {
 
 // VariantRow aggregates one variant's tasks and repeats.
 type VariantRow struct {
+	RefusalFlags          int                        `json:"refusal_flags,omitempty"`
 	ToolStats             map[string]kernel.ToolStat `json:"tool_stats,omitempty"`
 	AttemptsWithToolStats int                        `json:"attempts_with_tool_stats,omitempty"`
 	Name                  string                     `json:"name"`
@@ -748,6 +749,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 			}
 			for _, tr := range c.results {
 				for _, a := range tr.Attempts {
+					row.RefusalFlags += len(a.Result.RefusalFlags)
 					if len(a.Result.ToolStats) > 0 && a.Result.ValidToolStats() == nil {
 						row.AttemptsWithToolStats++
 						if row.ToolStats == nil {
