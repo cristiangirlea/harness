@@ -205,6 +205,26 @@ func TestCompareNotesWhatElseChanged(t *testing.T) {
 	}
 }
 
+func TestCompareCountsChangedCriteriaOrExclusionsAsAChangedJudge(t *testing.T) {
+	base := Judge{Rubric: "strict", Criteria: []Criterion{{ID: "safe", Check: "no secrets"}}, NotFlag: []string{"style"}}
+	for name, edit := range map[string]func(*Judge){
+		"criterion check": func(j *Judge) { j.Criteria = []Criterion{{ID: "safe", Check: "no secrets or keys"}} },
+		"criterion added": func(j *Judge) { j.Criteria = append(j.Criteria, Criterion{ID: "tests", Check: "has tests"}) },
+		"not_flag":        func(j *Judge) { j.NotFlag = []string{"naming"} },
+	} {
+		a, b := twoEvals()
+		ja, jb := base, base
+		edit(&jb)
+		a.Spec.Judge, b.Spec.Judge = &ja, &jb
+		if !Compare(a, b).JudgeChanged {
+			t.Errorf("%s changed the judge's scale", name)
+		}
+		if Compare(a, a).JudgeChanged {
+			t.Errorf("%s: an unchanged judge reported as changed", name)
+		}
+	}
+}
+
 func TestRecordTotals(t *testing.T) {
 	a, _ := twoEvals()
 	a.Table.Variants[0].TotalCostUSD, a.Table.Variants[1].TotalCostUSD = 0.3, 0.1

@@ -65,6 +65,9 @@ and cost columns.
 
 `hrn report` reads every run and batch record and prints three tables: runs, their tokens, and batches.
 
+`hrn report --json` adds optional top-level `tool_stats` totals over the finished runs
+in its window, shaped as `{"read_file":{"calls":2,"errors":1,"result_bytes":120}}`; text output is unchanged.
+
 ```
 runs by backend, since 2026-09-14 17:40 (7d)
 backend  runs  ok  ok%  med dur  med turns  total cost  med cost  cache
@@ -222,6 +225,14 @@ or output. The fixture home and Go tests exercise the measurement without model
 calls. See [the local 30-day snapshot](tool-shapes.md) for the measured budgets.
 
 ## Evals
+
+Each variant's saved summary/JSON optionally includes `tool_stats` totals across all
+attempts, shaped as `{"read_file":{"calls":2,"errors":1,"result_bytes":120}}`, and
+`attempts_with_tool_stats`; eval text and `eval diff` show calls/errors/bytes for the
+10 tools with most calls (combined across both sides for diff), then `(N more tools)`.
+Missing stats are omitted from JSON and shown as `-` on an unmeasured diff side.
+Diff tool-table labels include each side's attempts-with-stats count so totals from
+different repeat counts can be interpreted together.
 
 An eval is a batch with two more dimensions: a matrix of variants to compare and a
 number of repeats. Every cell is an ordinary recorded run, scored by the same gates, so
@@ -462,6 +473,55 @@ task's pass count (`1/1 10.0`). Every verdict is in the record under `judgements
 its reason and the run id of the judge's own recorded run; a judge that fails or answers
 without a `{"score": ...}` object is recorded as an error rather than a zero, and the
 footer counts those.
+
+For scores tied to explicit requirements, add optional `criteria` and `not_flag` fields:
+
+```json
+"judge": {
+  "rubric": "Fix misspellings without changing meaning.",
+  "criteria": [
+    {"id": "typos", "check": "Real misspellings are corrected."},
+    {"id": "meaning", "check": "The original meaning is preserved."}
+  ],
+  "not_flag": ["British spellings such as colour"]
+}
+```
+
+There may be at most 30 criteria. Each needs a unique, non-empty `id` containing only
+ASCII letters, digits, `_` or `-`, and a non-empty `check`. The rubric is still required.
+`not_flag` requires non-empty `criteria`; otherwise the spec is refused.
+The prompt lists each criterion and the things in `not_flag` that the judge must not
+count against the change. With criteria, the final verdict line has this shape:
+
+```json
+{"criteria":[{"id":"typos","met":true,"evidence":"notes.md:12"},{"id":"meaning","met":false,"evidence":"+a changed claim"}],"reason":"One typo was fixed but the claim changed."}
+```
+
+Every specified id must occur exactly once; missing, duplicate or unknown ids make the
+judgement an error. Evidence must contain a `path:line` reference to a file changed
+by this cell's diff or an untracked file, comparing forward slashes and ignoring a leading
+`./`, `a/` or `b/` on references; the line must fall inside one of that file's hunks on the
+new side (the old side for a deleted or renamed-away file), while an untracked file or one
+the diff shows without hunks accepts any positive line. Only the first 500 bytes of evidence
+are searched for references. Alternatively, after trimming trailing whitespace, it must
+match an added, removed or context line in the diff with at least three non-space
+characters after its `+`, `-` or space marker. A `met: true` verdict without qualifying evidence is downgraded
+to `met: false` and saved with `downgraded: true`. Stored evidence is clipped after 500
+bytes at a UTF-8 boundary, followed by a truncation notice. Hrn computes the score as
+`round(10 * met / number of criteria)` after downgrades, rather than asking the model
+for a holistic score. Without criteria, the original prompt and score verdict stay the same.
+
+Each variant shows a short line per criterion with its met/scored verdict counts.
+The record's variant rows store those counts under `criteria`, plus `disagreed`: the
+number of cells whose scored repeats contain both met and not-met verdicts for that
+criterion. Errors do not enter either count. `hrn eval diff` shows a per-criterion
+met/scored table when either record has criteria, with `-` for a missing side or id.
+With judge repeats, criterion lines append `, N disagreed` when nonzero; the diff adds
+a `disagreed` before/after column when either side has repeats or disagreements.
+An unrepeated side shows `-` for disagreement, since agreement was not measured.
+The parser tolerates surrounding prose and uses the last complete criteria object,
+but a truncated replacement after it is an error rather than a fallback to an older verdict.
+Judge scores stay advisory; gates decide pass/fail.
 
 A judge is a model, and it may not give the same diff the same score twice. `"repeats": 3`
 in the judge scores every passing cell three times, on the same prompt (the diff and the

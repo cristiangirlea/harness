@@ -141,9 +141,25 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: fmt.Sprintf("retrieval: mode=%s replayed=%t failure=%s", state.Mode, state.Replayed, state.Failure)})
 	}
 	calls := 0
+	var stats map[string]kernel.ToolStat
 	res := b.Run(ctx, task, func(e Event) {
 		if e.Kind == EventToolCall && !e.Partial {
 			calls++
+		}
+		if task.Durable == nil && ((e.Kind == EventToolCall && !e.Partial) || e.Kind == EventToolResult) {
+			if stats == nil {
+				stats = make(map[string]kernel.ToolStat)
+			}
+			s := stats[e.Tool]
+			if e.Kind == EventToolCall {
+				s.Calls++
+			} else {
+				s.ResultBytes += len(e.Text)
+				if e.IsError {
+					s.Errors++
+				}
+			}
+			stats[e.Tool] = s
 		}
 		emit(e)
 	})
@@ -155,6 +171,7 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 	}
 	if task.Durable == nil {
 		res.ToolCalls = calls
+		res.ToolStats = stats
 	}
 	return res
 }
