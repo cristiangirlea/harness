@@ -74,7 +74,7 @@ only wire types and their golden JSON, never behaviour.
 
 The root module keeps its no-`require` rule and does not import `contracts/`: the types it needs
 are copied, and an identity test (as `internal/retrieval/fixture_copies_test.go` does today for
-the knowledge fixtures) fails when the copies drift. The owner may instead allow a `require` of
+the knowledge fixtures) fails when the copies drift. A maintainer may instead allow a `require` of
 the repository's own nested modules; that is decision (b) below, and the rest of this spec is the
 same either way.
 
@@ -134,7 +134,7 @@ No microservices, no network boundary where a subprocess works, no in-process pl
 rewrite of a part to extract it, no `require` of a third-party module in the root module. A
 repository is not created to hold a design; it is created when a plugin release can be installed.
 
-## Decisions for the owner
+## Decisions for a maintainer
 
 - (a) Repository names. The epic lists candidates (`hrn-search`, `hrn-contracts`, `hrn-exec`,
   `hrn-memory`, `hrn-mcp`, Ada); this spec needs two now: the search plugin and, later, the server.
@@ -156,7 +156,7 @@ The epic issue #878 links #580, #574, #555 and #556 and lists these in order.
 1. #878 **epic: repository extraction, plugins first** — this spec's tracker; done when every issue
    below is closed or decided against, with the decision logged in PLAN.md.
 2. #879 **release: tag v0.2.0 and prove the release workflow and hrn update** (C8) — the release
-   workflow has never run; `hrn update` has nothing to find. Tagging is the owner's step; the
+   workflow has never run; `hrn update` has nothing to find. Tagging is a maintainer's step; the
    issue covers the dry run, the asset names `hrn update` expects and the install test.
 3. #880 **contracts: the plugin protocol v1 and the contracts module** (C7) — `contracts/` with
    `hello`, frames, errors, golden JSON, a README with the compatibility table; the root copies and
