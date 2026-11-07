@@ -146,7 +146,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: text})
 	}
-	if task.CompactWindow != "" {
+	if task.CompactWindow == "auto" {
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "compact_window: not enforced by the api backend"})
 	}
 	if task.NoSkills {
@@ -173,6 +173,11 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		saveConversation()
 		return finish(&res, started)
 	}
+	if err := CheckCompactWindow(b.Name(), task.CompactWindow); err != nil {
+		return fail(StatusError, err)
+	}
+	compactWindow, _ := strconv.ParseInt(string(task.CompactWindow), 10, 64)
+	var compaction apiCompaction
 
 	if task.Durable != nil && len(task.MCP) != 0 {
 		return fail(StatusError, errors.New("durable MCP execution requires an isolated executor; local MCP subprocesses are unsupported"))
@@ -311,6 +316,8 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		// Unknown request effects forbid automatic retries.
 		client.maxRetries = 0
 		firstTurn = durable.checkpoint.NextTurn
+		compaction = apiCompaction{k: durable.checkpoint.CompactionK, summary: durable.checkpoint.CompactionSummary,
+			failedContext: durable.checkpoint.CompactionFailedContext}
 		if durable.checkpoint.Finished {
 			return durable.checkpoint.Result
 		}
@@ -348,6 +355,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		return nil, false, nil
 	}
 	outgoing := func(req apiRequest) apiRequest {
+		req.Messages = compaction.messages(task.Prompt, req.Messages)
 		if task.MaskToolResults > 0 {
 			req.Messages = maskToolResults(req.Messages, task.MaskToolResults, func(name string, input json.RawMessage) string {
 				if t, ok := byName[name]; ok && t.Summary != nil {
@@ -357,6 +365,61 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 			})
 		}
 		return req
+	}
+	compact := func(turn int) *Result {
+		if compactWindow == 0 || turn >= maxTurns || res.ContextTokens < compactWindow || ctx.Err() != nil ||
+			compaction.failedContext > 0 && res.ContextTokens-compaction.failedContext < compactionMaxTokens ||
+			task.MaxCostUSD > 0 && res.CostUSD >= task.MaxCostUSD || durable != nil && durable.checkpoint.Pending != nil {
+			return nil
+		}
+		summaryReq := outgoing(req)
+		summaryReq.Messages = append([]apiMessage(nil), summaryReq.Messages...)
+		last := len(summaryReq.Messages) - 1
+		summaryReq.Messages[last].Content = append(append([]block(nil), summaryReq.Messages[last].Content...), block{"type": "text", "text": compactionPrompt})
+		summaryReq.MaxTokens = compactionMaxTokens
+		summaryReq.ToolChoice = block{"type": "none"}
+		// Reserve the summary's output budget for continuation text.
+		summaryReq.Thinking, summaryReq.OutputConfig, summaryReq.CacheControl = nil, nil, nil
+		if IsLoopbackHTTPURL(client.baseURL) {
+			summaryReq.ChatTemplateKwargs = block{"enable_thinking": false}
+		}
+		if durable != nil {
+			durable.checkpoint.Pending = &PendingOperation{Kind: "model", ID: fmt.Sprintf("compaction-turn-%d", turn)}
+			if err := durable.persist(ctx, "compaction_intent", req, res); err != nil {
+				return resultPtr(durableFailure(err))
+			}
+		}
+		msg, err := client.stream(ctx, summaryReq, func(string, string) {}, func(block) {})
+		var usage *Usage
+		if msg != nil {
+			usage = accountAPIUsage(&res, msg, model)
+			emit(Event{Time: time.Now(), Kind: EventUsage, Usage: usage})
+		}
+		var summary string
+		if err == nil {
+			summary, err = compactionSummary(msg)
+		}
+		if err == nil {
+			compaction = apiCompaction{k: len(req.Messages), summary: summary}
+		} else {
+			compaction.failedContext = res.ContextTokens
+		}
+		if durable != nil {
+			durable.checkpoint.CompactionK = compaction.k
+			durable.checkpoint.CompactionSummary = compaction.summary
+			durable.checkpoint.CompactionFailedContext = compaction.failedContext
+			durable.checkpoint.Pending = nil
+			if saveErr := durable.persist(ctx, "compaction_complete", req, res); saveErr != nil {
+				return resultPtr(durableFailure(saveErr))
+			}
+		}
+		if err != nil {
+			emit(Event{Time: time.Now(), Kind: EventError, Text: "compaction: " + err.Error()})
+			return nil
+		}
+		emit(Event{Time: time.Now(), Kind: EventCompaction, Text: "compact_window", Usage: &Usage{ContextTokens: res.ContextTokens}})
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "compaction summary: " + summary})
+		return nil
 	}
 	streamPhase := func(turn int, msg *apiResponse, restoredResponse bool) ([]block, string, *apiResponse, *Result) {
 		var err error
@@ -396,18 +459,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 
 		if msg != nil && !restoredResponse {
-			turn := Result{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens,
-				CacheRead: msg.Usage.CacheReadInputTokens, CacheWrite: msg.Usage.CacheCreationInputTokens}
-			res.ContextTokens = turn.InputTokens + turn.CacheRead + turn.CacheWrite
-			emit(Event{Time: time.Now(), Kind: EventUsage, Usage: &Usage{Model: servedModel(msg.Model, model),
-				InputTokens: turn.InputTokens, OutputTokens: turn.OutputTokens,
-				CacheRead: turn.CacheRead, CacheWrite: turn.CacheWrite, ContextTokens: res.ContextTokens}})
-			if addUsage(&res, "exclusive_cache", turn.InputTokens, turn.OutputTokens, turn.CacheRead, turn.CacheWrite) {
-				// Fallback turns must use their serving model's price.
-				res.CostUSD += estimateCost(servedModel(msg.Model, model), turn)
-			} else {
-				res.Usage.CostStatus = "missing"
-			}
+			usage := accountAPIUsage(&res, msg, model)
+			res.ContextTokens = usage.ContextTokens
+			emit(Event{Time: time.Now(), Kind: EventUsage, Usage: usage})
 		}
 		if err != nil && durable != nil && durable.checkpoint.Pending != nil {
 			return nil, "", nil, resultPtr(durableFailure(err))
@@ -521,6 +575,11 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		return nil
 	}
+	if durable != nil && durable.checkpoint.Boundary == "turn_complete" && len(req.Messages) > 0 && req.Messages[len(req.Messages)-1].Role == "user" {
+		if result := compact(firstTurn - 1); result != nil {
+			return *result
+		}
+	}
 	for turn := firstTurn; ; turn++ {
 		if turn > maxTurns {
 			return fail(StatusMaxTurns, fmt.Errorf("stopped after %d turns", maxTurns))
@@ -545,7 +604,25 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		if result := stopPhase(turn, msg, text); result != nil {
 			return *result
 		}
+		if msg.StopReason == "tool_use" {
+			if result := compact(turn); result != nil {
+				return *result
+			}
+		}
 	}
+}
+
+func accountAPIUsage(res *Result, msg *apiResponse, model string) *Usage {
+	turn := Result{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens,
+		CacheRead: msg.Usage.CacheReadInputTokens, CacheWrite: msg.Usage.CacheCreationInputTokens}
+	if addUsage(res, "exclusive_cache", turn.InputTokens, turn.OutputTokens, turn.CacheRead, turn.CacheWrite) {
+		// Fallback turns must use their serving model's price.
+		res.CostUSD += estimateCost(servedModel(msg.Model, model), turn)
+	} else {
+		res.Usage.CostStatus = "missing"
+	}
+	return &Usage{Model: servedModel(msg.Model, model), InputTokens: turn.InputTokens, OutputTokens: turn.OutputTokens,
+		CacheRead: turn.CacheRead, CacheWrite: turn.CacheWrite, ContextTokens: turn.InputTokens + turn.CacheRead + turn.CacheWrite}
 }
 
 func (b *APIBackend) runTools(ctx context.Context, ws *tools.Workspace, task Task, calls []block, invalid map[string]string, byName map[string]tools.Tool, emit func(Event)) []block {

@@ -43,6 +43,7 @@ type apiRequest struct {
 	Stream             bool         `json:"stream"`
 	System             []block      `json:"system,omitempty"`
 	Tools              []apiTool    `json:"tools,omitempty"`
+	ToolChoice         block        `json:"tool_choice,omitempty"`
 	Thinking           block        `json:"thinking,omitempty"`
 	ChatTemplateKwargs block        `json:"chat_template_kwargs,omitempty"`
 	CacheControl       block        `json:"cache_control,omitempty"`

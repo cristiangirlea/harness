@@ -299,6 +299,15 @@ streams. A top-level page load from elsewhere, such as the Access login redirect
 email link, opens the page when it carries no `Origin` header or `Origin: null`; any other
 Origin goes through the normal check and must be the public origin. Cross-site embedded loads
 and other cross-site requests remain refused.
+
+The Access application must cover at least `/login`. It may cover the whole host, or only
+`/login` with the rest passing through: the watch checks the `CF_Authorization` cookie
+itself either way. A page visit without a usable token (none, expired, or one that fails
+the check) gets a 403 page with a **Sign in** link to `/login`; the page loads no script or
+stylesheet, since those would be refused too. After signing in there, Access returns the
+visitor to `/login`, which sends them on to the index. Every other refusal, and any request
+that is not a page visit (event streams, assets, a POST), gets the plain-text 403
+"Cloudflare Access login required".
 It treats visitors as remote even though `cloudflared`
 connects from the same computer: the page omits the hrn home path and phone hints,
 and `/voice` is unavailable. You cannot open this public watch at its loopback URL

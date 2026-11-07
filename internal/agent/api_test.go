@@ -226,6 +226,7 @@ type fakeAPI struct {
 	mu       sync.Mutex
 	turns    [][]string
 	requests []map[string]any
+	bodies   [][]byte
 	headers  []http.Header
 	served   int
 }
@@ -238,6 +239,7 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	i := f.served
 	f.served++
 	f.requests = append(f.requests, req)
+	f.bodies = append(f.bodies, body)
 	f.headers = append(f.headers, r.Header.Clone())
 	f.mu.Unlock()
 	if i < len(f.turns) && f.turns[i] == nil {

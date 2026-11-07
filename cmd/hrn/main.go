@@ -354,6 +354,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if err := agent.ValidateOptions(opts); err != nil {
 		return 2, err
 	}
+	if err := agent.CheckCompactWindow(backend, opts.CompactWindow); err != nil {
+		return 2, err
+	}
 	ws, err := tools.NewWorkspace(dir)
 	if err != nil {
 		return 2, fmt.Errorf("-C %s: %w", dir, err)
@@ -405,6 +408,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	b, err := followup.Backend(backend)
 	if err != nil {
+		return 2, err
+	}
+	if err := agent.CheckCompactWindow(backend, opts.CompactWindow); err != nil {
 		return 2, err
 	}
 

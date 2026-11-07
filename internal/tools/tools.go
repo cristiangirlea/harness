@@ -22,6 +22,8 @@ const (
 
 type Tool struct {
 	Name        string
+	mcpServer   string
+	mcpTool     string
 	Description string
 	Properties  map[string]any
 	Required    []string
