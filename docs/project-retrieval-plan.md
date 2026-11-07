@@ -1,6 +1,6 @@
 # Project retrieval and measured LLM savings
 
-Status: landed on main on 2026-10-14 through the `durable` feature branch (#142). Increments 1–3 and the increment 4 fixture/comparison interface are implemented and opt-in; the real held-out pilot is not complete. Increments 5–6 remain gated. The implementation evidence is in PLAN.md's Decisions log entries for #140 and #141 and in the synthetic fixtures under `internal/eval/testdata/`. This document does not enable retrieval or authorize a deployment.
+Status: landed on main on 2026-10-14 through the `durable` feature branch (#142). Increments 1–3 and the increment 4 fixture/comparison interface are implemented and opt-in; the first held-out pilot ran on 2026-11-07 ([report](retrieval-pilot-report.md)); its separately labelled retry workflow experiment is not done. Increments 5–6 remain gated. The implementation evidence is in PLAN.md's Decisions log entries for #140 and #141 and in the synthetic fixtures under `internal/eval/testdata/`. This document does not enable retrieval or authorize a deployment.
 
 ## Objective and decision
 
@@ -97,7 +97,7 @@ Compare retrieval off against text retrieval on the same held-out tasks. Counter
 
 Acceptance: no new deterministic correctness or isolation failures, plus the promotion criterion below. If results are inconclusive, retain an opt-in pilot and collect more evidence. Increase task coverage and repeats before making broad claims.
 
-The pilot's corpus, held-out tasks, variants, counterbalancing, commands and decision rule are in [the retrieval pilot plan](retrieval-pilot.md).
+The pilot's corpus, held-out tasks, variants, counterbalancing, commands and decision rule are in [the retrieval pilot plan](retrieval-pilot.md). Its results are in [the pilot report](retrieval-pilot-report.md).
 
 ### 5. Evaluated memory consolidation
 

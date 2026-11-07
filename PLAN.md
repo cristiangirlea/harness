@@ -287,6 +287,18 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-07: increment 4, the retrieval pilot (`docs/retrieval-pilot-report.md`), run on the
+  maintainer's word as an override of step 0's no-go: 60 codex `gpt-6.1-sol` runs at `11a5094`,
+  10 held-out tasks × `off`/`text` × 3 repeats, counterbalanced. Equal success read by hand (30 of
+  30 each; the pattern scores 28 and 29, its three failures are correct "has no ... command"
+  answers), and `text` used 44% fewer model tokens at the median (paired 50%). A packet holding
+  the answer (5 of 10 tasks) brought a task from about 94,000 tokens to 25,500 with no tool calls;
+  one without the answer's guide cost about 7% more. The gate stays `pending` until binding (decision 2). R is not the
+  newest main because the 11 guides passed the 100-entry import limit at `b6fe55e`.
+- 2026-11-07: #867, `hrn retrieval compare` accepts batch results as they are recorded (PR #870).
+  The run's `result.json` gains close-time git fields and the batch copy gains gate evidence, so
+  the exact comparison refused every cell of a real eval. The batch copy may now lack each
+  close-time field or match it, and may add only `gate` evidence after the run's own.
 - 2026-11-07: #799, refused actions reached another way are flagged (PR #863). After an api run, a
   pass over its events (no model call, no file read) flags a later `run_command` that runs a file
   this run wrote with a line breaking the same rule (`script`), a write whose content holds the

@@ -1,0 +1,52 @@
+[
+  {
+    "id": "gate-timeout",
+    "prompt": "An hrn batch gate was killed and its task failed. When neither the spec nor the task sets gate_timeout, how long may one gate command run before hrn kills it? Answer with the duration.",
+    "expect": "(?i)\\b(15[\\s-]*m(in(ute)?s?)?|15m0s|fifteen[\\s-]minutes?)\\b"
+  },
+  {
+    "id": "markdown-max-words",
+    "prompt": "What is the default maximum number of words per knowledge entry that `hrn knowledge markdown` produces before it splits a heading section? Answer with the number.",
+    "expect": "\\b800\\b"
+  },
+  {
+    "id": "fixture-port",
+    "prompt": "Which local TCP port does the disposable PostgreSQL fixture for the server module's integration tests listen on? Answer with the port number.",
+    "expect": "\\b54329\\b"
+  },
+  {
+    "id": "job-cost-cap",
+    "prompt": "Which environment variable makes the hrn control service refuse a job submission whose max_cost_usd is above a limit? Answer with the variable name.",
+    "expect": "HRN_MAX_COST_USD_PER_JOB"
+  },
+  {
+    "id": "postgres-boundary",
+    "prompt": "In the hrn server design, which component is the only one that connects to PostgreSQL? Answer with the component's name.",
+    "expect": "(?i)control service|hrn-server"
+  },
+  {
+    "id": "retrieval-record",
+    "prompt": "Which file in an hrn run directory holds the retrieval packet, scope and version pin that are saved before the backend starts? Answer with the file name.",
+    "expect": "retrieval\\.json"
+  },
+  {
+    "id": "slot-lock-wait",
+    "prompt": "When hrn takes a worktree slot it holds a lock on the slot creation lock file. How long does a take wait for that lock? Answer with the duration.",
+    "expect": "(?i)\\b((two|2)[\\s-]*min(ute)?s?|2m(0s)?|120\\s*s(ec(ond)?s?)?)\\b"
+  },
+  {
+    "id": "watch-log-rotation",
+    "prompt": "When `hrn watch` rotates its access log, what is the file name the current log is moved to? Answer with the file name.",
+    "expect": "watch-access\\.log\\.1\\b"
+  },
+  {
+    "id": "query-bytes",
+    "prompt": "For a first attempt with retrieval enabled, how many bytes of the task prompt does hrn send as the knowledge search query? Answer with the number.",
+    "expect": "\\b2048\\b"
+  },
+  {
+    "id": "absent-command",
+    "prompt": "Describe the flags of the `hrn teleport` command. If this repository has no such command, say plainly that it does not exist.",
+    "expect": "(?i)\\b(there is no|there['’]s no|no such|not an? (hrn )?(sub)?command|isn['’]t an? (hrn )?(sub)?command|(does not|doesn['’]t) exist)\\b"
+  }
+]

@@ -1,0 +1,1082 @@
+[
+  {
+    "task_id": "gate-timeout",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082120-ae8acb"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "gate-timeout",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082148-08ce66"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 53735500
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "fixture-port",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082154-e62c4d"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "fixture-port",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082220-f2b984"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 50317900
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "postgres-boundary",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082227-65f71f"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "postgres-boundary",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082249-9b0fb7"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 25967400
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "slot-lock-wait",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082256-078b05"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "slot-lock-wait",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082320-bd059f"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 38010500
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "query-bytes",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082329-76dfd2"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "query-bytes",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082359-554f54"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 47258000
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "markdown-max-words",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082510-1557d0"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 1545076800
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "markdown-max-words",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082519-69a8b1"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "job-cost-cap",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082539-2b4a83"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 44436800
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "job-cost-cap",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082606-7c8048"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "retrieval-record",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082630-784369"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 35746500
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "retrieval-record",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082648-31eaf3"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "watch-log-rotation",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082715-241b89"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 244671700
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "watch-log-rotation",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082737-cb1f4c"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "absent-command",
+    "variant": "text",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082802-5889e0"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": false,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 1218324200
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "absent-command",
+    "variant": "off",
+    "repeat": 0,
+    "run_refs": [
+      "20261107-082823-aa6623"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": false,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "gate-timeout",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-082847-1907a1"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 46817400
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "gate-timeout",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-082853-6190cf"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "fixture-port",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-082922-02a1e9"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 26955000
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "fixture-port",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-082928-9fa6ee"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "postgres-boundary",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-082949-08eb73"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 17045400
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "postgres-boundary",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-082955-c94d2a"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "slot-lock-wait",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083014-21b4c9"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 39942900
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "slot-lock-wait",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083022-dbcf21"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "query-bytes",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083039-50671e"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 958171100
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "query-bytes",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083109-fb5c9c"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "markdown-max-words",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083139-2a91d8"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "markdown-max-words",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083202-d08a4f"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 112739100
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "job-cost-cap",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083207-360d28"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "job-cost-cap",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083227-ccef72"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 1455980800
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "retrieval-record",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083250-403944"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "retrieval-record",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083311-cb8133"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 30435500
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "watch-log-rotation",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083328-f3f5b5"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "watch-log-rotation",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083354-6bb206"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 23867400
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "absent-command",
+    "variant": "off",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083419-f0c853"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "absent-command",
+    "variant": "text",
+    "repeat": 1,
+    "run_refs": [
+      "20261107-083437-18821d"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 30614200
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "gate-timeout",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083502-18698e"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "gate-timeout",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083524-6eae3b"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 1275347900
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "fixture-port",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083532-4853a2"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "fixture-port",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083552-8a9cde"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 28075300
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "postgres-boundary",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083557-aec03f"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "postgres-boundary",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083624-504517"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 16729600
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "slot-lock-wait",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083631-4ee5d4"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "slot-lock-wait",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083648-4d8c67"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 596753200
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "query-bytes",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083654-293230"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "query-bytes",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083717-b37555"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 1756006800
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "markdown-max-words",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083746-2daa85"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 758895800
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "markdown-max-words",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083753-0f7da0"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "job-cost-cap",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083815-506469"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 34817000
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "job-cost-cap",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083833-2382e3"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "retrieval-record",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083852-5ff275"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 442799900
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "retrieval-record",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083910-d3f13c"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "watch-log-rotation",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-083940-a7b64c"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 34591900
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "watch-log-rotation",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-084004-a8bca3"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "absent-command",
+    "variant": "text",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-084028-496f45"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": true,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 25228600
+      }
+    },
+    "isolation_failure": false
+  },
+  {
+    "task_id": "absent-command",
+    "variant": "off",
+    "repeat": 2,
+    "run_refs": [
+      "20261107-084047-eb6f26"
+    ],
+    "usage": {
+      "attempts": [],
+      "passed": false,
+      "online": {
+        "model_tokens": 0,
+        "cost_usd": 0,
+        "duration_ns": 0
+      }
+    },
+    "isolation_failure": false
+  }
+]

@@ -1,0 +1,60 @@
+{
+  "token_savings_supported": false,
+  "baseline_median_tokens": 98230.5,
+  "candidate_median_tokens": 54860.5,
+  "median_token_reduction": 0.4415125648347509,
+  "cost_savings_supported": false,
+  "evidence_kind": "supplied_unverified",
+  "expected_pairs": 30,
+  "observed_pairs": 30,
+  "comparable_pairs": 30,
+  "baseline": {
+    "preparation_tokens_known": true,
+    "preparation_cost_known": true,
+    "tasks": 30,
+    "successes": 28,
+    "known_token_tasks": 30,
+    "known_cost_tasks": 30,
+    "estimated": true,
+    "known_tokens": 2864370,
+    "known_cost_usd": 1.3014728000000002,
+    "known_tokens_per_success": 102298.92857142857,
+    "known_cost_per_success": 0.04648117142857144,
+    "preparation": {
+      "model_tokens": 0,
+      "cost_usd": 0,
+      "duration_ns": 0
+    },
+    "preparation_reuse": 1,
+    "amortized_preparation_usd": 0
+  },
+  "candidate": {
+    "preparation_tokens_known": true,
+    "preparation_cost_known": true,
+    "tasks": 30,
+    "successes": 29,
+    "known_token_tasks": 30,
+    "known_cost_tasks": 30,
+    "estimated": true,
+    "known_tokens": 1843998,
+    "known_cost_usd": 1.0056840000000002,
+    "known_tokens_per_success": 63586.137931034486,
+    "known_cost_per_success": 0.03467875862068966,
+    "preparation": {
+      "model_tokens": 0,
+      "cost_usd": 0,
+      "duration_ns": 0
+    },
+    "preparation_reuse": 1,
+    "amortized_preparation_usd": 0
+  },
+  "median_paired_saving": 0.4991650390933465,
+  "passing_pairs": 28,
+  "passing_baseline_median_tokens": 98373,
+  "passing_candidate_median_tokens": 31005.5,
+  "passing_median_token_reduction": 0.6848169721366635,
+  "baseline_median_movement": 0.006156162506449675,
+  "saving_threshold": 0.1,
+  "gate": "pending",
+  "reason": "higher success; corpus and check binding unverified; measured savings unsupported"
+}
