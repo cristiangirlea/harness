@@ -382,3 +382,14 @@ func TestParseCheckOptionIsRecordedForAPIOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestCommandGateOptionIsRecordedForAPIOnly(t *testing.T) {
+	for _, backend := range []string{"api", "claude", "codex", "gemini", "opencode", "agy"} {
+		for _, enabled := range []bool{false, true} {
+			lines := optionLines(backend, Options{Gate: enabled})
+			if slices.Contains(lines, "option command_gate") != (backend == "api" && enabled) {
+				t.Fatalf("%s enabled=%v: %v", backend, enabled, lines)
+			}
+		}
+	}
+}

@@ -179,6 +179,40 @@ environment of its own git commands, of agent CLIs, of the api backend's command
 servers, and of gates (an MCP server's own `env` in its config still applies). A git hook or a `!` alias that starts hrn sets some of them, and git would then act
 on that repository instead of the task's.
 
+#### The command gate
+
+With `--gate` (`command_gate`), the api backend's `run_command` runs each command through
+[adanext-exec](https://github.com/cristiangirlea/adanext-exec) instead of starting the shell
+itself: `adanext-exec run --shell <bash|powershell|sh> --agent hrn --timeout <t> --run-id <run>
+-- <command>`, with the same working directory and the same guarded environment. hrn names the
+kind of shell it would pick; the gate finds that shell's program itself (Git Bash on Windows,
+never a WSL launcher), which can be another copy than the one hrn found. hrn's guard still runs
+first, so a command it refuses never reaches the gate. A command that names the gate's
+`-approved` or `-script-b64` flag is refused before the gate, `--allow-dangerous` or not, as
+the gate's own hook refuses it, so a nested `adanext-exec run` cannot plainly approve its own
+ask. It is a text check that quoting can get past: the boundary is the gate's own trust in
+its user, as its design says. The gate applies its own policy (`policy.json` in the user's adanext-exec config, or its
+built-in rules), kills the command's whole tree at the timeout and writes one audit line per
+command in its own state directory. Its output and exit code pass through unchanged.
+
+hrn reads the gate's exit codes as [its protocol](https://github.com/cristiangirlea/adanext-exec/blob/main/docs/protocol.md)
+gives them. 125 with the gate's own message is a refusal, returned to the model as an error it
+should not retry unchanged; an `ask` from the policy is refused the same way, since hrn passes
+no approval to the gate yet. 121, 123, 126 and 127 with the gate's message mean the gate did not
+run the command, which is an error naming the gate's reason. 124 after the timeout is a
+timeout. The same codes from a command that ran (its output does not start with the gate's
+message, or 124 before the timeout) stay the command's own. A gate that cannot be started is an
+error too: the command never falls back to the shell. When the run is cancelled, hrn asks the
+gate to stop (on Linux and macOS a terminate signal, so the gate kills the command's tree and
+writes its audit line) and kills it if it has not ended five seconds later; it does the same 15
+seconds after the timeout if the gate has not ended by then. On Windows hrn ends the gate and
+its command at once, through its job, and the gate writes no audit line for that command.
+
+The run checks the gate once before it starts (`adanext-exec check --json` must answer
+`adanext-exec/1`); the CLI backends refuse `--gate` until their commands are routed. Neither
+the gate's decision nor its rule is in the run record yet: the tool result carries the gate's
+message, and the audit line is the gate's record.
+
 #### The guard for every backend
 
 A command line can be spelled many ways, so every backend also runs under a guarded

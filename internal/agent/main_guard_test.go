@@ -15,6 +15,9 @@ import (
 // the test binary standing in for a CLI or an MCP server, keeps what it was
 // started with: that is what it reports.
 func TestMain(m *testing.M) {
+	if isFakeGate() {
+		os.Exit(fakeGate(os.Args[1:]))
+	}
 	helper := slices.ContainsFunc(os.Args, func(a string) bool { return strings.HasPrefix(a, "-test.run=^TestHelper") })
 	if !helper {
 		os.Unsetenv(tools.GuardedVar)

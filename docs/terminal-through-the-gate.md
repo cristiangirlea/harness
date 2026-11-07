@@ -2,8 +2,9 @@
 
 [← README](../README.md)
 
-Status: proposed, 2026-10-20, for issue #435. Nothing here is built; each slice below is its own
-pull request once this note is approved. The gate is
+Status: proposed 2026-10-20 for issue #435 and approved 2026-10-31, to be built slice by slice
+in the order below, each its own pull request. Slice 1 is built
+([the command gate](permissions.md#the-command-gate)); the others are not. The gate is
 [adanext-exec](https://github.com/cristiangirlea/adanext-exec); its design and build happen there.
 
 ## The goal
@@ -182,6 +183,12 @@ default off) until a maintainer turns it on.
    with the shell named, the run id as caller and a version handshake; when `--gate` is on and
    the binary is missing or older, the run fails before it starts. hrn's guard still runs first.
    Records gain the gate fields. Tests use a `TestHelper*` stand-in for the binary.
+   *Built* with these differences: the handshake is `adanext-exec check --json`, which a binary
+   older than protocol v1's `check` cannot answer; the run record gains `command_gate` (and its
+   setup line), not per-result gate fields, since the binary returns only an exit code and its
+   message (the decision and rule wait for the audit read-back gap above); the CLI backends
+   refuse `--gate` until they are routed (decision 4 says whether agy stays refused); and the
+   stand-in is the test binary copied under the gate's name, found in PATH like the real one.
 2. **The guard handed to the gate** (needs M2). hrn passes the profile; `internal/tools/guard.go`
    becomes a thin adapter once harness's guard tests pass against the gate; the guard stays in
    hrn for runs without `--gate`.
