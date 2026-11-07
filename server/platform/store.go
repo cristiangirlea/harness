@@ -25,10 +25,10 @@ type Store struct {
 }
 
 func checkSchemaVersion(version int) error {
-	if version < 5 {
+	if version < 6 {
 		return fmt.Errorf("unsupported schema version %d: run the explicit migrate command", version)
 	}
-	if version != 5 {
+	if version != 6 {
 		return fmt.Errorf("unsupported schema version %d", version)
 	}
 	return nil
@@ -96,7 +96,7 @@ func Migrate(ctx context.Context, dsn string) error {
 	if err := tx.QueryRow(ctx, "SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&version); err != nil {
 		return err
 	}
-	if version > 5 {
+	if version > 6 {
 		return fmt.Errorf("database schema version %d is newer than this binary", version)
 	}
 	if version == 0 {
@@ -157,6 +157,18 @@ func Migrate(ctx context.Context, dsn string) error {
 			return fmt.Errorf("migration 5: %w", err)
 		}
 		if _, err = tx.Exec(ctx, "INSERT INTO schema_migrations(version) VALUES (5)"); err != nil {
+			return err
+		}
+	}
+	if version <= 5 {
+		script, err := migrationFiles.ReadFile("migrations/006_knowledge_ranking.sql")
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("migration 6: %w", err)
+		}
+		if _, err = tx.Exec(ctx, "INSERT INTO schema_migrations(version) VALUES (6)"); err != nil {
 			return err
 		}
 	}

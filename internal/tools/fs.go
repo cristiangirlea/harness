@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -64,29 +65,77 @@ func readFile() Tool {
 			if err != nil {
 				return "", err
 			}
-			data, err := os.ReadFile(p)
+			info, err := os.Stat(realPath(p))
 			if err != nil {
 				return "", err
 			}
+			if !info.Mode().IsRegular() {
+				return "", fmt.Errorf("%q is not a regular file", ws.Rel(p))
+			}
+			f, _, err := ws.openInside(p, os.O_RDONLY, 0)
+			if err != nil {
+				return "", err
+			}
+			defer f.Close()
 			if args.Offset < 1 {
 				args.Offset = 1
 			}
 			if args.Limit <= 0 {
 				args.Limit = 2000
 			}
-			lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
-			if args.Offset > len(lines) {
-				return fmt.Sprintf("(file has %d lines)", len(lines)), nil
+			b := &boundedBuffer{keepHead: maxOutput * 2 / 3, keepTail: maxOutput / 3}
+			r := bufio.NewReader(f)
+			lineStart, pendingCR := true, false
+			count, end := 0, 0
+			for {
+				if err := ctx.Err(); err != nil {
+					return "", err
+				}
+				part, err := r.ReadSlice('\n')
+				if err != nil && err != io.EOF && err != bufio.ErrBufferFull {
+					return "", err
+				}
+				selected := count >= args.Offset-1 && count-(args.Offset-1) < args.Limit
+				if selected {
+					if lineStart {
+						fmt.Fprintf(b, "%d\t", count+1)
+					}
+					if pendingCR && (len(part) == 0 || part[0] != '\n') {
+						b.Write([]byte{'\r'})
+					}
+					pendingCR = false
+					if err == nil {
+						part = part[:len(part)-1]
+						if len(part) > 0 && part[len(part)-1] == '\r' {
+							part = part[:len(part)-1]
+						}
+					} else if err == bufio.ErrBufferFull && part[len(part)-1] == '\r' {
+						pendingCR = true
+						part = part[:len(part)-1]
+					}
+					b.Write(part)
+				}
+				if err == bufio.ErrBufferFull {
+					lineStart = false
+					continue
+				}
+				lineStart = true
+				count++
+				if selected {
+					b.Write([]byte{'\n'})
+					end = count
+				}
+				if err == io.EOF {
+					break
+				}
 			}
-			end := min(args.Offset-1+args.Limit, len(lines))
-			var b strings.Builder
-			for i := args.Offset - 1; i < end; i++ {
-				fmt.Fprintf(&b, "%d\t%s\n", i+1, lines[i])
+			if args.Offset > count {
+				return fmt.Sprintf("(file has %d lines)", count), nil
 			}
-			if end < len(lines) {
-				fmt.Fprintf(&b, "(%d more lines; continue with offset=%d)\n", len(lines)-end, end+1)
+			if end < count {
+				fmt.Fprintf(b, "(%d more lines; continue with offset=%d)\n", count-end, end+1)
 			}
-			return Truncate(b.String()), nil
+			return b.String(), nil
 		},
 	}
 }
@@ -122,10 +171,19 @@ func writeFile() Tool {
 			if err := ws.checkParse(p, []byte(args.Content)); err != nil {
 				return "", err
 			}
-			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			f, _, err := ws.openInside(p, os.O_WRONLY, 0o644)
+			if err != nil {
 				return "", err
 			}
-			if err := os.WriteFile(p, []byte(args.Content), 0o644); err != nil {
+			if err := f.Truncate(0); err != nil {
+				f.Close()
+				return "", err
+			}
+			if _, err := f.Write([]byte(args.Content)); err != nil {
+				f.Close()
+				return "", err
+			}
+			if err := f.Close(); err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("wrote %s (%d bytes)", ws.Rel(p), len(args.Content)), nil
@@ -171,9 +229,17 @@ func editFile() Tool {
 			if err != nil {
 				return "", err
 			}
-			data, err := os.ReadFile(p)
+			f, _, err := ws.openInside(p, os.O_RDONLY, 0)
 			if err != nil {
 				return "", err
+			}
+			data, err := io.ReadAll(f)
+			closeErr := f.Close()
+			if err != nil {
+				return "", err
+			}
+			if closeErr != nil {
+				return "", closeErr
 			}
 			content := string(data)
 			old := args.OldString
@@ -187,7 +253,7 @@ func editFile() Tool {
 			n := strings.Count(content, old)
 			switch {
 			case n == 0:
-				return "", errors.New("old_string not found in file")
+				return "", errors.New(closestLinesForMatch(content, args.OldString, old))
 			case n > 1 && !args.ReplaceAll:
 				return "", fmt.Errorf("old_string matches %d times; add more context or set replace_all", n)
 			}
@@ -201,7 +267,19 @@ func editFile() Tool {
 			if err := ws.checkParse(p, []byte(content)); err != nil {
 				return "", err
 			}
-			if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			f, _, err = ws.openInside(p, os.O_WRONLY, 0o644)
+			if err != nil {
+				return "", err
+			}
+			if err := f.Truncate(0); err != nil {
+				f.Close()
+				return "", err
+			}
+			if _, err := f.Write([]byte(content)); err != nil {
+				f.Close()
+				return "", err
+			}
+			if err := f.Close(); err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("edited %s (%d replacement(s))", ws.Rel(p), replaced), nil
