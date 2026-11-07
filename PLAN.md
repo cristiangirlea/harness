@@ -287,6 +287,11 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-07: #873, both modules on Go 1.26.10 and `server/` on `golang.org/x/text` v0.43.0
+  (PR #875). The first `vuln` run found CI and release binaries built with 1.26.4, the version
+  every workflow reads from `go.mod`, with 21 reachable standard-library advisories per module,
+  plus two x/text ones. 1.26.9 left GO-2026-6809 (crypto/x509), fixed only in 1.26.10. A `vuln`
+  run dispatched on the branch is how a toolchain or dependency bump is confirmed before merging.
 - 2026-11-07: #838, CI may fetch a pinned `govulncheck` with `go run` (PR #860): the `vuln`
   workflow checks both modules every Monday and on demand, on GitHub's runners, read-only, and
   stays off pull requests so an overnight advisory does not block unrelated work. The modules
