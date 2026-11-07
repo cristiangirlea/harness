@@ -44,6 +44,7 @@ Do not attach self-hosted runners or route public contributions to private machi
 - **The api history is append-only** (`api.go`): assistant turns go back exactly as received.
   Never trim, rewrite or reorder earlier messages; context is reduced server-side. With
   `mask_tool_results` set, old tool results are masked in the outgoing request only.
+  Numeric `compact_window` compaction also changes only outgoing requests, keeping stored history whole.
 - **Comments say why, not what**: one line, three at most (a doc comment: one sentence, plus one
   for a non-obvious contract); no issue numbers, dates or review history. Long explanations go to
   `docs/`. `scripts/comment-check.sh` enforces it; its baseline only shrinks.
