@@ -625,10 +625,18 @@ func TestRetrievalCompareRunsRecordedShapes(t *testing.T) {
 		{"run evidence changed", func(r *agent.Result) {
 			r.Evidence = []kernel.Evidence{kernelEvidence("knowledge", "e_2", "packet"), gate}
 		}, true},
+		{"same close-time fields", func(r *agent.Result) {
+			r.EndHead, r.ChangedFiles, r.Commits = "head", []string{"a.go"}, []string{"c1"}
+		}, false},
+		{"some close-time fields", func(r *agent.Result) { r.EndHead, r.ChangedFiles = "head", []string{} }, false},
 		{"other end head", func(r *agent.Result) { r.EndHead = "other" }, true},
 		{"other changed files", func(r *agent.Result) { r.ChangedFiles = []string{"b.go"} }, true},
+		{"other commits", func(r *agent.Result) { r.EndHead, r.Commits = "head", []string{"c2"} }, true},
+		{"truncated only in batch", func(r *agent.Result) { r.ChangedFilesTruncated = true }, true},
 		{"other tokens", func(r *agent.Result) { r.InputTokens++ }, true},
 		{"other final", func(r *agent.Result) { r.Final = "changed" }, true},
+		{"other status", func(r *agent.Result) { r.Status = agent.StatusError }, true},
+		{"other model", func(r *agent.Result) { r.Model = "other" }, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -679,6 +687,18 @@ func TestRetrievalCompareRunsRecordedShapes(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestBatchResultMatchesRunLeavesInputs(t *testing.T) {
+	knowledge, gate := kernelEvidence("knowledge", "e_1", "packet"), kernelEvidence("gate", "expect /x/", "x")
+	b := agent.Result{Evidence: []kernel.Evidence{knowledge, gate}}
+	r := agent.Result{Evidence: []kernel.Evidence{knowledge}, EndHead: "head", ChangedFiles: []string{"a.go"}}
+	if !batchResultMatchesRun(b, r) {
+		t.Fatal("recorded shape refused")
+	}
+	if len(b.Evidence) != 2 || b.Evidence[1].Kind != "gate" || b.EndHead != "" || b.ChangedFiles != nil || len(r.Evidence) != 1 {
+		t.Fatalf("inputs changed: batch %+v, run %+v", b, r)
 	}
 }
 

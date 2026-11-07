@@ -583,10 +583,20 @@ func resolveRetrievalRunsWithModels(m eval.RetrievalManifest, cells []eval.Retri
 }
 
 // batchResultMatchesRun allows only what each record adds after the agent returns:
-// the run record's close-time git fields, and gate evidence batch appends after the run's own.
+// the run record's close-time git fields (each absent or equal in the batch copy), and gate
+// evidence batch appends after the run's own.
 func batchResultMatchesRun(b, r agent.Result) bool {
-	if b.EndHead == "" && b.ChangedFiles == nil && !b.ChangedFilesTruncated && b.Commits == nil {
-		b.EndHead, b.ChangedFiles, b.ChangedFilesTruncated, b.Commits = r.EndHead, r.ChangedFiles, r.ChangedFilesTruncated, r.Commits
+	if b.EndHead == "" {
+		b.EndHead = r.EndHead
+	}
+	if len(b.ChangedFiles) == 0 {
+		b.ChangedFiles = r.ChangedFiles
+	}
+	if !b.ChangedFilesTruncated {
+		b.ChangedFilesTruncated = r.ChangedFilesTruncated
+	}
+	if len(b.Commits) == 0 {
+		b.Commits = r.Commits
 	}
 	if len(b.Evidence) < len(r.Evidence) {
 		return false
