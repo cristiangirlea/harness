@@ -75,6 +75,14 @@ with its `repeat` number; variant and task rows add `judge_repeats`, `score_min`
 repeat). Older records have one verdict
 per cell, no repeat number and no spread, and still load.
 
+A judge may also store `criteria` (`id`, `check`) and `not_flag` exclusions. Each
+judgement's optional `criteria` contains `id`, `met`, `evidence` and, when evidence was
+invalid or missing for a met verdict, `downgraded: true`. Evidence is clipped to its
+first 500 bytes at a UTF-8 boundary, with a truncation notice appended. Its score is
+computed from the fraction met after downgrades. Variant rows' optional `criteria` summaries hold `id`, `met`,
+`scored` verdict counts and `disagreed` cell counts for repeats that differed. Zero
+counts may be omitted. Old judgements and summaries without criteria still load.
+
 Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; runs without an applied route may include `route_note` explaining the choice, and old records still load.
 
 Every run records `setup`, the agent setup it started with, read when the record is

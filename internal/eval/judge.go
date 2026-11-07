@@ -8,11 +8,15 @@ import (
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/remote"
 	"github.com/cristiangirlea/harness/internal/resolve"
+	"math"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
@@ -32,19 +36,34 @@ type Judge struct {
 	// Timeout is per judgement; default 5m.
 	Timeout agent.Duration `json:"timeout,omitempty"`
 	// Repeats defaults to 1; repeats measure judge noise.
-	Repeats int `json:"repeats,omitempty"`
+	Repeats  int         `json:"repeats,omitempty"`
+	Criteria []Criterion `json:"criteria,omitempty"`
+	NotFlag  []string    `json:"not_flag,omitempty"`
+}
+
+type Criterion struct {
+	ID    string `json:"id"`
+	Check string `json:"check"`
+}
+
+type CriterionVerdict struct {
+	ID         string `json:"id"`
+	Met        bool   `json:"met"`
+	Evidence   string `json:"evidence"`
+	Downgraded bool   `json:"downgraded,omitempty"`
 }
 
 // Judgement is the judge's verdict on one cell.
 type Judgement struct {
-	Cell         string  `json:"cell"`
-	Score        int     `json:"score"` // 0-10; meaningless when Error is set
-	Reason       string  `json:"reason,omitempty"`
-	RunID        string  `json:"run_id,omitempty"`
-	CostUSD      float64 `json:"cost_usd,omitempty"`
-	CostEstimate bool    `json:"cost_is_estimate,omitempty"`
-	Error        string  `json:"error,omitempty"`  // the judge could not score this cell
-	Repeat       int     `json:"repeat,omitempty"` // 1-based when the judge repeats; unset otherwise
+	Cell         string             `json:"cell"`
+	Score        int                `json:"score"` // 0-10; meaningless when Error is set
+	Reason       string             `json:"reason,omitempty"`
+	RunID        string             `json:"run_id,omitempty"`
+	CostUSD      float64            `json:"cost_usd,omitempty"`
+	CostEstimate bool               `json:"cost_is_estimate,omitempty"`
+	Error        string             `json:"error,omitempty"`  // the judge could not score this cell
+	Repeat       int                `json:"repeat,omitempty"` // 1-based when the judge repeats; unset otherwise
+	Criteria     []CriterionVerdict `json:"criteria,omitempty"`
 }
 
 // Scored reports whether the judgement carries a score.
@@ -54,7 +73,12 @@ const (
 	defaultJudgeTimeout = 5 * time.Minute
 	maxJudgeDiff        = 60_000 // bytes of diff shown to the judge
 	maxJudgeAnswer      = 8_000
+	maxEvidence         = 500 // bytes of a criterion's evidence stored and scanned for references
 )
+
+var criterionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+var diffHeaderPaths = regexp.MustCompile(`^diff --git ("(?:\\.|[^"])*"|a/.*?) ("(?:\\.|[^"])*"|b/.*)$`)
+var hunkHeader = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 
 func (j *Judge) rubricFor(task string) string {
 	if r, ok := j.Rubrics[task]; ok {
@@ -81,6 +105,25 @@ func (j *Judge) check(tasks []batch.Task) error {
 	}
 	if j.Repeats < 0 {
 		return fmt.Errorf("judge: repeats %d is negative", j.Repeats)
+	}
+	if len(j.Criteria) > 30 {
+		return errors.New("judge: at most 30 criteria are allowed")
+	}
+	if len(j.NotFlag) > 0 && len(j.Criteria) == 0 {
+		return errors.New("judge: not_flag needs criteria")
+	}
+	seen := map[string]bool{}
+	for _, c := range j.Criteria {
+		if !criterionID.MatchString(c.ID) {
+			return fmt.Errorf("judge: invalid criterion id %q; use letters, digits, underscores or hyphens", c.ID)
+		}
+		if seen[c.ID] {
+			return fmt.Errorf("judge: duplicate criterion id %q", c.ID)
+		}
+		seen[c.ID] = true
+		if strings.TrimSpace(c.Check) == "" {
+			return fmt.Errorf("judge: criterion %q has an empty check", c.ID)
+		}
 	}
 	// Validate effort before spending on cells the judge cannot grade.
 	if err := agent.ValidateOptions(agent.Options{Effort: j.Effort}); err != nil {
@@ -137,7 +180,7 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 	for i, tr := range cells {
 		task, _, _ := splitID(tr.ID)
 		shown[i] = sync.OnceValue(func() evidence {
-			ev := evidenceOf(ctx, res, tr, prompts[task], j.rubricFor(task))
+			ev := evidenceOf(ctx, res, tr, prompts[task], j.rubricFor(task), j)
 			dirs[i] = ev.dir
 			return ev
 		})
@@ -207,9 +250,12 @@ func judgeAll(ctx context.Context, spec Spec, res batch.Result, notify func(batc
 }
 
 type evidence struct {
-	prompt string
-	dir    string
-	err    error
+	prompt    string
+	dir       string
+	err       error
+	diff      string
+	untracked []string
+	changes   *changedLines // built once per cell when the judge has criteria
 }
 
 // Report cancellation rather than an incidental git failure it caused.
@@ -220,7 +266,7 @@ func canceledOr(ctx context.Context, ev evidence) evidence {
 	return ev
 }
 
-func evidenceOf(ctx context.Context, res batch.Result, tr batch.TaskResult, prompt, rubric string) evidence {
+func evidenceOf(ctx context.Context, res batch.Result, tr batch.TaskResult, prompt, rubric string, j *Judge) evidence {
 	diff, untracked, err := batch.Diff(ctx, res, tr.ID)
 	if err != nil {
 		return evidence{err: fmt.Errorf("reading the diff: %w", err)}
@@ -233,7 +279,11 @@ func evidenceOf(ctx context.Context, res batch.Result, tr batch.TaskResult, prom
 	if err != nil {
 		return evidence{err: fmt.Errorf("preparing the judge's checkout: %w", err)}
 	}
-	return evidence{prompt: judgePrompt(prompt, rubric, final, diff, untracked), dir: dir}
+	ev := evidence{prompt: judgePrompt(prompt, rubric, final, diff, untracked, j), dir: dir, diff: diff, untracked: untracked}
+	if len(j.Criteria) > 0 {
+		ev.changes = indexChanges(diff, untracked)
+	}
+	return ev
 }
 
 func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResult, ev evidence) Judgement {
@@ -277,6 +327,9 @@ func judgeCell(ctx context.Context, b agent.Backend, j *Judge, tr batch.TaskResu
 		return jd
 	}
 	score, reason, err := parseVerdict(r.Final)
+	if len(j.Criteria) > 0 {
+		score, reason, jd.Criteria, err = parseCriteriaVerdict(r.Final, j.Criteria, ev)
+	}
 	if err != nil {
 		jd.Error = fmt.Sprintf("judge run %s: %v", jd.RunID, err)
 		return jd
@@ -298,15 +351,39 @@ Reply with one line of JSON as the last thing you write, and nothing after it:
 {"score": <integer 0-10>, "reason": "<one sentence>"}
 `
 
-func judgePrompt(prompt, rubric, final, diff string, untracked []string) string {
+const criteriaJudgeInstructions = `You are grading one attempt by a coding agent against each criterion and the rubric.
+Judge the change itself: an explanation that claims more than the diff shows earns nothing.
+An empty diff is right only when the task needed no change.
+Return exactly one verdict for every criterion id. For each met criterion, cite evidence
+as a file:line or a quoted diff hunk line. Do not count the Not flag items against the change.
+
+Reply with one line of JSON as the last thing you write, and nothing after it:
+{"criteria":[{"id":"...","met":true|false,"evidence":"<file:line or a quoted diff hunk line>"}],"reason":"<one sentence>"}
+`
+
+func judgePrompt(prompt, rubric, final, diff string, untracked []string, j *Judge) string {
 	var b strings.Builder
-	b.WriteString(judgeInstructions)
+	if j != nil && len(j.Criteria) > 0 {
+		b.WriteString(criteriaJudgeInstructions)
+	} else {
+		b.WriteString(judgeInstructions)
+	}
 	section := func(name, body string) {
 		f := fence(body)
 		fmt.Fprintf(&b, "\n## %s\n%s\n%s\n%s\n", name, f, body, f)
 	}
 	section("Task", prompt)
 	section("Rubric", rubric)
+	if j != nil && len(j.Criteria) > 0 {
+		var lines []string
+		for _, c := range j.Criteria {
+			lines = append(lines, "- "+c.ID+": "+c.Check)
+		}
+		section("Criteria", strings.Join(lines, "\n"))
+		if len(j.NotFlag) > 0 {
+			section("Not flag", "- "+strings.Join(j.NotFlag, "\n- "))
+		}
+	}
 	section("Agent's final answer", clip(final, maxJudgeAnswer))
 	if strings.TrimSpace(diff) == "" {
 		diff = "(no changes)"
@@ -319,6 +396,14 @@ func judgePrompt(prompt, rubric, final, diff string, untracked []string) string 
 }
 
 func clip(s string, limit int) string {
+	kept := head(s, limit)
+	if len(kept) == len(s) {
+		return s
+	}
+	return kept + fmt.Sprintf("\n[... %d more bytes not shown]", len(s)-len(kept))
+}
+
+func head(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
@@ -326,7 +411,7 @@ func clip(s string, limit int) string {
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
-	return s[:cut] + fmt.Sprintf("\n[... %d more bytes not shown]", len(s)-cut)
+	return s[:cut]
 }
 
 func fence(s string) string {
@@ -354,4 +439,267 @@ func parseVerdict(text string) (int, string, error) {
 		return int(s), strings.TrimSpace(v.Reason), nil
 	}
 	return 0, "", errors.New(`the answer has no {"score": ...} object`)
+}
+
+func parseCriteriaVerdict(text string, criteria []Criterion, ev evidence) (int, string, []CriterionVerdict, error) {
+	changes := ev.changes
+	if changes == nil {
+		changes = indexChanges(ev.diff, ev.untracked)
+	}
+	broken := -1
+	for i := strings.LastIndex(text, "{"); i >= 0; i = strings.LastIndex(text[:i], "{") {
+		var v struct {
+			Criteria json.RawMessage `json:"criteria"`
+			Reason   string          `json:"reason"`
+		}
+		decoder := json.NewDecoder(strings.NewReader(text[i:]))
+		if err := decoder.Decode(&v); err != nil {
+			if broken < 0 && startsCriteriaObject(text[i:]) {
+				broken = i
+			}
+			continue
+		}
+		if len(v.Criteria) == 0 {
+			continue
+		}
+		if broken >= i+int(decoder.InputOffset()) {
+			return 0, "", nil, errors.New("the final criteria object is incomplete or invalid")
+		}
+		var verdicts []struct {
+			ID       string `json:"id"`
+			Met      *bool  `json:"met"`
+			Evidence string `json:"evidence"`
+		}
+		if err := json.Unmarshal(v.Criteria, &verdicts); err != nil || len(verdicts) == 0 {
+			return 0, "", nil, errors.New("criteria must be a non-empty array")
+		}
+		wanted := map[string]bool{}
+		for _, c := range criteria {
+			wanted[c.ID] = true
+		}
+		byID := map[string]CriterionVerdict{}
+		for _, c := range verdicts {
+			if !wanted[c.ID] {
+				return 0, "", nil, fmt.Errorf("unknown criterion id %q", c.ID)
+			}
+			if _, ok := byID[c.ID]; ok {
+				return 0, "", nil, fmt.Errorf("duplicate criterion id %q", c.ID)
+			}
+			if c.Met == nil {
+				return 0, "", nil, fmt.Errorf("criterion %q has no boolean met", c.ID)
+			}
+			downgraded := *c.Met && !changes.supports(c.Evidence)
+			byID[c.ID] = CriterionVerdict{ID: c.ID, Met: *c.Met && !downgraded, Evidence: clip(c.Evidence, maxEvidence), Downgraded: downgraded}
+		}
+		var out []CriterionVerdict
+		met := 0
+		for _, c := range criteria {
+			verdict, ok := byID[c.ID]
+			if !ok {
+				return 0, "", nil, fmt.Errorf("missing criterion id %q", c.ID)
+			}
+			out = append(out, verdict)
+			if verdict.Met {
+				met++
+			}
+		}
+		return int(math.Round(10 * float64(met) / float64(len(criteria)))), strings.TrimSpace(v.Reason), out, nil
+	}
+	return 0, "", nil, errors.New(`the answer has no {"criteria": ...} object`)
+}
+
+// changedLines holds a diff's paths with their changed line ranges and its quotable lines.
+type changedLines struct {
+	files  map[string]*changedFile
+	quoted map[string]bool
+	gaps   int // most reference boundaries inside one path, such as spaces
+}
+
+type changedFile struct {
+	hunked bool
+	ranges [][2]int
+}
+
+func indexChanges(diff string, untracked []string) *changedLines {
+	c := &changedLines{files: map[string]*changedFile{}, quoted: map[string]bool{}}
+	for _, path := range untracked {
+		c.file(normalizePath(path))
+	}
+	var oldPath, newPath string
+	inHunk := false
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			inHunk, oldPath, newPath = false, "", ""
+			if pair := diffHeaderPaths.FindStringSubmatch(line); pair != nil {
+				oldPath, newPath = diffPath(pair[1], "a/"), diffPath(pair[2], "b/")
+				c.file(oldPath)
+				c.file(newPath)
+			}
+		case !inHunk && strings.HasPrefix(line, "--- "):
+			oldPath = diffPath(strings.TrimPrefix(line, "--- "), "a/")
+			c.file(oldPath)
+		case !inHunk && strings.HasPrefix(line, "+++ "):
+			newPath = diffPath(strings.TrimPrefix(line, "+++ "), "b/")
+			c.file(newPath)
+		case strings.HasPrefix(line, "@@ "):
+			inHunk = true
+			if m := hunkHeader.FindStringSubmatch(line); m != nil {
+				c.addRange(newPath, m[3], m[4])
+				// A deleted or renamed-away file has only old line numbers to cite.
+				if oldPath != newPath {
+					c.addRange(oldPath, m[1], m[2])
+				}
+			}
+		case inHunk && len(line) > 0 && strings.ContainsAny(line[:1], "+- "):
+			count := 0
+			for _, r := range line[1:] {
+				if !unicode.IsSpace(r) {
+					count++
+				}
+			}
+			if count >= 3 {
+				c.quoted[strings.TrimRightFunc(line, unicode.IsSpace)] = true
+			}
+		}
+	}
+	return c
+}
+
+func normalizePath(path string) string {
+	return strings.TrimPrefix(strings.ReplaceAll(path, `\`, "/"), "./")
+}
+
+func diffPath(path, prefix string) string {
+	if decoded, err := strconv.Unquote(path); err == nil {
+		path = decoded
+	}
+	path = strings.TrimPrefix(path, prefix)
+	if path == "/dev/null" {
+		return ""
+	}
+	return normalizePath(path)
+}
+
+func (c *changedLines) file(path string) *changedFile {
+	if path == "" {
+		return nil
+	}
+	f := c.files[path]
+	if f == nil {
+		f = &changedFile{}
+		c.files[path] = f
+		gaps := 0
+		for i := range len(path) {
+			if referenceBoundary(path[i]) {
+				gaps++
+			}
+		}
+		c.gaps = max(c.gaps, gaps)
+	}
+	return f
+}
+
+func (c *changedLines) addRange(path, start, count string) {
+	f := c.file(path)
+	if f == nil {
+		return
+	}
+	f.hunked = true
+	first, err := strconv.Atoi(start)
+	n := 1
+	if err == nil && count != "" {
+		n, err = strconv.Atoi(count)
+	}
+	if err == nil && n > 0 {
+		f.ranges = append(f.ranges, [2]int{first, first + n - 1})
+	}
+}
+
+// Files the diff shows without hunks (untracked, renamed, binary) accept any positive line.
+func (c *changedLines) covers(path string, line int) bool {
+	f := c.files[path]
+	if f == nil || line < 1 {
+		return false
+	}
+	if !f.hunked {
+		return true
+	}
+	for _, r := range f.ranges {
+		if line >= r[0] && line <= r[1] {
+			return true
+		}
+	}
+	return false
+}
+
+func referenceBoundary(b byte) bool {
+	return strings.IndexByte(" \t\n\f\r(\"'`<[{", b) >= 0
+}
+
+func (c *changedLines) supports(text string) bool {
+	if c.quoted[strings.TrimRightFunc(text, unicode.IsSpace)] {
+		return true
+	}
+	text = strings.ReplaceAll(head(text, maxEvidence), `\`, "/")
+	for colon := range len(text) {
+		if text[colon] != ':' {
+			continue
+		}
+		end := colon + 1
+		for end < len(text) && text[end] >= '0' && text[end] <= '9' {
+			end++
+		}
+		line, err := strconv.Atoi(text[colon+1 : end])
+		if err != nil {
+			continue
+		}
+		// A path may hold boundaries itself, so try starts back to as many as any changed path has.
+		for start, gaps := colon-1, 0; start >= -1 && gaps <= c.gaps; start-- {
+			if start >= 0 && !referenceBoundary(text[start]) {
+				continue
+			}
+			if c.cites(text[start+1:colon], line) {
+				return true
+			}
+			gaps++
+		}
+	}
+	return false
+}
+
+func (c *changedLines) cites(ref string, line int) bool {
+	ref = strings.TrimPrefix(ref, "./")
+	if c.covers(ref, line) {
+		return true
+	}
+	if rest, ok := strings.CutPrefix(ref, "a/"); ok {
+		return c.covers(rest, line)
+	}
+	if rest, ok := strings.CutPrefix(ref, "b/"); ok {
+		return c.covers(rest, line)
+	}
+	return false
+}
+
+// A broken replacement must not turn an earlier verdict into the final one.
+func startsCriteriaObject(text string) bool {
+	d := json.NewDecoder(strings.NewReader(text))
+	if token, err := d.Token(); err != nil || token != json.Delim('{') {
+		return false
+	}
+	for d.More() {
+		key, err := d.Token()
+		if err != nil {
+			return false
+		}
+		if key == "criteria" {
+			return true
+		}
+		var value json.RawMessage
+		if err := d.Decode(&value); err != nil {
+			return false
+		}
+	}
+	return false
 }

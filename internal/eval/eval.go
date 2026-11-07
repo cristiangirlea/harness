@@ -310,9 +310,10 @@ type VariantRow struct {
 	Judged    int     `json:"judged,omitempty"`
 	MeanScore float64 `json:"mean_score,omitempty"`
 	// JudgeRepeats > 1 measures repeat-mean variation in ScoreMin/ScoreMax.
-	JudgeRepeats int     `json:"judge_repeats,omitempty"`
-	ScoreMin     float64 `json:"score_min,omitempty"`
-	ScoreMax     float64 `json:"score_max,omitempty"`
+	JudgeRepeats int                `json:"judge_repeats,omitempty"`
+	ScoreMin     float64            `json:"score_min,omitempty"`
+	ScoreMax     float64            `json:"score_max,omitempty"`
+	Criteria     []CriterionSummary `json:"criteria,omitempty"`
 
 	// Setup includes the first task's prompt_prefix; SetupMixed flags base-setup drift within task repeats.
 	Setup      *agent.Setup `json:"setup,omitempty"`
@@ -344,6 +345,48 @@ type judgeScore struct {
 	mean     float64
 	repeats  int
 	min, max float64
+}
+
+type CriterionSummary struct {
+	ID        string `json:"id"`
+	Met       int    `json:"met,omitempty"`
+	Scored    int    `json:"scored,omitempty"`
+	Disagreed int    `json:"disagreed,omitempty"`
+}
+
+func criteriaOf(j *Judge, cells [][]Judgement) []CriterionSummary {
+	if j == nil || len(j.Criteria) == 0 {
+		return nil
+	}
+	var out []CriterionSummary
+	for _, c := range j.Criteria {
+		s := CriterionSummary{ID: c.ID}
+		for _, cell := range cells {
+			met, unmet := false, false
+			for _, v := range cell {
+				if !v.Scored() {
+					continue
+				}
+				for _, verdict := range v.Criteria {
+					if verdict.ID != c.ID {
+						continue
+					}
+					s.Scored++
+					if verdict.Met {
+						s.Met++
+						met = true
+					} else {
+						unmet = true
+					}
+				}
+			}
+			if met && unmet {
+				s.Disagreed++
+			}
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 func (v VariantRow) judge() judgeScore {
@@ -800,6 +843,7 @@ func Summarize(spec Spec, res batch.Result, verdicts []Judgement) Table {
 		row.MedianTurns = report.Median(turns)
 		row.MedianTools = report.Median(calls)
 		js := scoreOf(judged)
+		row.Criteria = criteriaOf(spec.Judge, judged)
 		row.Judged, row.MeanScore, row.JudgeRepeats, row.ScoreMin, row.ScoreMax = js.judged, js.mean, js.repeats, js.min, js.max
 		row.MedianContext = report.Median(inputs)
 		row.MedianContextPassed = report.Median(passedInputs)

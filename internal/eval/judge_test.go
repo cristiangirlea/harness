@@ -32,6 +32,9 @@ func (j judgeStub) Run(_ context.Context, task agent.Task, _ func(agent.Event)) 
 	*j.tasks = append(*j.tasks, task)
 	j.mu.Unlock()
 	final := "The diff writes the file.\n```json\n{\"score\": 8, \"reason\": \"does what was asked\"}\n```"
+	if strings.Contains(task.Prompt, "## Criteria\n") {
+		final = `{"criteria":[{"id":"a","met":true,"evidence":"out.txt:1"}],"reason":"writes the file"}`
+	}
 	if strings.Contains(task.Prompt, "RAMBLE") {
 		final = "I think it is fine overall."
 	}
@@ -194,7 +197,7 @@ func TestParseVerdict(t *testing.T) {
 
 func TestJudgePromptClipsAndFences(t *testing.T) {
 	diff := strings.Repeat("é", maxJudgeDiff) // two bytes each, so the cut lands mid-rune
-	p := judgePrompt("fix ```it```", "rubric", "", diff, []string{"new.txt"})
+	p := judgePrompt("fix ```it```", "rubric", "", diff, []string{"new.txt"}, nil)
 	if !strings.Contains(p, "````\nfix ```it```\n````") {
 		t.Errorf("a prompt holding a fence needs a longer one:\n%s", p[:600])
 	}
@@ -204,7 +207,7 @@ func TestJudgePromptClipsAndFences(t *testing.T) {
 	if strings.Contains(p, "(no changes)") {
 		t.Error("a diff with content is not reported as empty")
 	}
-	if !strings.Contains(judgePrompt("a", "b", "c", " \n", nil), "(no changes)") {
+	if !strings.Contains(judgePrompt("a", "b", "c", " \n", nil, nil), "(no changes)") {
 		t.Error("an empty diff is spelled out, so the judge cannot read silence as a missing section")
 	}
 	if strings.ContainsRune(p, utf8.RuneError) {

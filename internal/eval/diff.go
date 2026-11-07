@@ -29,6 +29,7 @@ type Diff struct {
 	// JudgeChanged ignores repeats, which leave the scoring scale unchanged.
 	JudgeChanged bool `json:"judge_changed,omitempty"`
 	Judged       bool `json:"judged,omitempty"`
+	Criteria     bool `json:"criteria,omitempty"`
 	// SetupChanged excludes the variant's own harness options.
 	SetupChanged []SetupChange `json:"setup_changed,omitempty"`
 }
@@ -102,6 +103,7 @@ type TaskPair struct {
 // Compare matches rows in a's order, then appends b-only rows in b's order.
 func Compare(a, b Record) Diff {
 	d := Diff{A: a.ID, B: b.ID}
+	d.Criteria = (a.Spec.Judge != nil && len(a.Spec.Judge.Criteria) > 0) || (b.Spec.Judge != nil && len(b.Spec.Judge.Criteria) > 0)
 
 	variants := map[string]int{}
 	for i := range a.Table.Variants {
@@ -118,6 +120,7 @@ func Compare(a, b Record) Diff {
 		}
 	}
 	for i, v := range d.Variants {
+		d.Criteria = d.Criteria || (v.A != nil && len(v.A.Criteria) > 0) || (v.B != nil && len(v.B.Criteria) > 0)
 		d.Judged = d.Judged || (v.A != nil && v.A.Judged > 0) || (v.B != nil && v.B.Judged > 0)
 		if v.A != nil && v.B != nil {
 			d.Variants[i].WithinNoise = withinNoise(v.A.judge(), v.B.judge())
