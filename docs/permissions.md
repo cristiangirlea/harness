@@ -97,6 +97,21 @@ around it. What decides whether commands run at all is the [permission mode](#pe
 this stops the plausible accident. `--allow-dangerous` (task field `allow_dangerous`,
 also a batch spec/task field and an MCP `run` argument) lifts it for a whole run, and the
 system prompt tells the model which way it is set; `yolo` on its own does not lift it.
+
+Flags are limited to the api backend's `run_command`/`write_file`/`edit_file` names
+and guard/permission error texts; other backends and durable runs carry no flags.
+After a run, a deterministic pass over its tool events records up to 20
+`refusal_flags` when later calls resemble a refused action. It checks guard refusals
+and permission denials for matching commands or earlier written scripts it runs
+(`script`), writes containing the refused command (`written`), and shell or interpreter
+one-liners containing its program and subcommand (`wrapped`). Matching is textual;
+flags are information for a reviewer, not proof of execution or intent. A later call
+that is itself refused is excluded. Flags never block a run or change its status.
+The pass deduplicates refusals by rule and command and considers at most 20 distinct
+refusals. Reading, staging, diffing or formatting a written file does not count as running it.
+`hrn show` and the watch run page show each flag; eval tables count flags over all
+attempts and show the column only when a variant has flags.
+
 The hrn MCP server refuses `allow_dangerous`, and does not offer it, unless you started it
 with `hrn mcp --allow-dangerous-runs`: its caller is an agent, perhaps one under the guard
 whose CLI loaded it (the claude CLI loads your user-scope servers, hrn's among them), and

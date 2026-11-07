@@ -287,6 +287,45 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-07: #799, refused actions reached another way are flagged (PR #863). After an api run, a
+  pass over its events (no model call, no file read) flags a later `run_command` that runs a file
+  this run wrote with a line breaking the same rule (`script`), a write whose content holds the
+  refused command (`written`), and the refused program run through `sh -c`, `pwsh -Command`,
+  `cmd /c` or an interpreter one-liner (`wrapped`). Flags are information only, at most 20 per run,
+  with masked summaries cut to 200 bytes; `hrn show`, watch and the eval table show them. Other
+  backends carry none, since the pass reads the api loop's own refusal texts. `wrapped` also fires
+  on text after the wrapper's own argument, which leans towards a flag. The security read made the
+  matching linear (lookups by path and base name) and masks before the cut.
+- 2026-11-07: #793, #794 and #797, the file tools (PR #866, slices #829, #831, #840, #853, #861).
+  `read_file` streams the returned lines under the same cap and refuses non-regular files; an
+  `edit_file` miss quotes the closest lines and the first difference within a fixed work budget;
+  all three tools open through `os.Root` on the workspace and refuse a path that became a link
+  outside it. The security read found that `os.Root` follows links that stay inside the root, so a
+  link swapped in after the check could reach a secret file in the workspace: `openInside` now
+  re-checks the secret rule and refuses unless the opened file is the one the path resolved to
+  (tested with symbolic links on Linux; Windows junctions are refused by `os.Root`). A refused
+  write can leave an empty new file. The name-based secret rule does not see hard links; that
+  predates this work.
+- 2026-11-07: #800 and #801, eval criteria and per-tool counts (PR #865, slices #848, #864).
+  Results carry `tool_stats` per tool (calls, error results, result bytes), summed per variant and
+  shown by `hrn eval`, `hrn eval diff` and `hrn report --json` (totals across runs, not per
+  variant). A judge spec may list `criteria` and `not_flag`; the judge answers met and evidence per
+  criterion, a met is kept only when its evidence points at a changed hunk or a changed line of
+  that cell's diff, and the score is computed in code. Evidence proves a changed line exists, not
+  that it supports the criterion; the judge stays advisory. Tool names and criterion ids are
+  printed without control characters.
+- 2026-11-07: #798, `compact_window` compaction on the api backend (PR #857), opt-in. At the end of
+  a turn whose reported context reached the number, the same model writes a summary with
+  `tool_choice: none`, and later requests carry the task prompt plus the summary and the turns since
+  the cut; stored history stays whole, the second outgoing-request-only exception after masking. A
+  failed summary is retried only after another 4096 tokens. The numeric minimum is now 20480;
+  claude still refuses numbers below 100000, now before a run starts.
+- 2026-11-07: #795 and #796, MCP arguments and tool names (PR #849, slices #833, #836). `hrn mcp`'s
+  own tools accept only exact argument names, which also refuses Unicode case-folded variants that
+  had let a client get past the project server's fixed backend and retrieval scope; schemas set
+  `additionalProperties: false`. MCP tool names that collide after cleaning or cutting get a stable
+  `sha256(server, tool)` suffix, the first tool in config order keeps its name, and an info event
+  names each rename.
 - 2026-11-07: #812, option B: versions and admissions record the ranking they were made under
   (migration 006, schema version 6), and `activate` is refused with `ErrRankingChanged` unless the
   version was created or last admitted under the current ranking (PR #862). Disable and rollback

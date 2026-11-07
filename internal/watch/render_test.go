@@ -12,6 +12,20 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
+func TestRunResultShowsEachRefusalFlagWithMaskedSummaries(t *testing.T) {
+	v := resultOf(agent.Result{RefusalFlags: []agent.RefusalFlag{
+		{Kind: "script", Rule: "permission", Refused: "git push", Later: "bash send.sh"},
+		{Kind: "written", Rule: "git-push", Refused: "API_KEY=fake-refusal-secret", Later: "write_file"},
+	}})
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "Refusal flag (script)") || !strings.Contains(string(b), "refused permission: git push ... later bash send.sh") || !strings.Contains(string(b), "Refusal flag (written)") || strings.Contains(string(b), "fake-refusal-secret") {
+		t.Fatalf("result = %s", b)
+	}
+}
+
 func TestDisplayMasksBeforeExcerpts(t *testing.T) {
 	secret := "Authorization: Bearer " + strings.Repeat("z", 400)
 	check := func(where string, v any) {

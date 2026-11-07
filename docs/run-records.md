@@ -12,6 +12,19 @@ the `""` key for both calls and results. Zero counters and absent stats are omit
 older records still load unchanged, and negative counters are rejected.
 
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
+Only non-durable api runs carry flags, using the api loop's guard/permission texts
+and `run_command`/`write_file`/`edit_file` names; other backends and durable runs carry none.
+Results optionally include `refusal_flags`, computed from tool
+events without additional file reads or model calls. Each flag holds `kind` (`script`,
+`written` or `wrapped`), `rule` (the guard rule or `permission`), `refused` and `later`
+call summaries (masked, then cut to at most 200 bytes each), and zero-based `refused_call` and `later_call`
+ordinals among non-partial tool calls seen by that invocation of `agent.Run`.
+Info events and results do not count, and a carry-on invocation starts counting at zero.
+The pass considers at most 20 distinct refusals, deduplicated by rule and command,
+and emits at most 20 flags per run. They are textual review signals and never change the run status; see
+[Permissions](permissions.md#the-command-guard). Eval variant rows optionally include
+`refusal_flags` as the count across all attempts, including reruns. Absent fields
+preserve older records' behaviour and still load.
 `hrn feed` creates an ordinary record for every valid item, with purpose `none`.
 The optional task field `max_tokens` records its requested API output ceiling;
 when omitted or zero the API keeps its existing default. Older records still load.

@@ -11,6 +11,15 @@ import (
 // MaxLimitWindow bounds plausible subscription reset times.
 const MaxLimitWindow = 8 * 24 * time.Hour
 
+type RefusalFlag struct {
+	Kind      string `json:"kind"`
+	Rule      string `json:"rule"`
+	Refused   string `json:"refused"`
+	Later     string `json:"later"`
+	RefusedAt int    `json:"refused_call"`
+	LaterAt   int    `json:"later_call"`
+}
+
 type ToolStat struct {
 	Calls       int `json:"calls,omitempty"`
 	Errors      int `json:"errors,omitempty"`
@@ -18,6 +27,7 @@ type ToolStat struct {
 }
 
 type Result struct {
+	RefusalFlags          []RefusalFlag       `json:"refusal_flags,omitempty"`
 	ToolStats             map[string]ToolStat `json:"tool_stats,omitempty"`
 	Evidence              []Evidence          `json:"evidence,omitempty"`
 	ChangedFiles          []string            `json:"changed_files,omitempty"`
