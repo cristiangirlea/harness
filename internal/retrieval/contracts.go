@@ -80,16 +80,18 @@ type Search struct {
 // Packet carries reviewed reference text with bounded rendered entries and validated framing.
 // Only Text permits one reference-label pair; outer markers and all entry-field markers are forbidden.
 type Packet struct {
-	VersionID   string  `json:"version_id,omitempty"`
-	AuditID     string  `json:"audit_id"`
-	Entries     []Entry `json:"entries"`
-	Text        string  `json:"text"`
-	Bytes       int     `json:"bytes"`
-	Digest      string  `json:"digest"`
-	QueryDigest string  `json:"query_digest"`
-	Ranking     string  `json:"ranking"`
-	DurationNS  int64   `json:"duration_ns"`
-	EmptyReason string  `json:"empty_reason,omitempty"`
+	VersionRanking  string  `json:"version_ranking,omitempty"`
+	RankingMismatch bool    `json:"ranking_mismatch,omitempty"`
+	VersionID       string  `json:"version_id,omitempty"`
+	AuditID         string  `json:"audit_id"`
+	Entries         []Entry `json:"entries"`
+	Text            string  `json:"text"`
+	Bytes           int     `json:"bytes"`
+	Digest          string  `json:"digest"`
+	QueryDigest     string  `json:"query_digest"`
+	Ranking         string  `json:"ranking"`
+	DurationNS      int64   `json:"duration_ns"`
+	EmptyReason     string  `json:"empty_reason,omitempty"`
 }
 
 type Change struct {

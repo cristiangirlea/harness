@@ -75,16 +75,18 @@ type KnowledgeSearch struct {
 }
 
 type KnowledgePacket struct {
-	VersionID   string           `json:"version_id,omitempty"`
-	AuditID     string           `json:"audit_id"`
-	Entries     []KnowledgeEntry `json:"entries"`
-	Text        string           `json:"text"`
-	Bytes       int              `json:"bytes"`
-	Digest      string           `json:"digest"`
-	QueryDigest string           `json:"query_digest"`
-	Ranking     string           `json:"ranking"`
-	DurationNS  int64            `json:"duration_ns"`
-	EmptyReason string           `json:"empty_reason,omitempty"`
+	VersionRanking  string           `json:"version_ranking,omitempty"`
+	RankingMismatch bool             `json:"ranking_mismatch,omitempty"`
+	VersionID       string           `json:"version_id,omitempty"`
+	AuditID         string           `json:"audit_id"`
+	Entries         []KnowledgeEntry `json:"entries"`
+	Text            string           `json:"text"`
+	Bytes           int              `json:"bytes"`
+	Digest          string           `json:"digest"`
+	QueryDigest     string           `json:"query_digest"`
+	Ranking         string           `json:"ranking"`
+	DurationNS      int64            `json:"duration_ns"`
+	EmptyReason     string           `json:"empty_reason,omitempty"`
 }
 
 type KnowledgeChange struct {
