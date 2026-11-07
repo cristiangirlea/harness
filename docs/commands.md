@@ -191,9 +191,9 @@ line ([permissions](permissions.md#the-command-gate)). Before the run starts, hr
 binary for a decision with `adanext-exec check --json`; a binary that is missing, is a batch
 file, or does not answer protocol `adanext-exec/1` stops the run with an error, so no command
 runs ungated. It is off by default and in JSON is `command_gate` (a batch spec's `gate` is its
-list of check commands), in run options, batch specs/tasks and MCP run inputs. The CLI
-backends refuse it: their commands do not reach the gate yet
-([the design](terminal-through-the-gate.md)).
+list of check commands), in run options, batch specs/tasks and MCP run inputs. A run continued
+with `--continue` does not inherit it: pass `--gate` again. The CLI backends refuse it: their
+commands do not reach the gate yet ([the design](terminal-through-the-gate.md)).
 
 `--retrieval off|optional|required` opts into project references; enabled modes
 require `--retrieval-tenant`, `--retrieval-project`, `--retrieval-revision` and

@@ -72,6 +72,9 @@ type Tree struct {
 	startWarnings []string
 }
 
+// startGateTree is StartTree: ending hrn's job also ends the job the gate keeps its command in.
+func startGateTree(cmd *exec.Cmd) (*Tree, error) { return StartTree(cmd) }
+
 // StartTree assigns a kill-on-close job before resuming cmd.
 // Wait and Close are required; failed assignment leaves taskkill fallback.
 func StartTree(cmd *exec.Cmd) (*Tree, error) {

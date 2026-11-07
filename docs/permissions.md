@@ -184,9 +184,12 @@ on that repository instead of the task's.
 With `--gate` (`command_gate`), the api backend's `run_command` runs each command through
 [adanext-exec](https://github.com/cristiangirlea/adanext-exec) instead of starting the shell
 itself: `adanext-exec run --shell <bash|powershell|sh> --agent hrn --timeout <t> --run-id <run>
--- <command>`, with the same shell hrn would pick, the same working directory and the same
-guarded environment. hrn's guard still runs first, so a command it refuses never reaches the
-gate. The gate applies its own policy (`policy.json` in the user's adanext-exec config, or its
+-- <command>`, with the same working directory and the same guarded environment. hrn names the
+kind of shell it would pick; the gate finds that shell's program itself (Git Bash on Windows,
+never a WSL launcher), which can be another copy than the one hrn found. hrn's guard still runs
+first, so a command it refuses never reaches the gate. A command that names the gate's
+`-approved` or `-script-b64` flag is refused before the gate, `--allow-dangerous` or not, as
+the gate's own hook refuses it: a nested `adanext-exec run` could otherwise approve its own ask. The gate applies its own policy (`policy.json` in the user's adanext-exec config, or its
 built-in rules), kills the command's whole tree at the timeout and writes one audit line per
 command in its own state directory. Its output and exit code pass through unchanged.
 
@@ -197,8 +200,10 @@ no approval to the gate yet. 121, 123, 126 and 127 with the gate's message mean 
 run the command, which is an error naming the gate's reason. 124 after the timeout is a
 timeout. The same codes from a command that ran (its output does not start with the gate's
 message, or 124 before the timeout) stay the command's own. A gate that cannot be started is an
-error too: the command never falls back to the shell. hrn kills the gate itself 15 seconds
-after the timeout if it has not ended by then.
+error too: the command never falls back to the shell. When the run is cancelled, hrn asks the
+gate to stop (on Linux and macOS a terminate signal, so the gate kills the command's tree and
+writes its audit line) and kills it if it has not ended five seconds later; it does the same 15
+seconds after the timeout if the gate has not ended by then.
 
 The run checks the gate once before it starts (`adanext-exec check --json` must answer
 `adanext-exec/1`); the CLI backends refuse `--gate` until their commands are routed. Neither

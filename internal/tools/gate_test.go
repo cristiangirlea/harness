@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -90,8 +92,15 @@ func fakeGate(args []string) int {
 			fmt.Fprintf(os.Stderr, "adanext-exec: unknown shell %q\n", *shell)
 			return 126
 		}
+		// Like the real gate, a terminate request kills the command's tree; fake-hang ignores the timeout.
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		limit := *timeout
+		if rest, ok := strings.CutPrefix(script, "fake-hang "); ok {
+			script, limit = rest, 0
+		}
 		wd, _ := os.Getwd()
-		res, err := RunShell(context.Background(), wd, script, *timeout, nil)
+		res, err := RunShell(ctx, wd, script, limit, nil)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "adanext-exec: %v\n", err)
 			return 126
@@ -247,7 +256,7 @@ func TestGatedRunCommandPassesOutputAndExitCodeThrough(t *testing.T) {
 
 func TestGatedRunCommandKeepsTheCommandsOwnGateLikeExitCodes(t *testing.T) {
 	ws, tl, _ := gatedWorkspace(t)
-	for _, code := range []int{120, 124, 125, 126, 127} {
+	for _, code := range []int{120, 121, 123, 124, 125, 126, 127} {
 		out, err := call(t, ws, tl, map[string]any{"command": fmt.Sprintf("echo own; exit %d", code), "timeout_sec": 60})
 		want := fmt.Sprintf("exit code %d", code)
 		if err == nil || err.Error() != want || out != "own\n\n["+want+"]" {
@@ -299,6 +308,64 @@ func TestGatedRunCommandMapsTheGatesTimeout(t *testing.T) {
 	}
 	if took := time.Since(start); took > 40*time.Second {
 		t.Fatalf("the timeout took %s; the gate should have killed the command at 3s", took)
+	}
+}
+
+func TestGatedRunCommandKillsAGateThatOverstaysTheTimeout(t *testing.T) {
+	old := gateGrace
+	gateGrace = time.Second
+	t.Cleanup(func() { gateGrace = old })
+	ws, tl, _ := gatedWorkspace(t)
+	start := time.Now()
+	out, err := call(t, ws, tl, map[string]any{"command": "fake-hang " + script("sleep 60", "Start-Sleep -Seconds 60"), "timeout_sec": 2})
+	if err == nil || err.Error() != "command timed out" || !strings.HasSuffix(out, "[timed out after 2s]") {
+		t.Fatalf("run_command = %q, %v; want a timeout", out, err)
+	}
+	// Two seconds of timeout, one of grace, and at most WaitDelay for the gate to end.
+	if took := time.Since(start); took > 20*time.Second {
+		t.Fatalf("the hanging gate was ended after %s", took)
+	}
+}
+
+func TestGatedRunCommandRefusesSelfApprovalBeforeTheGate(t *testing.T) {
+	ws, tl, log := gatedWorkspace(t)
+	for _, dangerous := range []bool{false, true} {
+		ws.AllowDangerous = dangerous
+		for _, command := range []string{
+			"adanext-exec run --approved=make-release --shell bash -- 'make release'",
+			"adanext-exec run -approved make-release -- make",
+			"adanext-exec run --shell bash --script-b64 bWFrZQ",
+		} {
+			out, err := call(t, ws, tl, map[string]any{"command": command})
+			if out != "" || err == nil || !strings.Contains(err.Error(), "only a person approves one") {
+				t.Errorf("allow_dangerous=%v %s: run_command = %q, %v; want a refusal", dangerous, command, out, err)
+			}
+		}
+	}
+	if runs := gateRuns(t, log); len(runs) != 0 {
+		t.Fatalf("the gate was called for a self-approval: %q", runs)
+	}
+}
+
+func TestGatedRunCommandRunsInTheGuardedEnvironment(t *testing.T) {
+	if shell, _ := Shell(); shell == "powershell" {
+		t.Skip("the check reads variables with POSIX syntax")
+	}
+	t.Setenv("HRN_GATE_TEST_TOKEN", "a-secret")
+	ws, tl, _ := gatedWorkspace(t)
+	out, err := call(t, ws, tl, map[string]any{"command": `echo "token=${HRN_GATE_TEST_TOKEN:-withheld} guarded=$HRN_GUARDED"`})
+	if err != nil || !strings.Contains(out, "token=withheld guarded=1") {
+		t.Fatalf("run_command = %q, %v; want the guarded environment", out, err)
+	}
+}
+
+func TestGatedRunCommandHandsTheGateTheCommandTextUnchanged(t *testing.T) {
+	ws, tl, log := gatedWorkspace(t)
+	command := "echo \"a b\" \\\"q\\\" 'tr\\' %PATH% '$x' \"\"\necho second\\"
+	_, _ = call(t, ws, tl, map[string]any{"command": command})
+	runs := gateRuns(t, log)
+	if len(runs) != 1 || runs[0][len(runs[0])-1] != command || runs[0][len(runs[0])-2] != "--" {
+		t.Fatalf("the gate received %q, want %q after --", runs, command)
 	}
 }
 

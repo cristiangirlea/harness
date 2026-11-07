@@ -27,6 +27,10 @@ func fakeGate(args []string) int {
 	}
 	switch args[0] {
 	case "check":
+		if _, err := os.Stat(filepath.Join(filepath.Dir(exe), "old")); err == nil {
+			fmt.Fprintln(os.Stderr, `adanext-exec: unknown command "check"`)
+			return 121
+		}
 		fmt.Println(`{"version":"adanext-exec/1","decision":"allow"}`)
 		return 0
 	case "run":
@@ -74,6 +78,32 @@ func installFakeGate(t *testing.T) string {
 	return dir
 }
 
+func TestCommandGateOptionParsesRoundTripsAndInherits(t *testing.T) {
+	var o Options
+	fs := flag.NewFlagSet("gate", flag.ContinueOnError)
+	BindFlags(fs, &o)
+	if err := fs.Parse([]string{"--gate"}); err != nil || !o.Gate {
+		t.Fatalf("--gate: %v", err)
+	}
+	b, err := json.Marshal(o)
+	if err != nil || !strings.Contains(string(b), `"command_gate":true`) {
+		t.Fatalf("record: %s %v", b, err)
+	}
+	var back Options
+	if err := json.Unmarshal(b, &back); err != nil || !back.Gate {
+		t.Fatalf("round trip: %+v %v", back, err)
+	}
+	if b, _ := json.Marshal(Options{}); strings.Contains(string(b), "gate") {
+		t.Fatalf("a run without the gate records it: %s", b)
+	}
+	if !(Options{}).Over(o).Gate {
+		t.Fatal("a task did not inherit the spec's gate")
+	}
+	if schema := o.Schema(); schema["command_gate"] == nil || schema["gate"] != nil {
+		t.Fatalf("the MCP schema names the option wrongly: %v", schema["command_gate"])
+	}
+}
+
 func TestAPIRunWithTheGateDoesNotStartWithoutIt(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	res, _, fake := runFake(t, [][]string{textTurn("done")},
@@ -83,6 +113,21 @@ func TestAPIRunWithTheGateDoesNotStartWithoutIt(t *testing.T) {
 	}
 	if fake.served != 0 {
 		t.Fatalf("the model was called %d times before the gate was found", fake.served)
+	}
+}
+
+func TestAPIRunWithAnOlderGateDoesNotStart(t *testing.T) {
+	dir := installFakeGate(t)
+	if err := os.WriteFile(filepath.Join(dir, "old"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _, fake := runFake(t, [][]string{textTurn("done")},
+		Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeYolo, Gate: true}})
+	if res.Status != StatusError || !strings.Contains(res.Error, "handshake") {
+		t.Fatalf("result = %s %q, want a failed handshake", res.Status, res.Error)
+	}
+	if fake.served != 0 {
+		t.Fatalf("the model was called %d times with an older gate", fake.served)
 	}
 }
 

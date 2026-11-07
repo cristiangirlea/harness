@@ -38,10 +38,10 @@ var waitShell = (*exec.Cmd).Wait
 
 func runShell(ctx context.Context, dir, command string, timeout time.Duration, env []string, capture bool) (ShellResult, error) {
 	_, argv := Shell()
-	return runArgv(ctx, dir, argv(command), timeout, env, capture)
+	return runArgv(ctx, dir, argv(command), timeout, env, capture, StartTree)
 }
 
-func runArgv(ctx context.Context, dir string, parts []string, timeout time.Duration, env []string, capture bool) (ShellResult, error) {
+func runArgv(ctx context.Context, dir string, parts []string, timeout time.Duration, env []string, capture bool, start func(*exec.Cmd) (*Tree, error)) (ShellResult, error) {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -61,7 +61,7 @@ func runArgv(ctx context.Context, dir string, parts []string, timeout time.Durat
 	cmd.Stdout, cmd.Stderr = out, out
 	// Descendants may hold pipes open.
 	cmd.WaitDelay = 5 * time.Second
-	tree, err := StartTree(cmd)
+	tree, err := start(cmd)
 	if err != nil {
 		return ShellResult{}, err
 	}

@@ -23,7 +23,7 @@ const (
 )
 
 // The gate kills the command's tree at the timeout; hrn kills the gate only if it overstays this.
-const gateGrace = 15 * time.Second
+var gateGrace = 15 * time.Second
 
 // The gate's own exit codes for a command it did not run (docs/protocol.md in adanext-exec).
 const gateRefused = 125
@@ -86,6 +86,10 @@ func firstLine(texts ...string) string {
 // runGated runs a command through the gate, which applies its policy, kills the command's tree
 // at the timeout and writes the audit line; a gate that cannot run the command is an error.
 func runGated(ctx context.Context, ws *Workspace, command string, timeout time.Duration, env []string) (ShellResult, error) {
+	// As the gate's own hook does: a nested run with these flags could approve its own ask.
+	if strings.Contains(command, "-approved") || strings.Contains(command, "-script-b64") {
+		return ShellResult{}, fmt.Errorf("refused by hrn: a command that names %s's -approved or -script-b64 flag could approve its own ask, and only a person approves one", GateName)
+	}
 	shell, _ := Shell()
 	argv := []string{ws.Gate, "run", "--shell", shell, "--agent", "hrn"}
 	backstop := time.Duration(0)
@@ -98,7 +102,7 @@ func runGated(ctx context.Context, ws *Workspace, command string, timeout time.D
 	}
 	argv = append(argv, "--", command)
 	started := time.Now()
-	res, err := runArgv(ctx, ws.Root, argv, backstop, env, ws.ShapeTools)
+	res, err := runArgv(ctx, ws.Root, argv, backstop, env, ws.ShapeTools, startGateTree)
 	if err != nil {
 		if errors.Is(err, ErrWait) {
 			return res, err

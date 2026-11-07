@@ -18,12 +18,24 @@ type Tree struct {
 
 // StartTree starts a cancellable group; Wait and Close are required.
 func StartTree(cmd *exec.Cmd) (*Tree, error) {
+	return startTree(cmd, false)
+}
+
+// startGateTree starts the gate, whose command sits in a group of its own: a cancel asks the
+// gate to kill that tree (SIGTERM), and WaitDelay kills the gate if it does not end.
+func startGateTree(cmd *exec.Cmd) (*Tree, error) {
+	return startTree(cmd, true)
+}
+
+func startTree(cmd *exec.Cmd, polite bool) (*Tree, error) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.Setpgid = true
 	cmd.SysProcAttr.Pgid = 0
-	if cmd.Cancel != nil {
+	if cmd.Cancel != nil && polite {
+		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	} else if cmd.Cancel != nil {
 		cmd.Cancel = func() error {
 			if err := (&Tree{pgid: cmd.Process.Pid}).Kill(); err != nil {
 				return cmd.Process.Kill()
