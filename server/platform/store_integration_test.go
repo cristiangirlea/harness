@@ -129,12 +129,12 @@ func TestRepositoryMigrationUpgradesEmptyLegacyStore(t *testing.T) {
 		t.Fatalf("empty legacy schema upgrade: %v", err)
 	}
 	var version int
-	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
+	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 6 {
 		t.Fatalf("migration version: %d %v", version, err)
 	}
 }
 
-func TestRepositoryMigrationLeavesVersionFiveDatabaseUnchanged(t *testing.T) {
+func TestRepositoryMigrationLeavesVersionSixDatabaseUnchanged(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	type migration struct {
@@ -162,12 +162,12 @@ func TestRepositoryMigrationLeavesVersionFiveDatabaseUnchanged(t *testing.T) {
 		return versions
 	}
 	before := readVersions()
-	if len(before) != 5 || before[0].version != 1 || before[1].version != 2 || before[2].version != 3 || before[3].version != 4 || before[4].version != 5 {
+	if len(before) != 6 || before[0].version != 1 || before[1].version != 2 || before[2].version != 3 || before[3].version != 4 || before[4].version != 5 || before[5].version != 6 {
 		t.Fatalf("unexpected starting schema versions: %+v", before)
 	}
 	for i := 0; i < 2; i++ {
 		if err := Migrate(ctx, s.db.Config().ConnString()); err != nil {
-			t.Fatalf("migration on version 5, pass %d: %v", i+1, err)
+			t.Fatalf("migration on version 6, pass %d: %v", i+1, err)
 		}
 	}
 	after := readVersions()
@@ -459,14 +459,14 @@ func TestPostgresSuccessfulFinishRequiresCheckpoint(t *testing.T) {
 func TestAdmissionMigrationUpgradesVersionThree(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	if _, err := s.db.Exec(ctx, "DROP TABLE knowledge_admissions; DELETE FROM schema_migrations WHERE version>=4"); err != nil {
+	if _, err := s.db.Exec(ctx, "DROP TABLE knowledge_admissions; ALTER TABLE knowledge_versions DROP COLUMN ranking; DELETE FROM schema_migrations WHERE version>=4"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Migrate(ctx, s.db.Config().ConnString()); err != nil {
 		t.Fatal(err)
 	}
 	var version int
-	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
+	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 6 {
 		t.Fatalf("version %d: %v", version, err)
 	}
 }
@@ -495,14 +495,14 @@ CREATE INDEX knowledge_text_gin ON knowledge_entries USING gin(search_vector)`);
 	if err != nil || len(before.Entries) != 1 || before.Entries[0].Key != "aaa" {
 		t.Fatalf("legacy ranking: %#v %v", before, err)
 	}
-	if _, err := s.db.Exec(ctx, "DELETE FROM schema_migrations WHERE version=5"); err != nil {
+	if _, err := s.db.Exec(ctx, "ALTER TABLE knowledge_versions DROP COLUMN ranking; ALTER TABLE knowledge_admissions DROP COLUMN ranking; DELETE FROM schema_migrations WHERE version>=5"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Migrate(ctx, s.db.Config().ConnString()); err != nil {
 		t.Fatal(err)
 	}
 	var version int
-	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 5 {
+	if err := s.db.QueryRow(ctx, "SELECT MAX(version) FROM schema_migrations").Scan(&version); err != nil || version != 6 {
 		t.Fatalf("version %d: %v", version, err)
 	}
 	after, err := s.SearchKnowledge(ctx, search)
