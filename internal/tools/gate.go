@@ -1,18 +1,23 @@
 package tools
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/envpolicy"
 	"github.com/cristiangirlea/harness/internal/gitenv"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 const (
@@ -32,9 +37,114 @@ var gateNotRun = []int{121, 123, gateRefused, 126, 127}
 
 const gateTimedOut = 124
 
-// FindGate returns the gate's path once it answers the protocol handshake, so a run with the
-// gate on never starts without one.
-func FindGate(ctx context.Context, env []string) (string, error) {
+const gatePolicyPrefix = "hrn-gate-policy-"
+
+// gatePolicy is the run's guard in the gate's policy format. Every built-in is named so that a gate
+// lacking one rejects the policy at the handshake, rather than silently allowing what hrn refuses.
+func gatePolicy(allowDangerous bool) ([]byte, error) {
+	type rule struct {
+		Name     string `json:"name"`
+		Match    string `json:"match,omitempty"`
+		Decision string `json:"decision"`
+	}
+	decision := "refuse"
+	if allowDangerous {
+		decision = "allow"
+	}
+	var rules []rule
+	for _, r := range guardRules {
+		if r.name != "guard-env" {
+			rules = append(rules, rule{Name: r.name, Decision: decision})
+		}
+	}
+	if !allowDangerous {
+		// Both guard what the gate cannot know is hrn's: its run environment and this policy.
+		rules = append(rules, rule{Name: "guard-env", Match: guardEnvPattern(), Decision: "refuse"},
+			rule{Name: "gate-policy-file", Match: `(?i)` + regexp.QuoteMeta(gatePolicyPrefix), Decision: "refuse"})
+	}
+	return json.Marshal(map[string]any{"version": 1, "default": "allow", "rules": rules})
+}
+
+// WriteGatePolicy writes the policy hrn hands the gate for one run and returns its path and how to remove it.
+func WriteGatePolicy(allowDangerous bool) (string, func(), error) {
+	data, err := gatePolicy(allowDangerous)
+	if err != nil {
+		return "", nil, fmt.Errorf("gate: %w", err)
+	}
+	f, err := os.CreateTemp("", gatePolicyPrefix+"*.json")
+	if err != nil {
+		return "", nil, fmt.Errorf("gate: %w", err)
+	}
+	done := func() { _ = os.Remove(f.Name()) }
+	_, err = f.Write(data)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	// Commands run in the workspace, so a relative temp directory would name another file there.
+	path, absErr := filepath.Abs(f.Name())
+	if err == nil {
+		err = absErr
+	}
+	if err != nil {
+		done()
+		return "", nil, fmt.Errorf("gate: %w", err)
+	}
+	return path, done, nil
+}
+
+type gateAnswer struct {
+	Version, Decision, Rule, Error string
+}
+
+// askGate is the gate's check of one request; reason is the first thing it said, for an error.
+func askGate(ctx context.Context, gate, policy string, env []string, request []byte) (answer gateAnswer, reason string, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	args := []string{"check", "--json"}
+	if policy != "" {
+		args = append(args, "--policy", policy)
+	}
+	cmd := exec.CommandContext(ctx, gate, args...)
+	nowindow.Set(cmd)
+	cmd.Env = envpolicy.Filter(gitenv.WithoutRepoVars(env))
+	cmd.Stdin = bytes.NewReader(request)
+	stdout := &boundedBuffer{keepHead: 16 << 10, keepTail: 1 << 10}
+	stderr := &boundedBuffer{keepHead: 16 << 10, keepTail: 1 << 10}
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	cmd.WaitDelay = 5 * time.Second
+	err = cmd.Run()
+	_ = json.Unmarshal([]byte(stdout.String()), &answer)
+	return answer, firstLine(answer.Error, stderr.String(), stdout.String()), err
+}
+
+// guardRule is the rule refusing a command: the gate's answer once hrn has handed it the guard,
+// else hrn's own table. An unusable answer refuses nothing here, since the gate's run judges again.
+func (ws *Workspace) guardRule(command string) string {
+	if ws.AllowDangerous {
+		return ""
+	}
+	if ws.GatePolicy == "" {
+		return Guard(command)
+	}
+	shell, _ := Shell()
+	request, err := json.Marshal(map[string]string{"version": GateProtocol, "shell": shell, "script": command})
+	if err != nil {
+		return ""
+	}
+	ctx := ws.RunContext
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	answer, _, err := askGate(ctx, ws.Gate, ws.GatePolicy, append(os.Environ(), ws.ChildEnv...), request)
+	if err != nil || answer.Version != GateProtocol || answer.Decision == "" || answer.Decision == "allow" {
+		return ""
+	}
+	return cmp.Or(answer.Rule, "gate-policy")
+}
+
+// FindGate returns the gate's path once it answers the protocol handshake under the run's policy,
+// so a run with the gate on never starts without one or with a policy it cannot use.
+func FindGate(ctx context.Context, env []string, policy string) (string, error) {
 	path, err := exec.LookPath(GateName)
 	if err != nil {
 		return "", fmt.Errorf("gate: %s is not in PATH (%v); install it, or run without --gate", GateName, err)
@@ -42,25 +152,11 @@ func FindGate(ctx context.Context, env []string) (string, error) {
 	if ext := strings.ToLower(filepath.Ext(path)); ext == ".bat" || ext == ".cmd" {
 		return "", fmt.Errorf("gate: %s is a batch file, whose arguments cmd.exe parses again; install the %s program itself", path, GateName)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "check", "--json")
-	cmd.Env = envpolicy.Filter(gitenv.WithoutRepoVars(env))
-	cmd.Stdin = strings.NewReader(`{"version":"` + GateProtocol + `","args":["git","status"]}`)
-	stdout := &boundedBuffer{keepHead: 16 << 10, keepTail: 1 << 10}
-	stderr := &boundedBuffer{keepHead: 16 << 10, keepTail: 1 << 10}
-	cmd.Stdout, cmd.Stderr = stdout, stderr
-	cmd.WaitDelay = 5 * time.Second
-	runErr := cmd.Run()
-	var answer struct {
-		Version, Decision, Error string
-	}
-	decodeErr := json.Unmarshal([]byte(stdout.String()), &answer)
-	if runErr == nil && decodeErr == nil && answer.Version == GateProtocol &&
+	answer, reason, runErr := askGate(ctx, path, policy, env, []byte(`{"version":"`+GateProtocol+`","args":["git","status"]}`))
+	if runErr == nil && answer.Version == GateProtocol &&
 		slices.Contains([]string{"allow", "ask", "refuse"}, answer.Decision) {
 		return path, nil
 	}
-	reason := firstLine(answer.Error, stderr.String(), stdout.String())
 	if answer.Version != "" && answer.Version != GateProtocol {
 		reason = "it speaks " + answer.Version
 	}
@@ -92,6 +188,9 @@ func runGated(ctx context.Context, ws *Workspace, command string, timeout time.D
 	}
 	shell, _ := Shell()
 	argv := []string{ws.Gate, "run", "--shell", shell, "--agent", "hrn"}
+	if ws.GatePolicy != "" {
+		argv = append(argv, "--policy", ws.GatePolicy)
+	}
 	backstop := time.Duration(0)
 	if timeout > 0 {
 		argv = append(argv, "--timeout", timeout.String())

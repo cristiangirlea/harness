@@ -49,6 +49,10 @@ type Workspace struct {
 	AllowDangerous bool
 	// Gate is the adanext-exec binary run_command runs through; empty runs the shell directly.
 	Gate string
+	// GatePolicy is the run's guard as a policy file for the gate; set, the gate decides the guard.
+	GatePolicy string
+	// RunContext ends a guard check with the run, since Refuse takes no context of its own.
+	RunContext context.Context
 	// Commands use Root; confinement needs its junction target.
 	real string
 	// Bytes of originals in this run and in every run, measured at the first

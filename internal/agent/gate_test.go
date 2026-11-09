@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -31,6 +32,16 @@ func fakeGate(args []string) int {
 			fmt.Fprintln(os.Stderr, `adanext-exec: unknown command "check"`)
 			return 121
 		}
+		if f, err := os.OpenFile(filepath.Join(filepath.Dir(exe), "checks.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintln(f, strings.Join(args, " "))
+			f.Close()
+		}
+		var sent struct{ Script string }
+		_ = json.NewDecoder(os.Stdin).Decode(&sent)
+		if strings.HasPrefix(sent.Script, "fake-refuse") {
+			fmt.Println(`{"version":"adanext-exec/1","decision":"refuse","rule":"git-push"}`)
+			return 0
+		}
 		fmt.Println(`{"version":"adanext-exec/1","decision":"allow"}`)
 		return 0
 	case "hook":
@@ -38,6 +49,8 @@ func fakeGate(args []string) int {
 			fmt.Fprintln(os.Stderr, `adanext-exec: unknown command "hook"`)
 			return 121
 		}
+		hookArgs, _ := json.Marshal(args)
+		_ = os.WriteFile(filepath.Join(filepath.Dir(exe), "hook.args"), hookArgs, 0o644)
 		for marker, reason := range map[string]string{"refuses": "adanext-exec: refused under rule \"x\"", "othersrefuse": "someone else"} {
 			if _, err := os.Stat(filepath.Join(filepath.Dir(exe), marker)); err == nil {
 				answer, _ := json.Marshal(map[string]map[string]string{"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": reason}})
@@ -55,7 +68,11 @@ func fakeGate(args []string) int {
 		if _, err := os.Stat(filepath.Join(filepath.Dir(exe), "notimeout")); err != nil && in.Input.Timeout > 0 {
 			timeout = ` '--timeout' '1s'`
 		}
-		command, _ := json.Marshal(tools.PosixQuote(filepath.ToSlash(exe)) + ` 'run' '--hook-build' 'ab' '--shell' 'bash'` + timeout + ` '--agent' 'claude-code' '--script-b64' 'Z2l0IHN0YXR1cw'`)
+		policy := ""
+		if i := slices.Index(args, "--policy"); i >= 0 && i+1 < len(args) {
+			policy = ` '--policy' ` + tools.PosixQuote(filepath.ToSlash(args[i+1]))
+		}
+		command, _ := json.Marshal(tools.PosixQuote(filepath.ToSlash(exe)) + ` 'run' '--hook-build' 'ab' '--shell' 'bash'` + policy + timeout + ` '--agent' 'claude-code' '--script-b64' 'Z2l0IHN0YXR1cw'`)
 		fmt.Printf(`{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"allowed","updatedInput":{"command":%s}}}`+"\n", command)
 		return 0
 	case "run":
@@ -66,9 +83,12 @@ func fakeGate(args []string) int {
 		timeout := fs.Duration("timeout", 0, "")
 		fs.String("agent", "", "")
 		fs.String("run-id", "", "")
+		policy := fs.String("policy", "", "")
 		if fs.Parse(args[1:]) != nil || len(fs.Args()) != 1 {
 			return 121
 		}
+		seen, _ := os.ReadFile(*policy)
+		_ = os.WriteFile(filepath.Join(filepath.Dir(exe), "policy.seen"), seen, 0o644)
 		wd, _ := os.Getwd()
 		res, err := tools.RunShell(context.Background(), wd, fs.Args()[0], *timeout, nil)
 		if err != nil {

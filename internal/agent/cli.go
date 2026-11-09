@@ -77,9 +77,9 @@ type CLIBackend struct {
 	// Only subscription-backed CLIs report plan limits.
 	limits bool
 	// gateRoute routes this CLI's commands through the gate; nil refuses --gate.
-	gateRoute func(ctx context.Context, t Task, gate string) (args []string, done func(), err error)
+	gateRoute func(ctx context.Context, t Task, gate, policy string) (args []string, done func(), err error)
 	// newGateParse reads the stream of a gated run.
-	newGateParse func(gate string) func(line []byte, emit func(Event), res *Result) bool
+	newGateParse func(gate, policy string) func(line []byte, emit func(Event), res *Result) bool
 }
 
 func (c *CLIBackend) Name() string { return c.name }
@@ -223,18 +223,23 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 
 	args := c.args(task, promptFile)
-	var gatePath, gateLine string
+	var gatePath, gatePolicy, gateLine string
 	if task.Gate {
-		gate, err := tools.FindGate(ctx, append(os.Environ(), task.ChildEnv...))
+		policy, removePolicy, err := tools.WriteGatePolicy(task.AllowDangerous)
 		if err != nil {
 			return fail(StatusError, err)
 		}
-		more, done, err := c.gateRoute(ctx, task, gate)
+		defer removePolicy()
+		gate, err := tools.FindGate(ctx, append(os.Environ(), task.ChildEnv...), policy)
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		more, done, err := c.gateRoute(ctx, task, gate, policy)
 		if err != nil {
 			return fail(StatusError, err)
 		}
 		defer done()
-		gatePath = gate
+		gatePath, gatePolicy = gate, policy
 		args = append(args, more...)
 		gateLine = "gate: Bash and PowerShell commands run through " + gate + "; MCP servers' tools are not routed"
 	}
@@ -365,7 +370,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		parse = c.newParse()
 	}
 	if task.Gate && c.newGateParse != nil {
-		parse = c.newGateParse(gatePath)
+		parse = c.newGateParse(gatePath, gatePolicy)
 	}
 	var errored bool
 	var lastErr string
