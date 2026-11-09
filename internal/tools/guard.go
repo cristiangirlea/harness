@@ -97,7 +97,7 @@ func guardQuotedSeparators(command string) string {
 
 // GuardError names no way to lift the guard: the model may reach hrn through an MCP server.
 func GuardError(rule string) error {
-	return fmt.Errorf("blocked by the hrn guard (%s): only the operator can allow this, "+
+	return fmt.Errorf(GuardRefusal+" (%s): only the operator can allow this, "+
 		"by starting the run with --allow-dangerous. "+
 		"Do not retry it; say in your answer why it is needed", rule)
 }

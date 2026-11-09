@@ -80,9 +80,13 @@ func NewClaudeBackend() *CLIBackend {
 			}
 			return a
 		},
-		parse:            parseClaudeStream,
-		newParse:         newClaudeParse,
-		stopWhen:         func(r *Result) bool { return strings.HasPrefix(r.Error, perTokenRefusal) },
+		parse:        parseClaudeStream,
+		newParse:     newClaudeParse,
+		gateRoute:    claudeGateRoute,
+		newGateParse: newClaudeGateParse,
+		stopWhen: func(r *Result) bool {
+			return strings.HasPrefix(r.Error, perTokenRefusal) || strings.HasPrefix(r.Error, gateUnrouted)
+		},
 		forks:            true,
 		mapsEffort:       true,
 		mapsModes:        []Mode{ModeReadOnly, ModeAuto, ModeYolo},
