@@ -287,6 +287,14 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-09: the number of slots a repository may have can be set (#896, PR #897).
+  `{"max_slots": N}`, 1 to 10, in `<main checkout>/.hrn/ws.json` for one repository or in the hrn
+  home's `ws.json` as the machine default; the repository's file wins, to allow more as well as
+  fewer. `hrn ws take` without `--max` tries slots up to the limit and refuses a larger `--max`
+  with exit 2, a slots batch never takes a slot above it whatever its `parallel` is, and `hrn ws
+  list` names the limit and its file. With no file nothing changes (5 by default, `--max` up to
+  10). A lowered limit does not take held slots back, `--json` does not carry the limit, and
+  `hrn ws free` and `hrn gc` do not read the file, so they work when it is broken.
 - 2026-11-09: `--gate` reaches the claude backend through the adanext-exec hook (#435 slice 3, PR
   #894), after adanext-exec #68 carried a call's `timeout` into the rewrite. Slice 2 was not
   needed. Live on Claude Code 2.1.284, the hook's allow skipped `plan`, `default` and
