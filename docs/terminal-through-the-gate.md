@@ -3,7 +3,7 @@
 [← README](../README.md)
 
 Status: proposed 2026-10-20 for issue #435 and approved 2026-10-31, to be built slice by slice
-in the order below, each its own pull request. Slice 1 is built
+in the order below, each its own pull request. Slices 1 and 3 are built
 ([the command gate](permissions.md#the-command-gate)); the others are not. The gate is
 [adanext-exec](https://github.com/cristiangirlea/adanext-exec); its design and build happen there.
 
@@ -196,6 +196,16 @@ default off) until a maintainer turns it on.
    `--include-hook-events` and stopping a run whose command call has no hook event; a live check
    list in [permissions](permissions.md) like the deny rules' (`git push` refused, a long `go
    test` killed at its timeout with its children, a PowerShell pipeline unchanged).
+   *Built* without slice 2, with these differences, all from live runs on Claude Code 2.1.284.
+   The `updatedInput` rewrite works, the hook fires for a subagent's calls and in
+   `bypassPermissions`, and its events reach the stream before the command runs. The hook's
+   allow skips the permission mode (a write ran in `plan`), so the route is `yolo` only, and
+   the claim above that it keeps claude's permission handling does not hold. Monitor is off: the
+   hook leaves it alone, so it would run ungated. Other hooks fire the same events, so the check
+   reads the gate's own answer, not any event. Deny rules see the rewrite, so hrn's guard is a
+   second hook on the original text. The hook gained the call's `timeout` for this slice
+   (adanext-exec #67), since claude's Bash tool only moves a command to the background at its
+   own.
 4. **The gate-backed MCP tool and codex** (needs M3). hrn serves `run_command` and
    `read_original`; codex gets `--disable shell_tool --disable unified_exec` and the server, in
    `yolo` only. hrn's codex parser reads only `command_execution` items today, so it learns the
