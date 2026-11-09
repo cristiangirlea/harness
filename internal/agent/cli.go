@@ -76,6 +76,10 @@ type CLIBackend struct {
 	mapsNoTools      bool
 	// Only subscription-backed CLIs report plan limits.
 	limits bool
+	// gateRoute routes this CLI's commands through the gate; nil refuses --gate.
+	gateRoute func(ctx context.Context, t Task, gate string) (args []string, done func(), err error)
+	// newGateParse reads the stream of a gated run.
+	newGateParse func(gate string) func(line []byte, emit func(Event), res *Result) bool
 }
 
 func (c *CLIBackend) Name() string { return c.name }
@@ -183,9 +187,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		return fail(StatusError, fmt.Errorf("model %q is not a model id", task.Model))
 	}
 
-	// Commands of a CLI backend do not reach the gate yet: refuse rather than run them ungated.
-	if task.Gate {
-		return fail(StatusError, fmt.Errorf("gate: the %s backend's commands do not run through %s yet; use the api backend, or run without --gate", c.name, tools.GateName))
+	// A CLI whose commands cannot reach the gate is refused rather than run ungated.
+	if task.Gate && c.gateRoute == nil {
+		return fail(StatusError, fmt.Errorf("gate: the %s backend's commands do not run through %s yet; use the api or claude backend, or run without --gate", c.name, tools.GateName))
 	}
 	if task.NoTools && !c.mapsNoTools {
 		return fail(StatusError, fmt.Errorf("no_tools is not supported by the %s backend", c.name))
@@ -219,6 +223,21 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 
 	args := c.args(task, promptFile)
+	var gatePath, gateLine string
+	if task.Gate {
+		gate, err := tools.FindGate(ctx, append(os.Environ(), task.ChildEnv...))
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		more, done, err := c.gateRoute(ctx, task, gate)
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		defer done()
+		gatePath = gate
+		args = append(args, more...)
+		gateLine = "gate: Bash and PowerShell commands run through " + gate + "; MCP servers' tools are not routed"
+	}
 	if c.name == "codex" {
 		if err := codexBatchArgsError(bin, args); err != nil {
 			return fail(StatusError, err)
@@ -287,6 +306,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 			emit(Event{Time: time.Now(), Kind: EventInfo, Text: warning})
 		}
 	}
+	if gateLine != "" {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: gateLine})
+	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: envLine})
 	if len(metered) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
@@ -341,6 +363,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	parse := c.parse
 	if c.newParse != nil {
 		parse = c.newParse()
+	}
+	if task.Gate && c.newGateParse != nil {
+		parse = c.newGateParse(gatePath)
 	}
 	var errored bool
 	var lastErr string

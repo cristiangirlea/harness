@@ -209,9 +209,59 @@ seconds after the timeout if the gate has not ended by then. On Windows hrn ends
 its command at once, through its job, and the gate writes no audit line for that command.
 
 The run checks the gate once before it starts (`adanext-exec check --json` must answer
-`adanext-exec/1`); the CLI backends refuse `--gate` until their commands are routed. Neither
+`adanext-exec/1`). Neither
 the gate's decision nor its rule is in the run record yet: the tool result carries the gate's
 message, and the audit line is the gate's record.
+
+**claude** goes through the gate's Claude Code hook. For one run hrn passes `--settings` with a
+temporary file holding only a `PreToolUse` hook for `Bash|PowerShell`, `--tools` with an allow
+list and `--include-hook-events`. Claude Code adds `--settings` to the settings it already
+reads, so your own settings files, hooks and rules still apply; the gate's hook also applies
+your own `Bash(...)` and `PowerShell(...)` deny and ask rules to the original text. Two hooks
+run side by side on each command:
+
+- `adanext-exec hook claude-code || exit 2` judges the command and rewrites an allowed one to
+  `adanext-exec run ...`, which runs it under the gate's audit and whole-tree kill.
+- `hrn guard-hook || exit 2` runs hrn's guard and its claude deny rules on the original text.
+  After the rewrite claude's deny rules see only `adanext-exec run ...`, so `--disallowedTools`
+  no longer stops a command the gate allows; this hook is what keeps them. `--allow-dangerous`
+  leaves it out, and the gate's own policy still applies.
+
+The `|| exit 2` matters: Claude Code runs a command whose hook fails with any other code.
+
+`--gate` on claude needs `--mode yolo`, and is refused otherwise. The hook's allow skips Claude
+Code's own permission mode: checked live, a file write the gate allowed ran in `plan`, `default`
+and `acceptEdits`. Only `yolo` has no mode check to skip.
+
+The allow list leaves out Monitor, which takes a command the hook does not rewrite, and REPL,
+Workflow and Skill, which run code the hook does not see; a run that calls one of them anyway
+is stopped. MCP servers' tools are not routed, and the run's setup line says so. Before claude
+starts, hrn also asks the hook once, so a gate from before the hook does not start a run.
+
+What the stream shows is checked: each Bash or PowerShell call must have the gate's own answer
+(another hook's event, or the guard's refusal, does not count) before its result, and a run with
+a call that has none is stopped with an error. So is a run where another hook rewrites the
+command, since the last hook to finish decides what runs: a hook of your own that rewrites Bash
+commands cannot be used with `--gate`. Hook events name no call, so answers are matched by
+command text: two identical commands in parallel cannot be told apart. So a hook that did not
+load, failed or timed out cannot pass silently. This detects and does not prevent: claude had already run that command
+when its result arrived. `disableAllHooks` in any settings file, for instance, turns the hook
+off, and the run stops after its first command.
+
+The gate applies no per-command timeout on this route: the hook's rewrite carries none, and
+claude's Bash tool, at its own timeout, moves the command to the background rather than ending
+it. The run's `--timeout` ends claude, the gate, the command and its children together. The
+audit line carries claude's session id, not hrn's run id. The two hooks and the gate add about
+120 ms a command on the development PC (hooks 13 and 18 ms side by side; the `run` wrapper about
+100 ms).
+
+Checked live on Windows with Claude Code 2.1.284, `-b claude --mode yolo --gate` and a real
+adanext-exec: `git push` refused by both hooks and the remote still empty; a PowerShell pipeline
+with `$_` and a script block unchanged; a project's deny rule refusing and its ask rule held; a
+user-level hook still running; a subagent's Bash call and two parallel calls routed; `gh repo
+edit ... --visibility public`, which the gate allows, refused by the guard's hook; hooks turned
+off by `disableAllHooks` and the run stopped; a long `go test` and its child gone at the run's
+`--timeout`. Repeat this list on a Claude Code update. Not checked live on Linux or macOS.
 
 #### The guard for every backend
 

@@ -33,6 +33,14 @@ func fakeGate(args []string) int {
 		}
 		fmt.Println(`{"version":"adanext-exec/1","decision":"allow"}`)
 		return 0
+	case "hook":
+		if _, err := os.Stat(filepath.Join(filepath.Dir(exe), "nohook")); err == nil {
+			fmt.Fprintln(os.Stderr, `adanext-exec: unknown command "hook"`)
+			return 121
+		}
+		command, _ := json.Marshal(tools.PosixQuote(filepath.ToSlash(exe)) + ` 'run' '--hook-build' 'ab' '--shell' 'bash' '--agent' 'claude-code' '--script-b64' 'Z2l0IHN0YXR1cw'`)
+		fmt.Printf(`{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"allowed","updatedInput":{"command":%s}}}`+"\n", command)
+		return 0
 	case "run":
 		line, _ := json.Marshal(args)
 		_ = os.WriteFile(filepath.Join(filepath.Dir(exe), "runs.log"), line, 0o644)
@@ -172,7 +180,7 @@ func TestAPIRunWithoutTheGateSaysNothingOfIt(t *testing.T) {
 }
 
 func TestCLIBackendsRefuseTheGate(t *testing.T) {
-	for _, b := range []*CLIBackend{NewClaudeBackend(), NewCodexBackend(), NewGeminiBackend(), NewOpencodeBackend(), NewAgyBackend()} {
+	for _, b := range []*CLIBackend{NewCodexBackend(), NewGeminiBackend(), NewOpencodeBackend(), NewAgyBackend()} {
 		res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Gate: true}}, func(Event) {})
 		if res.Status != StatusError || !strings.Contains(res.Error, "do not run through adanext-exec yet") {
 			t.Errorf("%s: result = %s %q, want the gate refused", b.Name(), res.Status, res.Error)
