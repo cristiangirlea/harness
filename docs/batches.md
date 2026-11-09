@@ -106,6 +106,20 @@ a fourth session arriving in that instant fails the task rather than retrying
 for ever). The range never passes slot 10; when no slot through 10 can be used,
 the task waits or fails with the repository limit named. So a batch never
 waits on a session, and its own slots stay bounded whatever the sessions do.
+
+To lower the ceiling, set `{"max_slots": 3}` in `<main checkout>/.hrn/ws.json`.
+The same setting in `<hrn home>/ws.json` (`$HRN_HOME`, or `~/.hrn`) supplies a
+machine default; the repository file wins. With neither file, the bounds above
+stay unchanged. The value must be an integer from 1 to 10. An unreadable file,
+invalid JSON or an invalid or missing `max_slots` stops slot acquisition with an
+error naming the file, rather than falling back to another limit.
+
+A configured limit caps both the batch's slot bound and the highest slot number
+it tries, even when `parallel` is larger or sessions hold the low-numbered slots.
+Tasks still wait for process-held slots as above; the waiting text names the limit
+and its file. If no slot can come free, they fail as below. The same limit applies
+to `hrn ws take`, which refuses a larger `--max`.
+
 The task's branch is
 made from the batch's base and checked out in the slot. When the task ends, pass, fail or
 error, the slot is detached at the base and given back. Its ignored files stay for the

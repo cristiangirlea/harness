@@ -51,7 +51,8 @@ Its lease names the task (`batch <id> task <task>`) and hrn's pid, so a crash le
 stale lease rather than a held slot. A batch never waits on a session: a slot
 held by `hrn ws take` (no pid) among the ones it would try is passed over and it tries the
 next number instead, up to the bound on its own slots (`parallel`, at least 5,
-capped at 10). It waits on
+capped at 10 or the configured limit below). Slot numbers never exceed that limit.
+It waits on
 slots other batches or its own running tasks hold, and on a lease it cannot read (see
 [Batches](batches.md#slots-or-fresh-worktrees)). The task's branch `hrn/<id>` is made from the batch's
 base and checked out in the slot. When the task ends, the slot is detached at the base
@@ -62,7 +63,7 @@ since a switch strands nothing there.
 
 ## Take
 
-`hrn ws take` walks slots 1 to `--max` (default 5, at most 10 per repository)
+`hrn ws take` walks slots 1 to `--max` (without settings, default 5, at most 10 per repository)
 and leases the first one that has no lease and nothing in it:
 
 - A slot whose folder holds changes or untracked files, or whose HEAD has commits that
@@ -83,6 +84,19 @@ and leases the first one that has no lease and nothing in it:
 `--for TEXT` is the holder written into the lease (default `hrn ws take`). When every
 slot up to `--max` is taken or skipped, take fails and names each slot, its holder and
 since when, or why it was skipped.
+
+Set `{"max_slots": 3}` in `<main checkout>/.hrn/ws.json` to limit this repository
+to slots 1 through 3. The main checkout's file applies from every worktree. For a
+machine default, put the same setting in `<hrn home>/ws.json` (`$HRN_HOME`, or
+`~/.hrn`). The repository file wins; only when it is absent is the machine file read.
+With neither file, the default stays 5 and `--max` may raise it to 10.
+
+`max_slots` must be an integer from 1 to 10. An unreadable file, invalid JSON or an
+invalid or missing `max_slots` stops take, slot batches and list with an error naming
+the file. With a limit set, omitting `--max` tries through that limit; a smaller
+`--max` narrows the range. A larger value is refused, naming the limit and its file.
+When every slot through the limit is taken or skipped, the advice names the limit
+and file instead of suggesting a larger `--max`.
 
 ## Free
 
@@ -139,6 +153,13 @@ the slot back:
 `free`, `taken` or `stale`, the holder, since when, the branch (or the detached commit),
 and `clean` or what is in it. A lease without a folder and a folder without a lease
 both show.
+
+Text output ends with `limit: 3 slots (<main checkout>/.hrn/ws.json)`, using the
+configured number and the repository or machine file that supplied it. Without
+either file it says `limit: 5 slots by default, --max up to 10`. This line also
+prints when there are no slots yet. Slots above a lowered limit still list and can
+still be freed. `--json` keeps the same array of slot rows, without a limit field
+or extra line. Invalid settings are an error in either format.
 
 ## Issue leases
 
