@@ -287,6 +287,13 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-09: `--gate` reaches the claude backend through the adanext-exec hook (#435 slice 3, PR
+  #894), after adanext-exec #68 carried a call's `timeout` into the rewrite. Slice 2 was not
+  needed. Live on Claude Code 2.1.284, the hook's allow skipped `plan`, `default` and
+  `acceptEdits`, so the route is `yolo` only. A rewrite hides a command from claude's deny rules,
+  so `hrn guard-hook` applies the guard and those rules to the original text. Monitor, REPL,
+  Workflow and Skill are off, and a command call without the gate's own answer stops the run.
+  Slices 4 to 7 stay open. Not checked live on Linux or macOS.
 - 2026-11-09: a child process of an hrn that has no console no longer opens a terminal window on
   Windows (#874, PR #891). `internal/nowindow.Set` sets `HideWindow` at every spawn site in
   `cmd/hrn` and `internal/`; the browser the bot opens stays visible. `archtest` lets every root
