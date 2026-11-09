@@ -287,6 +287,12 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-09: a child process of an hrn that has no console no longer opens a terminal window on
+  Windows (#874, PR #891). `internal/nowindow.Set` sets `HideWindow` at every spawn site in
+  `cmd/hrn` and `internal/`; the browser the bot opens stays visible. `archtest` lets every root
+  package import the helper, after the `server/` boundary check. The spawn sites in `scripts/` and
+  the test suites' own git helpers are unchanged, so a full test run started without a console
+  still opens windows.
 - 2026-11-07: no repository split yet; plugins first (#878; `docs/repository-extraction-spec.md`,
   PR #889). Measured at `056c21f`: CI wall time is the root test suite and the server jobs finish
   in under 3 min in parallel; the server and hrn ship from one revision; the knowledge fixtures are
