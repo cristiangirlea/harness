@@ -13,6 +13,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/envpolicy"
 	"github.com/cristiangirlea/harness/internal/gitenv"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 const (
@@ -45,6 +46,7 @@ func FindGate(ctx context.Context, env []string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "check", "--json")
+	nowindow.Set(cmd)
 	cmd.Env = envpolicy.Filter(gitenv.WithoutRepoVars(env))
 	cmd.Stdin = strings.NewReader(`{"version":"` + GateProtocol + `","args":["git","status"]}`)
 	stdout := &boundedBuffer{keepHead: 16 << 10, keepTail: 1 << 10}
