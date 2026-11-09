@@ -187,8 +187,8 @@ new files are checked. Make each edit whole. Shell, MCP and CLI tools are unaffe
 `--gate` runs the api backend's `run_command`, or the claude backend's Bash and PowerShell
 commands, through the
 [adanext-exec](https://github.com/cristiangirlea/adanext-exec) binary found in PATH, which
-applies its own policy, kills the command's whole tree at the timeout (on api) and writes its
-audit line ([permissions](permissions.md#the-command-gate)). Before the run starts, hrn asks the
+applies its own policy, kills the command's whole tree at the timeout (on claude, a foreground
+call's own `timeout`) and writes its audit line ([permissions](permissions.md#the-command-gate)). Before the run starts, hrn asks the
 binary for a decision with `adanext-exec check --json`; a binary that is missing, is a batch
 file, or does not answer protocol `adanext-exec/1` stops the run with an error, so no command
 runs ungated. It is off by default and in JSON is `command_gate` (a batch spec's `gate` is its

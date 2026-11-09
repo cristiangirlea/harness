@@ -75,16 +75,21 @@ func checkClaudeGateHook(ctx context.Context, t Task, gate string) error {
 	cmd := exec.CommandContext(ctx, gate, "hook", "claude-code")
 	cmd.Dir = t.Dir
 	cmd.Env = envpolicy.Filter(gitenv.WithoutRepoVars(append(os.Environ(), t.ChildEnv...)))
-	cmd.Stdin = strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status"}}`)
+	cmd.Stdin = strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status","timeout":1000}}`)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	cmd.WaitDelay = 5 * time.Second
 	nowindow.Set(cmd)
 	err := cmd.Run()
-	if err == nil && readGateAnswer("Bash", stdout.String(), gate).answered {
-		return nil
+	a := readGateAnswer("Bash", stdout.String(), gate)
+	switch {
+	case err != nil || !a.answered:
+		return fmt.Errorf("gate: %s has no Claude Code hook this hrn can use (%v: %s); it may be older than this hrn", gate, err, strings.TrimSpace(stderr.String()))
+	// A refusal of the probe shows no rewrite, so it says nothing about the timeout.
+	case !a.denied && !a.timed:
+		return fmt.Errorf("gate: the Claude Code hook of %s does not carry a call's timeout; it is older than this hrn", gate)
 	}
-	return fmt.Errorf("gate: %s has no Claude Code hook this hrn can use (%v: %s); it may be older than this hrn", gate, err, strings.TrimSpace(stderr.String()))
+	return nil
 }
 
 // claudeGateSettings holds hooks and nothing else, since claude merges --settings over the user's own.
@@ -258,8 +263,8 @@ var gateRewriteUnquote = map[string]*strings.Replacer{
 // gateAnswerRead is what one hook's answer says: the gate's own, with the command an allow carries,
 // or another hook's rewrite of the command.
 type gateAnswerRead struct {
-	answered, denied, rewritten bool
-	command                     string
+	answered, denied, rewritten, timed bool
+	command                            string
 }
 
 func readGateAnswer(tool, stdout, gate string) gateAnswerRead {
@@ -289,7 +294,8 @@ func readGateAnswer(tool, stdout, gate string) gateAnswerRead {
 	if err != nil {
 		return gateAnswerRead{rewritten: true}
 	}
-	return gateAnswerRead{answered: a.Specific.Decision == "allow" || a.Specific.Decision == "ask", command: string(command)}
+	return gateAnswerRead{answered: a.Specific.Decision == "allow" || a.Specific.Decision == "ask", command: string(command),
+		timed: strings.Contains(m[0], " '--timeout' ")}
 }
 
 func sameFile(a, b string) bool {

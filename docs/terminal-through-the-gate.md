@@ -203,8 +203,9 @@ default off) until a maintainer turns it on.
    the claim above that it keeps claude's permission handling does not hold. Monitor is off: the
    hook leaves it alone, so it would run ungated. Other hooks fire the same events, so the check
    reads the gate's own answer, not any event. Deny rules see the rewrite, so hrn's guard is a
-   second hook on the original text. The rewrite carries no per-command timeout, so only the
-   run's `--timeout` ends a long command.
+   second hook on the original text. The hook gained the call's `timeout` for this slice
+   (adanext-exec #67), since claude's Bash tool only moves a command to the background at its
+   own.
 4. **The gate-backed MCP tool and codex** (needs M3). hrn serves `run_command` and
    `read_original`; codex gets `--disable shell_tool --disable unified_exec` and the server, in
    `yolo` only. hrn's codex parser reads only `command_execution` items today, so it learns the

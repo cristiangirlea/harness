@@ -38,7 +38,24 @@ func fakeGate(args []string) int {
 			fmt.Fprintln(os.Stderr, `adanext-exec: unknown command "hook"`)
 			return 121
 		}
-		command, _ := json.Marshal(tools.PosixQuote(filepath.ToSlash(exe)) + ` 'run' '--hook-build' 'ab' '--shell' 'bash' '--agent' 'claude-code' '--script-b64' 'Z2l0IHN0YXR1cw'`)
+		for marker, reason := range map[string]string{"refuses": "adanext-exec: refused under rule \"x\"", "othersrefuse": "someone else"} {
+			if _, err := os.Stat(filepath.Join(filepath.Dir(exe), marker)); err == nil {
+				answer, _ := json.Marshal(map[string]map[string]string{"hookSpecificOutput": {"permissionDecision": "deny", "permissionDecisionReason": reason}})
+				fmt.Println(string(answer))
+				return 0
+			}
+		}
+		var in struct {
+			Input struct {
+				Timeout int `json:"timeout"`
+			} `json:"tool_input"`
+		}
+		_ = json.NewDecoder(os.Stdin).Decode(&in)
+		timeout := ""
+		if _, err := os.Stat(filepath.Join(filepath.Dir(exe), "notimeout")); err != nil && in.Input.Timeout > 0 {
+			timeout = ` '--timeout' '1s'`
+		}
+		command, _ := json.Marshal(tools.PosixQuote(filepath.ToSlash(exe)) + ` 'run' '--hook-build' 'ab' '--shell' 'bash'` + timeout + ` '--agent' 'claude-code' '--script-b64' 'Z2l0IHN0YXR1cw'`)
 		fmt.Printf(`{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"allowed","updatedInput":{"command":%s}}}`+"\n", command)
 		return 0
 	case "run":

@@ -221,7 +221,8 @@ your own `Bash(...)` and `PowerShell(...)` deny and ask rules to the original te
 run side by side on each command:
 
 - `adanext-exec hook claude-code || exit 2` judges the command and rewrites an allowed one to
-  `adanext-exec run ...`, which runs it under the gate's audit and whole-tree kill.
+  `adanext-exec run ...`, which runs it under the gate's audit and whole-tree kill, with the
+  call's own `timeout` when it set one.
 - `hrn guard-hook || exit 2` runs hrn's guard and its claude deny rules on the original text.
   After the rewrite claude's deny rules see only `adanext-exec run ...`, so `--disallowedTools`
   no longer stops a command the gate allows; this hook is what keeps them. `--allow-dangerous`
@@ -248,9 +249,11 @@ load, failed or timed out cannot pass silently. This detects and does not preven
 when its result arrived. `disableAllHooks` in any settings file, for instance, turns the hook
 off, and the run stops after its first command.
 
-The gate applies no per-command timeout on this route: the hook's rewrite carries none, and
-claude's Bash tool, at its own timeout, moves the command to the background rather than ending
-it. The run's `--timeout` ends claude, the gate, the command and its children together. The
+At a call's `timeout`, claude's Bash tool moves the command to the background and tells the
+model, and the gate ends the command's tree at about that time (exit 124); a call without a
+`timeout`, or one run in the background, has no limit from the gate, and the run's `--timeout`
+ends everything together. A gate whose hook does not carry the timeout does not start a run,
+unless it refuses hrn's start-up probe, which then says nothing about the timeout. The
 audit line carries claude's session id, not hrn's run id. The two hooks and the gate add about
 120 ms a command on the development PC (hooks 13 and 18 ms side by side; the `run` wrapper about
 100 ms).
@@ -260,8 +263,9 @@ adanext-exec: `git push` refused by both hooks and the remote still empty; a Pow
 with `$_` and a script block unchanged; a project's deny rule refusing and its ask rule held; a
 user-level hook still running; a subagent's Bash call and two parallel calls routed; `gh repo
 edit ... --visibility public`, which the gate allows, refused by the guard's hook; hooks turned
-off by `disableAllHooks` and the run stopped; a long `go test` and its child gone at the run's
-`--timeout`. Repeat this list on a Claude Code update. Not checked live on Linux or macOS.
+off by `disableAllHooks` and the run stopped; a long `go test` and its child, with an 8-second
+`timeout` on the call, alive at 9 s and gone by 12 s while the run went on, and gone at the
+run's `--timeout`. Repeat this list on a Claude Code update. Not checked live on Linux or macOS.
 
 #### The guard for every backend
 

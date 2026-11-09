@@ -367,6 +367,40 @@ func TestGatedClaudeDoesNotStartWithAGateThatHasNoHook(t *testing.T) {
 	}
 }
 
+func TestGatedClaudeDoesNotStartWithAHookThatDropsTheTimeout(t *testing.T) {
+	dir := installFakeGate(t)
+	if err := os.WriteFile(filepath.Join(dir, "notimeout"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _, rec := runGatedClaude(t, "routed", Options{Mode: ModeYolo, Gate: true})
+	if res.Status != StatusError || !strings.Contains(res.Error, "does not carry a call's timeout") {
+		t.Fatalf("result = %s %q", res.Status, res.Error)
+	}
+	if rec != nil {
+		t.Fatal("the CLI started with a hook that drops the timeout")
+	}
+}
+
+func TestGatedClaudeStartsWhenTheGateRefusesTheProbe(t *testing.T) {
+	dir := installFakeGate(t)
+	if err := os.WriteFile(filepath.Join(dir, "refuses"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res, _, rec := runGatedClaude(t, "routed", Options{Mode: ModeYolo, Gate: true}); rec == nil {
+		t.Fatalf("the CLI did not start: %s %q", res.Status, res.Error)
+	}
+}
+
+func TestGatedClaudeDoesNotStartOnARefusalThatIsNotTheGates(t *testing.T) {
+	dir := installFakeGate(t)
+	if err := os.WriteFile(filepath.Join(dir, "othersrefuse"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res, _, rec := runGatedClaude(t, "routed", Options{Mode: ModeYolo, Gate: true}); rec != nil || res.Status != StatusError {
+		t.Fatalf("result = %s %q, started %v", res.Status, res.Error, rec != nil)
+	}
+}
+
 func TestReadGateAnswerKnowsTheGatesOwnRewrite(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "a'b c")
 	if err := os.Mkdir(dir, 0o755); err != nil {
@@ -402,6 +436,7 @@ func TestReadGateAnswerKnowsTheGatesOwnRewrite(t *testing.T) {
 	}{
 		{"the gate's rewrite", "Bash", gate, answer("allow", bash(gate)), gateAnswerRead{answered: true, command: "echo"}},
 		{"an ask", "Bash", gate, answer("ask", bash(gate)), gateAnswerRead{answered: true, command: "echo"}},
+		{"a rewrite with a timeout", "Bash", gate, answer("allow", strings.Replace(bash(gate), ` '--agent'`, ` '--timeout' '8s' '--agent'`, 1)), gateAnswerRead{answered: true, timed: true, command: "echo"}},
 		{"powershell", "PowerShell", gate, answer("allow", ps(gate)), gateAnswerRead{answered: true, command: "echo"}},
 		{"a doubled typographic quote in the path", "PowerShell", curly, answer("allow", ps(curly)), gateAnswerRead{answered: true, command: "echo"}},
 		{"another executable", "Bash", gate, answer("allow", bash(other)), gateAnswerRead{rewritten: true}},
