@@ -11,11 +11,21 @@ import (
 	"github.com/cristiangirlea/harness/internal/ws"
 )
 
+// settingsPath is ws.json as hrn names it: under the checkout's long path, not a Windows short name.
+func settingsPath(t *testing.T, dir string) string {
+	t.Helper()
+	long, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(long, ".hrn", "ws.json")
+}
+
 func TestBatchSlotLimit(t *testing.T) {
 	for _, holder := range []string{"session", "other batch", "batch limited task held"} {
 		t.Run(holder, func(t *testing.T) {
 			dir := initRepo(t)
-			path := filepath.Join(dir, ".hrn", "ws.json")
+			path := settingsPath(t, dir)
 			writeFile(t, path, `{"max_slots":2}`)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -50,7 +60,7 @@ func TestBatchSlotLimit(t *testing.T) {
 
 func TestBatchSlotLimitInvalidFile(t *testing.T) {
 	dir := initRepo(t)
-	path := filepath.Join(dir, ".hrn", "ws.json")
+	path := settingsPath(t, dir)
 	writeFile(t, path, `{}`)
 	_, err := takeSlot(context.Background(), &Spec{Parallel: 10}, "limited", &keptSlots{}, "next", "hrn/next", dir, "HEAD", func(Event) {}, func(bool) error { return nil })
 	if err == nil || !strings.Contains(err.Error(), path) {
