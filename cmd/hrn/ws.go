@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -75,7 +76,7 @@ func wsTake(ctx context.Context, args []string) (int, error) {
 	branch := fs.String("branch", "", "")
 	base := fs.String("base", "", "")
 	holder := fs.String("for", "hrn ws take", "")
-	max := fs.Int("max", ws.DefaultMax, "")
+	max := fs.Int("max", 0, "")
 	noFetch := fs.Bool("no-fetch", false, "")
 	if err := fs.Parse(args); err != nil {
 		return 2, fmt.Errorf("%w\n%s", err, wsUsage)
@@ -83,17 +84,24 @@ func wsTake(ctx context.Context, args []string) (int, error) {
 	if fs.NArg() > 0 {
 		return 2, fmt.Errorf("unexpected %q\n%s", fs.Arg(0), wsUsage)
 	}
-	if *max < 1 {
+	maxSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "max" {
+			maxSet = true
+		}
+	})
+	if maxSet && *max < 1 {
 		return 2, fmt.Errorf("--max %d: at least one slot\n%s", *max, wsUsage)
-	}
-	if *max > ws.Limit {
-		return 2, fmt.Errorf("--max %d: at most %d slots per repository", *max, ws.Limit)
 	}
 	got, err := ws.Take(ctx, ws.TakeOptions{Repo: *repo, Branch: *branch, Base: *base, Holder: *holder, Max: *max, NoFetch: *noFetch})
 	for _, n := range got.Notes {
 		fmt.Fprintln(os.Stderr, n)
 	}
 	if err != nil {
+		var above *ws.MaxError
+		if errors.As(err, &above) {
+			return 2, err
+		}
 		return 1, err
 	}
 	fmt.Println(got.Path)
@@ -139,11 +147,20 @@ func wsList(ctx context.Context, args []string) (int, error) {
 		enc.SetIndent("", "  ")
 		return 0, enc.Encode(rows)
 	}
+	limit, err := ws.ReadLimit(ctx, *repo)
+	if err != nil {
+		return 1, err
+	}
 	if len(rows) == 0 {
 		fmt.Println("no slots yet; hrn ws take makes the first")
-		return 0, nil
+	} else {
+		printWS(os.Stdout, rows)
 	}
-	printWS(os.Stdout, rows)
+	if limit.Path != "" {
+		fmt.Printf("limit: %d slots (%s)\n", limit.Max, limit.Path)
+	} else {
+		fmt.Printf("limit: %d slots by default, --max up to %d\n", ws.DefaultMax, ws.Limit)
+	}
 	return 0, nil
 }
 

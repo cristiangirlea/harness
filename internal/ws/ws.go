@@ -52,7 +52,7 @@ type TakeOptions struct {
 	Base    string // empty: origin's default branch, or HEAD without an origin
 	Holder  string // written into the lease
 	PID     int    // written into the lease; must name a running process, so its start identity can be read; 0 holds until Free
-	Max     int    // slots to try, 1..Max (default DefaultMax, at most Limit)
+	Max     int    // slots to try, 1..Max (default the configured limit or DefaultMax)
 	NoFetch bool   // use what origin's refs already say
 }
 
@@ -117,20 +117,31 @@ func take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	if opt.Repo == "" {
 		opt.Repo = "."
 	}
+	main, err := MainCheckout(ctx, opt.Repo)
+	var limit SlotLimit
+	if err == nil {
+		limit, err = readLimit(main)
+	}
+	if err != nil {
+		// Misuse stays misuse when the repository or its settings cannot be read.
+		if opt.Max > Limit {
+			return Taken{}, &MaxError{Max: opt.Max, Limit: SlotLimit{Max: Limit}}
+		}
+		return Taken{}, err
+	}
 	if opt.Max <= 0 {
 		opt.Max = DefaultMax
+		if limit.Path != "" {
+			opt.Max = limit.Max
+		}
 	}
-	if opt.Max > Limit {
-		return Taken{}, fmt.Errorf("--max %d: at most %d slots per repository", opt.Max, Limit)
+	if opt.Max > limit.Max {
+		return Taken{}, &MaxError{Max: opt.Max, Limit: limit}
 	}
 	for _, v := range []string{opt.Branch, opt.Base} {
 		if strings.HasPrefix(v, "-") {
 			return Taken{}, fmt.Errorf("%q is not a branch or ref", v)
 		}
-	}
-	main, err := MainCheckout(ctx, opt.Repo)
-	if err != nil {
-		return Taken{}, err
 	}
 	if opt.Branch != "" {
 		if _, err := gitOut(ctx, main, "check-ref-format", "--branch", opt.Branch); err != nil {
@@ -198,7 +209,7 @@ func take(ctx context.Context, opt TakeOptions) (Taken, error) {
 		}
 		return Taken{N: n, Path: path, Lease: lease, Notes: notes}, nil
 	}
-	return Taken{Notes: notes}, &NoSlotError{Max: opt.Max, Held: held, Holders: holders, Passed: passed, Unreadable: unreadable}
+	return Taken{Notes: notes}, &NoSlotError{Max: opt.Max, Held: held, Holders: holders, Passed: passed, Unreadable: unreadable, Limit: limit}
 }
 
 // NoSlotError allows waiting when all slots are held or skipped.
@@ -209,11 +220,14 @@ type NoSlotError struct {
 	Passed  []string // one line per slot: its path and who holds it, or why it was skipped
 	// Unreadable lists held slots with unreadable leases or blocked takeovers, excluding changed hands.
 	Unreadable []int
+	Limit      SlotLimit
 }
 
 func (e *NoSlotError) Error() string {
 	advice := "free one with `hrn ws free <path>`, or allow more with --max"
-	if e.Max == Limit {
+	if e.Limit.Path != "" && e.Max == e.Limit.Max {
+		advice = fmt.Sprintf("free one with `hrn ws free <path>`; %s", e.Limit)
+	} else if e.Max == Limit {
 		advice = fmt.Sprintf("free one with `hrn ws free <path>`; at most %d slots per repository", Limit)
 	}
 	return fmt.Sprintf("every slot up to --max %d is taken or skipped:\n  %s\n%s",
@@ -894,7 +908,7 @@ func CountLeases(ctx context.Context, repo string, match func(Lease) bool) (int,
 	return n, nil
 }
 
-// RangeBeyondSessions returns Take's Max for n non-session slots, capped at Limit.
+// RangeBeyondSessions returns Take's Max for n non-session slots, capped at the repository limit.
 // Skip PID-free sessions held until Free; count process-held and unreadable slots.
 func RangeBeyondSessions(ctx context.Context, repo string, n int) (int, error) {
 	if n < 1 {
@@ -907,9 +921,13 @@ func RangeBeyondSessions(ctx context.Context, repo string, n int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	limit, err := readLimit(main)
+	if err != nil {
+		return 0, err
+	}
 	dir := SlotsDir(main)
 	counted := 0
-	for slot := 1; slot <= Limit; slot++ {
+	for slot := 1; slot <= limit.Max; slot++ {
 		if l, _, err := readLease(leasePath(dir, slot)); err == nil && l.PID == 0 {
 			continue
 		}
@@ -917,13 +935,16 @@ func RangeBeyondSessions(ctx context.Context, repo string, n int) (int, error) {
 			return slot, nil
 		}
 	}
-	return Limit, nil
+	return limit.Max, nil
 }
 
 // List includes orphan leases and unleased slot folders.
 func List(ctx context.Context, repo string) ([]Status, error) {
 	main, err := MainCheckout(ctx, repo)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := readLimit(main); err != nil {
 		return nil, err
 	}
 	dir := SlotsDir(main)

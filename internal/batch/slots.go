@@ -44,6 +44,10 @@ func takeSlotFlow(ctx context.Context, spec *Spec, batchID string, kept *keptSlo
 		}
 		fw.Emit(flow.Event{Step: step, Kind: flow.KindSlot, Task: id, Status: st, Text: firstLineOf(failed.Error())})
 	}()
+	limit, err := ws.ReadLimit(ctx, root)
+	if err != nil {
+		return ws.Taken{}, err
+	}
 	if _, err := gitOut(ctx, root, "branch", branch, base); err != nil {
 		return ws.Taken{}, err
 	}
@@ -58,7 +62,7 @@ func takeSlotFlow(ctx context.Context, spec *Spec, batchID string, kept *keptSlo
 	prefix := "batch " + batchID + " "
 	pid := os.Getpid()
 	mine := func(l ws.Lease) bool { return l.PID == pid && strings.HasPrefix(l.Holder, prefix) }
-	bound := min(max(spec.Parallel, ws.DefaultMax), ws.Limit)
+	bound := min(max(spec.Parallel, ws.DefaultMax), limit.Max)
 	opt := ws.TakeOptions{Repo: root, Branch: branch, Base: base, Holder: prefix + "task " + id, PID: pid, NoFetch: true}
 	// Count and take under worktreeMu to enforce the slot bound.
 	try := func() (ws.Taken, error) {
@@ -114,6 +118,9 @@ func takeSlotFlow(ctx context.Context, spec *Spec, batchID string, kept *keptSlo
 			// No lease observed means no consecutive unreadable observation.
 			clear(unreadable)
 			wait = "waiting for a slot this batch holds to come back: " + err.Error()
+			if limit.Path != "" {
+				wait += "; " + limit.String()
+			}
 		case errors.As(err, &full):
 			// Only live processes or briefly unreadable leases may free slots.
 			stuck := unreadable.note(full, time.Now())
@@ -125,7 +132,9 @@ func takeSlotFlow(ctx context.Context, spec *Spec, batchID string, kept *keptSlo
 				return drop(fmt.Errorf("no slot is free and none will come free while this batch runs: %w", full))
 			}
 			wait = "waiting for a free slot: " + strings.Join(full.Passed, "; ")
-			if full.Max == ws.Limit {
+			if full.Limit.Path != "" {
+				wait += "; " + full.Limit.String()
+			} else if full.Max == ws.Limit {
 				wait += fmt.Sprintf("; at most %d slots per repository", ws.Limit)
 			}
 		default:
