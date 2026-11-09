@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/gitenv"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -130,6 +131,7 @@ func git(dir string, off []string, args ...string) (string, error) {
 	defer cancel()
 	full := []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.ignoreSubmodules=all", "-c", "core.hooksPath=" + os.DevNull, "-C", dir}
 	cmd := exec.CommandContext(ctx, "git", append(full, args...)...)
+	nowindow.Set(cmd)
 	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0")
 	cmd.Env = append(cmd.Env, off...)
 	cmd.WaitDelay = 5 * time.Second

@@ -14,6 +14,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/gitenv"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -69,6 +70,7 @@ var gitCall = git
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	a := append([]string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)
 	c := exec.CommandContext(ctx, "git", a...)
+	nowindow.Set(c)
 	c.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1", "LC_ALL=C")
 	c.WaitDelay = time.Second
 	out, err := c.Output()

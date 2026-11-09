@@ -16,6 +16,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -45,6 +46,7 @@ func (p ProjectProfile) validate(ctx context.Context, dir string) error {
 		return err
 	}
 	command := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "HEAD")
+	nowindow.Set(command)
 	command.Env = gitenv.WithoutRepoVars(os.Environ())
 	head, err := command.Output()
 	if err != nil || strings.TrimSpace(string(head)) != p.Options.RetrievalRevision {

@@ -24,6 +24,8 @@ func TestFixtures(t *testing.T) {
 		{"unclassified", map[string]string{"internal/unknown/a.go": `package unknown`}, "", "unclassified"},
 		{"tagged", map[string]string{"internal/mcp/a_windows.go": "//go:build windows\n\npackage mcp\nimport _ \"example.com/root/internal/retrieval\"\n"}, "", "mcp -> retrieval"},
 		{"test edge", map[string]string{"internal/mcp/a.go": `package mcp; import _ "example.com/root/internal/retrieval"`, "internal/mcp/a_test.go": `package mcp_test; import _ "example.com/root/internal/retrieval"`}, "mcp -> retrieval\n", "mcp -> retrieval (test)"},
+		{"leaf hiding windows", map[string]string{"internal/gitenv/a.go": `package gitenv; import _ "example.com/root/internal/nowindow"`}, "", ""},
+		{"server hiding windows", map[string]string{"server/go.mod": "module example.com/server\n", "server/platform/a.go": `package platform; import _ "example.com/root/internal/nowindow"`}, "", "server/platform -> internal/nowindow"},
 		{"nested module", map[string]string{"server/go.mod": "module example.com/server\n", "server/platform/a.go": `package platform; import _ "example.com/root/internal/agent"`}, "", "server/platform -> internal/agent"},
 	}
 	for _, tc := range cases {

@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 // IssueRef names a GitHub issue; Repo is owner/name.
@@ -81,6 +83,7 @@ var GH = func(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", args...)
+	nowindow.Set(cmd)
 	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1", "NO_COLOR=1")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

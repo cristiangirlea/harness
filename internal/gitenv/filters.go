@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 // FiltersOff disables workspace-configured filters; filtered files may appear changed.
@@ -17,6 +19,7 @@ func FiltersOff(dir string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", dir, "config", "--name-only", "--get-regexp", `^filter\.`)
+	nowindow.Set(cmd)
 	cmd.Env = append(WithoutRepoVars(os.Environ()), "GIT_NO_LAZY_FETCH=1")
 	cmd.WaitDelay = 5 * time.Second
 	var stderr bytes.Buffer

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/cristiangirlea/harness/internal/nowindow"
 	"github.com/cristiangirlea/harness/internal/watchaddr"
 )
 
@@ -111,6 +112,7 @@ func StartDetached(exe string, args []string, stdout, stderr string) (int, error
 	cmd.Stdout, cmd.Stderr = out, errf
 	cmd.SysProcAttr = &syscall.SysProcAttr{}
 	detach(cmd.SysProcAttr)
+	nowindow.Set(cmd)
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}

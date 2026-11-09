@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/gitretry"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 // Inherited variables must not redirect git away from -C's repository.
@@ -40,6 +41,7 @@ func cleanEnv() []string {
 
 func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	nowindow.Set(cmd)
 	cmd.Env = cleanEnv()
 	return cmd
 }

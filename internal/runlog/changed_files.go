@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/gitenv"
+	"github.com/cristiangirlea/harness/internal/nowindow"
 )
 
 const maxChangedFiles = 500
@@ -21,6 +22,7 @@ func gitOutputWithEnv(dir string, extra []string, args ...string) (string, error
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "diff.ignoreSubmodules=all", "-c", "core.hooksPath=" + os.DevNull}, args...)...)
+	nowindow.Set(cmd)
 	cmd.Env = append(gitenv.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1")
 	cmd.Env = append(cmd.Env, extra...)
 	cmd.WaitDelay = time.Second
