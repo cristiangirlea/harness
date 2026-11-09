@@ -199,11 +199,16 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	ws.ParseCheck = task.ParseCheck
 	ws.OriginalInfo = func(text string) { emit(Event{Time: time.Now(), Kind: EventInfo, Text: text}) }
 	if task.Gate {
-		gate, err := tools.FindGate(ctx, append(os.Environ(), task.ChildEnv...))
+		policy, done, err := tools.WriteGatePolicy(task.AllowDangerous)
 		if err != nil {
 			return fail(StatusError, err)
 		}
-		ws.Gate = gate
+		defer done()
+		gate, err := tools.FindGate(ctx, append(os.Environ(), task.ChildEnv...), policy)
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		ws.Gate, ws.GatePolicy, ws.RunContext = gate, policy, ctx
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "gate: run_command runs through " + gate})
 	}
 	maxTurns := task.MaxTurns
@@ -667,14 +672,15 @@ func (b *APIBackend) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 			summary = t.Summary(input)
 		}
 		emit(Event{Time: time.Now(), Kind: EventToolCall, Tool: name, Input: input, Text: summary})
+		refusal := refusalOf(t, ws, input)
 		switch {
 		case !ok:
 			result(i, name, fmt.Sprintf("unknown tool %q", name), true)
 		case invalid[id] != "":
 			result(i, name, "tool input was not valid JSON: "+invalid[id], true)
 		// Refuse before asking: a yes for a call the guard refuses is wasted.
-		case refusalOf(t, ws, input) != "":
-			result(i, name, tools.GuardError(refusalOf(t, ws, input)).Error(), true)
+		case refusal != "":
+			result(i, name, tools.GuardError(refusal).Error(), true)
 		case !allowed(task, t, summary):
 			result(i, name, "Permission denied by the user's harness settings.", true)
 		case t.Effect == tools.EffectRead:

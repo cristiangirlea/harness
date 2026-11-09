@@ -35,14 +35,14 @@ var (
 
 // claudeGateRoute starts claude with the gate's hook for one run. The hook's allow skips claude's own
 // mode check (a command the gate allows ran in plan mode), so only yolo, which has none, keeps its meaning.
-func claudeGateRoute(ctx context.Context, t Task, gate string) ([]string, func(), error) {
+func claudeGateRoute(ctx context.Context, t Task, gate, policy string) ([]string, func(), error) {
 	if t.Mode != ModeYolo {
 		return nil, nil, fmt.Errorf("gate: on the claude backend it needs --mode yolo: the hook's allow skips Claude Code's own permission mode, so plan, default and acceptEdits would run what they should not (mode %q)", t.Mode)
 	}
-	if err := checkClaudeGateHook(ctx, t, gate); err != nil {
+	if err := checkClaudeGateHook(ctx, t, gate, policy); err != nil {
 		return nil, nil, err
 	}
-	settings, err := claudeGateSettings(gate, t.AllowDangerous)
+	settings, err := claudeGateSettings(gate, policy, t.AllowDangerous)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -69,10 +69,10 @@ func claudeGateRoute(ctx context.Context, t Task, gate string) ([]string, func()
 
 // checkClaudeGateHook asks the hook once, since a binary from before the hook answers the protocol
 // handshake and its run would only stop at the first command, with the plan already spent.
-func checkClaudeGateHook(ctx context.Context, t Task, gate string) error {
+func checkClaudeGateHook(ctx context.Context, t Task, gate, policy string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, gate, "hook", "claude-code")
+	cmd := exec.CommandContext(ctx, gate, "hook", "claude-code", "--policy", policy)
 	cmd.Dir = t.Dir
 	cmd.Env = envpolicy.Filter(gitenv.WithoutRepoVars(append(os.Environ(), t.ChildEnv...)))
 	cmd.Stdin = strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status","timeout":1000}}`)
@@ -81,7 +81,7 @@ func checkClaudeGateHook(ctx context.Context, t Task, gate string) error {
 	cmd.WaitDelay = 5 * time.Second
 	nowindow.Set(cmd)
 	err := cmd.Run()
-	a := readGateAnswer("Bash", stdout.String(), gate)
+	a := readGateAnswer("Bash", stdout.String(), gate, policy)
 	switch {
 	case err != nil || !a.answered:
 		return fmt.Errorf("gate: %s has no Claude Code hook this hrn can use (%v: %s); it may be older than this hrn", gate, err, strings.TrimSpace(stderr.String()))
@@ -94,7 +94,7 @@ func checkClaudeGateHook(ctx context.Context, t Task, gate string) error {
 
 // claudeGateSettings holds hooks and nothing else, since claude merges --settings over the user's own.
 // hrn's guard is a hook of its own because a rewritten command no longer matches its deny rules.
-func claudeGateSettings(gate string, allowDangerous bool) ([]byte, error) {
+func claudeGateSettings(gate, policy string, allowDangerous bool) ([]byte, error) {
 	type hook struct {
 		Type    string `json:"type"`
 		Command string `json:"command"`
@@ -107,7 +107,7 @@ func claudeGateSettings(gate string, allowDangerous bool) ([]byte, error) {
 	command := func(exe, args string) hook {
 		return hook{"command", tools.PosixQuote(filepath.ToSlash(exe)) + " " + args + " || exit 2"}
 	}
-	hooks := []hook{command(gate, "hook claude-code")}
+	hooks := []hook{command(gate, "hook claude-code --policy "+tools.PosixQuote(filepath.ToSlash(policy)))}
 	if !allowDangerous {
 		self, err := os.Executable()
 		if err != nil {
@@ -124,7 +124,7 @@ func claudeGateSettings(gate string, allowDangerous bool) ([]byte, error) {
 // failed or timed out lets a command run ungated without a word. Hook events carry no tool id, so
 // answers are counted per command text, and a refusal, which names no command, per tool.
 type claudeGateCheck struct {
-	gate                     string
+	gate, policy             string
 	pending                  map[string]string
 	keys                     []string
 	called, answered, closed map[string]int
@@ -134,9 +134,9 @@ type claudeGateCheck struct {
 func gateCallKey(tool, command string) string { return tool + "\x00" + strings.TrimSpace(command) }
 
 // newClaudeGateParse reads the stream as usual and also stops a run on a command the gate did not answer.
-func newClaudeGateParse(gate string) func([]byte, func(Event), *Result) bool {
+func newClaudeGateParse(gate, policy string) func([]byte, func(Event), *Result) bool {
 	parse := newClaudeParse()
-	g := &claudeGateCheck{gate: gate, pending: map[string]string{}, called: map[string]int{}, answered: map[string]int{},
+	g := &claudeGateCheck{gate: gate, policy: policy, pending: map[string]string{}, called: map[string]int{}, answered: map[string]int{},
 		closed: map[string]int{}, toolCalls: map[string]int{}, refused: map[string]int{}}
 	return func(line []byte, emit func(Event), res *Result) bool {
 		parsed := parse(line, emit, res)
@@ -185,7 +185,7 @@ func (g *claudeGateCheck) see(line []byte) string {
 		if !ok || !slices.Contains(claudeHookedTools, tool) || l.ExitCode != 0 {
 			return ""
 		}
-		a := readGateAnswer(tool, l.Stdout, g.gate)
+		a := readGateAnswer(tool, l.Stdout, g.gate, g.policy)
 		if a.rewritten {
 			// When hooks disagree the last to finish wins, so the command may not be the gate's.
 			return fmt.Sprintf("%sanother hook rewrote a %s call, so its command may have run ungated", gateUnrouted, tool)
@@ -251,9 +251,17 @@ func gateUnroutedMessage(tool string) string {
 // gateRewrite is the whole command line the gate's hook writes (docs/protocol.md in adanext-exec).
 // PowerShell also ends a string on the typographic single quotes.
 var gateRewrite = map[string]*regexp.Regexp{
-	"Bash":       regexp.MustCompile(`^'((?:[^']|'\\'')+)' 'run' '--hook-build' '[^']+' '--shell' 'bash'(?: '[^']*')* '--script-b64' '([A-Za-z0-9_-]+)'$`),
-	"PowerShell": regexp.MustCompile(`^& '((?:[^'\x{2018}-\x{201b}]|''|\x{2018}\x{2018}|\x{2019}\x{2019}|\x{201a}\x{201a}|\x{201b}\x{201b})+)' 'run' '--hook-build' '[^'\x{2018}-\x{201b}]+' '--shell' '(?:pwsh|powershell)'(?: '[^'\x{2018}-\x{201b}]*')* '--script-b64' '([A-Za-z0-9_-]+)'$`),
+	"Bash":       regexp.MustCompile(`^'((?:[^']|'\\'')+)' 'run' '--hook-build' '[^']+' '--shell' 'bash'(?: '(?:[^']|'\\'')*')* '--script-b64' '([A-Za-z0-9_-]+)'$`),
+	"PowerShell": regexp.MustCompile(`^& '((?:[^'\x{2018}-\x{201b}]|''|\x{2018}\x{2018}|\x{2019}\x{2019}|\x{201a}\x{201a}|\x{201b}\x{201b})+)' 'run' '--hook-build' '[^'\x{2018}-\x{201b}]+' '--shell' '(?:pwsh|powershell)'(?: '(?:[^'\x{2018}-\x{201b}]|''|\x{2018}\x{2018}|\x{2019}\x{2019}|\x{201a}\x{201a}|\x{201b}\x{201b})*')* '--script-b64' '([A-Za-z0-9_-]+)'$`),
 }
+
+var gateRewritePolicy = map[string]*regexp.Regexp{
+	"Bash":       regexp.MustCompile(` '--policy' '((?:[^']|'\\'')*)'`),
+	"PowerShell": regexp.MustCompile(` '--policy' '((?:[^'\x{2018}-\x{201b}]|''|\x{2018}\x{2018}|\x{2019}\x{2019}|\x{201a}\x{201a}|\x{201b}\x{201b})*)'`),
+}
+
+// The gate's flag parser takes the last of several, in either dash form or with =, so one is all a rewrite may carry.
+var gateRewritePolicyFlag = regexp.MustCompile(` '-{1,2}policy(?:=|')`)
 
 var gateRewriteUnquote = map[string]*strings.Replacer{
 	"Bash":       strings.NewReplacer(`'\''`, `'`),
@@ -267,7 +275,7 @@ type gateAnswerRead struct {
 	command                            string
 }
 
-func readGateAnswer(tool, stdout, gate string) gateAnswerRead {
+func readGateAnswer(tool, stdout, gate, policy string) gateAnswerRead {
 	var a struct {
 		Specific struct {
 			Decision string `json:"permissionDecision"`
@@ -288,6 +296,11 @@ func readGateAnswer(tool, stdout, gate string) gateAnswerRead {
 	}
 	m := gateRewrite[tool].FindStringSubmatch(a.Specific.Input.Command)
 	if m == nil || !sameFile(gateRewriteUnquote[tool].Replace(m[1]), gate) {
+		return gateAnswerRead{rewritten: true}
+	}
+	// The user's own gate hook can win the race and judge by another policy.
+	p := gateRewritePolicy[tool].FindStringSubmatch(m[0])
+	if p == nil || len(gateRewritePolicyFlag.FindAllString(m[0], 2)) != 1 || !sameFile(gateRewriteUnquote[tool].Replace(p[1]), policy) {
 		return gateAnswerRead{rewritten: true}
 	}
 	command, err := base64.RawURLEncoding.DecodeString(m[2])

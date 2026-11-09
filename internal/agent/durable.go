@@ -142,13 +142,14 @@ func (d *durableAPI) runTools(ctx context.Context, ws *tools.Workspace, task Tas
 		}
 		var out string
 		var runErr error
+		refusal := refusalOf(tool, ws, input)
 		switch {
 		case !ok:
 			runErr = fmt.Errorf("unknown tool %q", name)
 		case invalid[id] != "":
 			runErr = fmt.Errorf("tool input was not valid JSON: %s", invalid[id])
-		case refusalOf(tool, ws, input) != "":
-			runErr = tools.GuardError(refusalOf(tool, ws, input))
+		case refusal != "":
+			runErr = tools.GuardError(refusal)
 		case !allowed(task, tool, summary):
 			runErr = errors.New("Permission denied by the user's harness settings.")
 		default:

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -101,8 +102,15 @@ func TestHelperCLIGate(t *testing.T) {
 	if !known {
 		os.Exit(3)
 	}
+	policy := ""
+	if s, ok := record["settings"].(string); ok {
+		if m := regexp.MustCompile(`--policy '([^']+)'`).FindStringSubmatch(s); m != nil {
+			policy = m[1]
+		}
+	}
 	for _, l := range lines {
-		fmt.Println(strings.ReplaceAll(l, gatePlaceholder, os.Getenv("HRN_GATE_PATH")))
+		l = strings.ReplaceAll(l, gatePlaceholder, os.Getenv("HRN_GATE_PATH"))
+		fmt.Println(strings.ReplaceAll(l, " '--script-b64'", " '--policy' '"+policy+"' '--script-b64'"))
 	}
 	if !strings.Contains(lines[len(lines)-1], `"type":"result"`) && stream != "ended" {
 		time.Sleep(30 * time.Second)
@@ -218,7 +226,7 @@ func TestGatedClaudeIsStartedWithTheHookTheToolListAndHookEvents(t *testing.T) {
 		t.Fatalf("settings = %s", rec.Settings)
 	}
 	gate, guard := pre[0].Hooks[0].Command, pre[0].Hooks[1].Command
-	if !strings.Contains(gate, "adanext-exec") || !strings.HasSuffix(gate, "' hook claude-code || exit 2") || strings.Contains(gate, `\`) {
+	if !strings.Contains(gate, "adanext-exec") || !strings.Contains(gate, "' hook claude-code --policy '") || !strings.HasSuffix(gate, ".json' || exit 2") || strings.Contains(gate, `\`) {
 		t.Errorf("the gate's hook = %q, want its slashed path, quoted, failing closed", gate)
 	}
 	if !strings.HasSuffix(guard, "' guard-hook || exit 2") {
@@ -413,19 +421,22 @@ func TestReadGateAnswerKnowsTheGatesOwnRewrite(t *testing.T) {
 		}
 		return path
 	}
-	gate, curly, other := file("adanext-exec"), file("ad\u2019anext-exec"), file("other")
+	gate, curly, other, policy, otherPolicy := file("adanext-exec"), file("ad\u2019anext-exec"), file("other"), file("p.json"), file("q.json")
 	answer := func(decision, command string) string {
 		b, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]any{
 			"permissionDecision": decision, "updatedInput": map[string]string{"command": command},
 		}})
 		return string(b)
 	}
+	bashWord := func(path string) string { return tools.PosixQuote(filepath.ToSlash(path)) }
+	psWord := func(path string) string {
+		return `'` + strings.NewReplacer(`'`, `''`, "\u2019", "\u2019\u2019").Replace(path) + `'`
+	}
 	bash := func(exe string) string {
-		return tools.PosixQuote(filepath.ToSlash(exe)) + ` 'run' '--hook-build' 'ab12' '--shell' 'bash' '--approved=rule' '--agent' 'claude-code' '--session' 's-1' '--script-b64' 'ZWNobw'`
+		return bashWord(exe) + ` 'run' '--hook-build' 'ab12' '--shell' 'bash' '--policy' ` + bashWord(policy) + ` '--approved=rule' '--agent' 'claude-code' '--session' 's-1' '--script-b64' 'ZWNobw'`
 	}
 	ps := func(exe string) string {
-		quoted := strings.NewReplacer(`'`, `''`, "\u2019", "\u2019\u2019").Replace(exe)
-		return `& '` + quoted + `' 'run' '--hook-build' 'ab' '--shell' 'pwsh' '--script-b64' 'ZWNobw'`
+		return `& ` + psWord(exe) + ` 'run' '--hook-build' 'ab' '--shell' 'pwsh' '--policy' ` + psWord(policy) + ` '--script-b64' 'ZWNobw'`
 	}
 	refusal := func(reason string) string {
 		return fmt.Sprintf(`{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":%q}}`, reason)
@@ -437,6 +448,15 @@ func TestReadGateAnswerKnowsTheGatesOwnRewrite(t *testing.T) {
 		{"the gate's rewrite", "Bash", gate, answer("allow", bash(gate)), gateAnswerRead{answered: true, command: "echo"}},
 		{"an ask", "Bash", gate, answer("ask", bash(gate)), gateAnswerRead{answered: true, command: "echo"}},
 		{"a rewrite with a timeout", "Bash", gate, answer("allow", strings.Replace(bash(gate), ` '--agent'`, ` '--timeout' '8s' '--agent'`, 1)), gateAnswerRead{answered: true, timed: true, command: "echo"}},
+		{"no policy", "Bash", gate, answer("allow", strings.Replace(bash(gate), ` '--policy' `+bashWord(policy), "", 1)), gateAnswerRead{rewritten: true}},
+		{"no policy on powershell", "PowerShell", gate, answer("allow", strings.Replace(ps(gate), ` '--policy' `+psWord(policy), "", 1)), gateAnswerRead{rewritten: true}},
+		{"another policy", "Bash", gate, answer("allow", strings.ReplaceAll(bash(gate), bashWord(policy), bashWord(otherPolicy))), gateAnswerRead{rewritten: true}},
+		{"another policy on powershell", "PowerShell", gate, answer("allow", strings.ReplaceAll(ps(gate), psWord(policy), psWord(otherPolicy))), gateAnswerRead{rewritten: true}},
+		{"a second policy", "Bash", gate, answer("allow", strings.Replace(bash(gate), ` '--agent'`, ` '--policy' `+bashWord(otherPolicy)+` '--agent'`, 1)), gateAnswerRead{rewritten: true}},
+		{"a second policy in the = form", "Bash", gate, answer("allow", strings.Replace(bash(gate), ` '--agent'`, ` '--policy=/loose.json' '--agent'`, 1)), gateAnswerRead{rewritten: true}},
+		{"a second policy on powershell", "PowerShell", gate, answer("allow", strings.Replace(ps(gate), ` '--script-b64'`, ` '-policy' `+psWord(otherPolicy)+` '--script-b64'`, 1)), gateAnswerRead{rewritten: true}},
+		{"a command after a policy word", "Bash", gate, answer("allow", strings.Replace(bash(gate), ` '--agent'`, ` '--policy' 'x'; evil #' '--agent'`, 1)), gateAnswerRead{rewritten: true}},
+		{"a command after a policy word on powershell", "PowerShell", gate, answer("allow", strings.Replace(ps(gate), ` '--script-b64'`, " '--policy' 'x\u2019; evil #' '--script-b64'", 1)), gateAnswerRead{rewritten: true}},
 		{"powershell", "PowerShell", gate, answer("allow", ps(gate)), gateAnswerRead{answered: true, command: "echo"}},
 		{"a doubled typographic quote in the path", "PowerShell", curly, answer("allow", ps(curly)), gateAnswerRead{answered: true, command: "echo"}},
 		{"another executable", "Bash", gate, answer("allow", bash(other)), gateAnswerRead{rewritten: true}},
@@ -454,14 +474,14 @@ func TestReadGateAnswerKnowsTheGatesOwnRewrite(t *testing.T) {
 		{"nothing", "Bash", gate, ``, gateAnswerRead{}},
 		{"not json", "Bash", gate, `adanext-exec: oops`, gateAnswerRead{}},
 	} {
-		if got := readGateAnswer(tc.tool, tc.stdout, tc.gate); got != tc.want {
+		if got := readGateAnswer(tc.tool, tc.stdout, tc.gate, policy); got != tc.want {
 			t.Errorf("%s: got %+v, want %+v", tc.name, got, tc.want)
 		}
 	}
 }
 
 func TestGateHookCommandQuotesTheGatePath(t *testing.T) {
-	data, err := claudeGateSettings(`C:/a'b c/adanext-exec.exe`, false)
+	data, err := claudeGateSettings(`C:/a'b c/adanext-exec.exe`, `C:/t'mp/policy.json`, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +490,7 @@ func TestGateHookCommandQuotesTheGatePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := s.Hooks["PreToolUse"][0].Hooks[0].Command
-	if want := `'C:/a'\''b c/adanext-exec.exe' hook claude-code || exit 2`; got != want {
+	if want := `'C:/a'\''b c/adanext-exec.exe' hook claude-code --policy 'C:/t'\''mp/policy.json' || exit 2`; got != want {
 		t.Fatalf("got %s, want %s", got, want)
 	}
 	self, _ := os.Executable()

@@ -3,7 +3,7 @@
 [← README](../README.md)
 
 Status: proposed 2026-10-20 for issue #435 and approved 2026-10-31, to be built slice by slice
-in the order below, each its own pull request. Slices 1 and 3 are built
+in the order below, each its own pull request. Slices 1, 2 and 3 are built
 ([the command gate](permissions.md#the-command-gate)); the others are not. The gate is
 [adanext-exec](https://github.com/cristiangirlea/adanext-exec); its design and build happen there.
 
@@ -31,10 +31,9 @@ documented flag is not a tested behaviour: each slice runs its live check before
 **The api loop.** hrn is already the terminal. `run_command` calls the gate instead of
 `runShell`: shell text with a named shell (Git's own bash on Windows, never a WSL launcher, which
 settles #86 by design), the run's policy profile, its timeout and the run id as the caller. The
-gate returns the exit code, the output (capped, or shaped) and its decision. Two ways to call
-it: the Go SDK (`broker`), or the `adanext-exec run` binary and its JSON protocol. The SDK is a
-`require` in `go.mod`, which this repository's rules forbid today, so the first is an open
-decision (below); the binary works either way.
+gate returns the exit code, the output (capped, or shaped) and its decision. hrn calls the
+`adanext-exec run` binary and its JSON protocol and never imports the module (decision 1 below),
+so harness stays standard library only.
 
 **claude.** Two routes; the note proposes the first and keeps the second as the fallback.
 
@@ -143,10 +142,10 @@ Stays in harness:
   all, refused rather than evicted) and continuation copying. hrn names that directory to the
   gate, so every original of a run sits in its record whichever backend ran it.
 
-One summarizer, not two: the shaping code and its adversarial tests move to adanext-exec with
-#1, and harness either imports it (the same `require` decision as the SDK) or keeps a copy held
-in step by the same tests. The note recommends the import if the one
-dependency is allowed, since two copies of an invariant-checked summarizer is where a bad summary slips in.
+One summarizer's behaviour, in two places at most: the shaping code and its adversarial tests
+move to adanext-exec with #1, and since harness never imports the module (decision 1), any copy
+harness keeps for MCP results is held in step by the same tests, because two copies of an
+invariant-checked summarizer is where a bad summary slips in.
 
 ## The adanext-exec milestones it needs
 
@@ -192,6 +191,17 @@ default off) until a maintainer turns it on.
 2. **The guard handed to the gate** (needs M2). hrn passes the profile; `internal/tools/guard.go`
    becomes a thin adapter once harness's guard tests pass against the gate; the guard stays in
    hrn for runs without `--gate`.
+   *Built* through the binary only, with these differences. A run's profile is a temporary file
+   given with `--policy`, not a `--profile`, which would have hrn write the gate's own
+   configuration; it replaces the user's `policy.json` for that run. It names every built-in
+   rule, so a gate lacking one refuses it at the handshake, and adds `guard-env` and a rule
+   refusing a command that names the file, or lifts every rule under `--allow-dangerous`.
+   `guard.go` keeps its table, since without an import it is still what decides a run without
+   `--gate`: the adapter is the question asked (`Workspace.guardRule`, through `check --json`),
+   not a shorter file. The claude hook gets the same policy, though the live check of slice 3
+   predates it; the real binary's hook is what `scripts/gate-guard.sh` tests. A refusal from
+   `check` writes no audit line, as a refusal by hrn's guard did not. A line meeting both a
+   built-in rule and `guard-env` is named by the built-in.
 3. **claude through the hook** (needs M6). `--settings` with the hook, `--tools`,
    `--include-hook-events` and stopping a run whose command call has no hook event; a live check
    list in [permissions](permissions.md) like the deny rules' (`git push` refused, a long `go
@@ -213,8 +223,7 @@ default off) until a maintainer turns it on.
    Live check: no `command_execution` item in a routed run.
 5. **Watch shows the gate's record**: decision, rule, exit, wait, shaped size, the audit link,
    and `ungated` on the header of a run that is not routed. Display only.
-6. **Shaping through the gate** (needs #1, the summarizer decision and the ranged `original`
-   gap). `--shape-tools` reaches the routed combinations only: api, claude through the hook, and
+6. **Shaping through the gate** (needs #1 and the ranged `original` gap). `--shape-tools` reaches the routed combinations only: api, claude through the hook, and
    codex in `yolo`. hrn names `<run>/originals` to the gate; the summary's last line says how to
    read the original (`read_original` through the hrn tool, or `adanext-exec original <handle>
    --range`, itself run through the gate). The sentence in
@@ -269,8 +278,8 @@ first, or arms could be scored as one.
 
 ## Open decisions
 
-1. May harness `require` adanext-exec (public, standard library only) for the SDK and
-   the summarizer, or does it call the binary and keep a tested copy of the summarizer?
+1. Settled 2026-11-07 (adanext-exec's `PLAN.md`): harness does not `require` adanext-exec. It
+   calls the binary, and any summarizer it keeps is a tested copy.
 2. claude: the hook (recommended) or the shell tools off with the gate-backed tool?
 3. codex: route `yolo` only and leave the sandboxed modes on codex's shell (this design), with
    a later design for them through `codex sandbox`, or give up routing codex's sandboxed modes?

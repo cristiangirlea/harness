@@ -46,12 +46,33 @@ func fakeGate(args []string) int {
 	case "check":
 		req, _ := io.ReadAll(os.Stdin)
 		_ = os.WriteFile(filepath.Join(dir, "check.json"), req, 0o644)
+		line, _ := json.Marshal(args)
+		_ = os.WriteFile(filepath.Join(dir, "check.args"), line, 0o644)
+		var sent struct{ Script string }
+		_ = json.Unmarshal(req, &sent)
+		switch {
+		case strings.HasPrefix(sent.Script, "fake-refuse"):
+			fmt.Println(`{"version":"adanext-exec/1","decision":"refuse","rule":"git-push"}`)
+			return 0
+		case strings.HasPrefix(sent.Script, "fake-ask"):
+			fmt.Println(`{"version":"adanext-exec/1","decision":"ask"}`)
+			return 0
+		case strings.HasPrefix(sent.Script, "fake-deny"):
+			fmt.Println(`{"version":"adanext-exec/1","decision":"deny"}`)
+			return 0
+		case strings.HasPrefix(sent.Script, "fake-unusable"):
+			fmt.Println(`{"version":"adanext-exec/1","error":"the policy cannot be used"}`)
+			return 125
+		case strings.HasPrefix(sent.Script, "fake-wedged"):
+			time.Sleep(60 * time.Second)
+			return 126
+		}
 		switch string(mode) {
 		case "old":
 			fmt.Fprintln(os.Stderr, `adanext-exec: unknown command "check"`)
 			return 121
 		case "v2":
-			fmt.Println(`{"version":"adanext-exec/2","decision":"allow"}`)
+			fmt.Println(`{"version":"adanext-exec/2","decision":"refuse","rule":"git-push"}`)
 			return 0
 		case "policy":
 			fmt.Println(`{"version":"adanext-exec/1","error":"the policy cannot be used: version 9, want 1"}`)
@@ -72,6 +93,7 @@ func fakeGate(args []string) int {
 		timeout := fs.Duration("timeout", 0, "")
 		fs.String("agent", "", "")
 		fs.String("run-id", "", "")
+		fs.String("policy", "", "")
 		if fs.Parse(args[1:]) != nil || len(fs.Args()) != 1 {
 			fmt.Fprintln(os.Stderr, "adanext-exec run: usage")
 			return 121
@@ -83,6 +105,9 @@ func fakeGate(args []string) int {
 			return 125
 		case strings.HasPrefix(script, "fake-ask"):
 			fmt.Fprintln(os.Stderr, "adanext-exec: refused: git-push asks a person, and none can be asked here")
+			return 125
+		case strings.HasPrefix(script, "fake-unusable"):
+			fmt.Fprintln(os.Stderr, "adanext-exec: the policy cannot be used")
 			return 125
 		case strings.HasPrefix(script, "fake-cannot"):
 			fmt.Fprintln(os.Stderr, "adanext-exec: could not contain the command")
@@ -148,9 +173,12 @@ func gatedWorkspace(t *testing.T) (*Workspace, Tool, string) {
 	t.Helper()
 	ws, tl := setup(t)
 	installed := installFakeGate(t, "")
-	path, err := FindGate(context.Background(), os.Environ())
+	policy, done, err := WriteGatePolicy(false)
 	must(t, err)
-	ws.Gate = path
+	t.Cleanup(done)
+	path, err := FindGate(context.Background(), os.Environ(), policy)
+	must(t, err)
+	ws.Gate, ws.GatePolicy = path, policy
 	return ws, tl["run_command"], filepath.Join(filepath.Dir(installed), "runs.log")
 }
 
@@ -180,7 +208,7 @@ func gateRuns(t *testing.T, log string) [][]string {
 
 func TestFindGateRefusesARunWhenTheGateIsNotInPath(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	_, err := FindGate(context.Background(), os.Environ())
+	_, err := FindGate(context.Background(), os.Environ(), "")
 	if err == nil || !strings.Contains(err.Error(), "adanext-exec is not in PATH") {
 		t.Fatalf("FindGate = %v, want a missing gate", err)
 	}
@@ -188,7 +216,7 @@ func TestFindGateRefusesARunWhenTheGateIsNotInPath(t *testing.T) {
 
 func TestFindGateAcceptsAGateThatSpeaksProtocolOne(t *testing.T) {
 	installed := installFakeGate(t, "")
-	path, err := FindGate(context.Background(), os.Environ())
+	path, err := FindGate(context.Background(), os.Environ(), "")
 	must(t, err)
 	got, err := filepath.EvalSymlinks(path)
 	must(t, err)
@@ -213,7 +241,7 @@ func TestFindGateRefusesAnOlderOrOtherGate(t *testing.T) {
 	} {
 		t.Run(mode, func(t *testing.T) {
 			installFakeGate(t, mode)
-			_, err := FindGate(context.Background(), os.Environ())
+			_, err := FindGate(context.Background(), os.Environ(), "")
 			if err == nil || !strings.Contains(err.Error(), "handshake") || !strings.Contains(err.Error(), want) {
 				t.Fatalf("FindGate = %v, want a failed handshake naming %q", err, want)
 			}
@@ -228,7 +256,7 @@ func TestFindGateRefusesABatchFile(t *testing.T) {
 	dir := t.TempDir()
 	must(t, os.WriteFile(filepath.Join(dir, GateName+".cmd"), []byte("@echo off\r\n"), 0o755))
 	t.Setenv("PATH", dir)
-	_, err := FindGate(context.Background(), os.Environ())
+	_, err := FindGate(context.Background(), os.Environ(), "")
 	if err == nil || !strings.Contains(err.Error(), "batch file") {
 		t.Fatalf("FindGate = %v, want a refused batch file", err)
 	}
@@ -242,7 +270,7 @@ func TestGatedRunCommandNamesTheShellTimeoutAndRun(t *testing.T) {
 		t.Fatalf("run_command = %q, %v", out, err)
 	}
 	shell, _ := Shell()
-	want := []string{"run", "--shell", shell, "--agent", "hrn", "--timeout", "30s", "--run-id", "r20261107", "--", "echo hi"}
+	want := []string{"run", "--shell", shell, "--agent", "hrn", "--policy", ws.GatePolicy, "--timeout", "30s", "--run-id", "r20261107", "--", "echo hi"}
 	if runs := gateRuns(t, log); len(runs) != 1 || strings.Join(runs[0], "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("gate ran with %q, want %q", runs, want)
 	}
@@ -377,8 +405,9 @@ func TestGatedRunCommandHandsTheGateTheCommandTextUnchanged(t *testing.T) {
 	}
 }
 
-func TestGatedRunCommandStillAppliesHrnsGuardFirst(t *testing.T) {
+func TestAGateWithNoPolicyKeepsHrnsGuardFirst(t *testing.T) {
 	ws, tl, log := gatedWorkspace(t)
+	ws.GatePolicy = ""
 	_, err := call(t, ws, tl, map[string]any{"command": "sudo rm -rf /"})
 	if err == nil || !strings.Contains(err.Error(), "hrn guard") {
 		t.Fatalf("error = %v, want the hrn guard", err)

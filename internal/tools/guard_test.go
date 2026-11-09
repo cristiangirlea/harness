@@ -274,7 +274,7 @@ func TestGuardBlocks(t *testing.T) {
 		"cat ~/.config/.wrangler/config/default.toml":               "secret-file",
 		"cat \"$APPDATA/xdg.config/.wrangler/config/default.toml\"": "secret-file",
 	} {
-		if got := Guard(command); got != want {
+		if got := guardUnderTest(command); got != want {
 			t.Errorf("Guard(%q) = %q, want %q", command, got, want)
 		}
 	}
@@ -419,7 +419,7 @@ func TestGuardAllows(t *testing.T) {
 		"tofu validate",
 		"helm template ./chart",
 	} {
-		if got := Guard(command); got != "" {
+		if got := guardUnderTest(command); got != "" {
 			t.Errorf("Guard(%q) = %q, want allowed", command, got)
 		}
 	}
@@ -518,12 +518,12 @@ func TestGuardRefusesGhsStoredLogin(t *testing.T) {
 		"env -u HRN_GUARDED hrn run x":   "guard-env",
 		"$env:HRN_GUARDED = ''":          "guard-env",
 	} {
-		if got := Guard(command); got != want {
+		if got := guardUnderTest(command); got != want {
 			t.Errorf("Guard(%q) = %q, want %q", command, got, want)
 		}
 	}
 	for _, command := range []string{"gh auth status", "gh auth status --hostname github.com", "gh pr view 1", "echo $GH_TOKEN"} {
-		if got := Guard(command); got != "" {
+		if got := guardUnderTest(command); got != "" {
 			t.Errorf("Guard(%q) = %q, want it allowed", command, got)
 		}
 	}
