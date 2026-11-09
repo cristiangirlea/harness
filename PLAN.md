@@ -287,6 +287,15 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-09: hrn hands its guard to adanext-exec as one policy file per run (#435 slice 2, PR
+  #900), passed with `--policy` to `check --json`, `run` and the claude hook. A gated api run takes
+  its guard's answer from `check --json`, and `--allow-dangerous` now lifts the gate's rules too.
+  Binary only, with no import (2026-11-07), so `guard.go` keeps its table for runs without `--gate`
+  and the adapter is `Workspace.guardRule`, not a shorter file. The policy replaces the user's
+  `policy.json` for hrn runs. A rewrite counts as the gate's only when it names exactly the run's
+  policy. `scripts/gate-guard.sh` runs the guard tests against a pinned real gate, on Linux in CI
+  since Windows hosted runners are elevated. A live claude run with `--policy` was not checked.
+  Slices 4 to 7 stay open.
 - 2026-11-09: the number of slots a repository may have can be set (#896, PR #897).
   `{"max_slots": N}`, 1 to 10, in `<main checkout>/.hrn/ws.json` for one repository or in the hrn
   home's `ws.json` as the machine default; the repository's file wins, to allow more as well as
