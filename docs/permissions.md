@@ -277,6 +277,40 @@ audit line carries claude's session id, not hrn's run id. The two hooks and the 
 120 ms a command on the development PC (hooks 13 and 18 ms side by side; the `run` wrapper about
 100 ms).
 
+##### codex through the gate
+
+codex has no way to rewrite one command, so with `--gate` hrn turns its command tools off
+(`--disable` for `shell_tool`, `unified_exec`, `computer_use`, `browser_use`, `apps` and
+`plugins`) and serves `run_command` over MCP for the one run, from `hrn gate-tools`. Its code
+host (`code_mode_host`, the `functions.exec` tool) stays on: codex reaches MCP tools only through
+it, so without it there is no `run_command`, and its script can call tools but has no file or
+process access of its own. The tool asks the gate as the api loop does, applies the guard to the
+environment again, and is recorded as a shell call. codex hands the server the variables the
+run allows, by name (`env_vars`; names with characters other than letters, digits and `_`, such
+as `ProgramFiles(x86)`, are left out so the npm `codex.cmd` shim can pass the list), and waits
+up to 660 seconds for a call.
+
+codex's file tools still work in yolo, and they can write the run's policy file. So the server
+does not rest on the policy alone: it applies hrn's own command guard to every call, and it
+refuses every command once the policy file no longer matches the SHA-256 hrn passed it at the
+start. A configured MCP server named `hrn_gate` would be merged with this one, so a routed run
+refuses to start with one. Those file tools can also reach hrn's and the gate's own binaries and
+any script a command later runs; hrn's guard still applies to each command's text, but treat a
+routed codex run as no stronger than the files its user can write.
+
+It needs `--mode yolo` and is refused otherwise: the server runs outside codex's sandbox,
+which the other modes rely on. A `command_execution` item in a routed run stops the run with
+an error, and so does an item of a type hrn does not know, since a new tool may run code; that
+detects and does not prevent. MCP servers' tools are not routed, and the
+run's setup line says so. A codex subagent gets the same limits.
+
+Checked live on Windows with codex-cli 0.167.0-alpha.3.2, `-b codex --mode yolo --gate` and a
+real adanext-exec: an allowed command ran, `git push` and a command naming the run's policy
+file were refused with the remote still empty, a 70-second command returned, and no
+`command_execution` item appeared. A script in `functions.exec` could not import `node:fs` or
+`node:child_process`, and had no `process`, `require` or `fetch`. Repeat this check on a codex
+update: a new feature can add a tool that does not reach the gate.
+
 Checked live on Windows with Claude Code 2.1.284, `-b claude --mode yolo --gate` and a real
 adanext-exec: `git push` refused by both hooks and the remote still empty; a PowerShell pipeline
 with `$_` and a script block unchanged; a project's deny rule refusing and its ask rule held; a

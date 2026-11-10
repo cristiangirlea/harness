@@ -383,11 +383,22 @@ func TestParseCheckOptionIsRecordedForAPIOnly(t *testing.T) {
 	}
 }
 
+func TestShapeToolsOptionIsRecordedForAPIAndForGatedCodex(t *testing.T) {
+	for _, backend := range []string{"api", "claude", "codex", "gemini", "opencode", "agy"} {
+		for _, gate := range []bool{false, true} {
+			lines := optionLines(backend, Options{ShapeTools: true, Gate: gate})
+			if slices.Contains(lines, "option shape_tools") != (backend == "api" || backend == "codex" && gate) {
+				t.Fatalf("%s gate=%v: %v", backend, gate, lines)
+			}
+		}
+	}
+}
+
 func TestCommandGateOptionIsRecordedForTheRoutedBackends(t *testing.T) {
 	for _, backend := range []string{"api", "claude", "codex", "gemini", "opencode", "agy"} {
 		for _, enabled := range []bool{false, true} {
 			lines := optionLines(backend, Options{Gate: enabled})
-			if slices.Contains(lines, "option command_gate") != ((backend == "api" || backend == "claude") && enabled) {
+			if slices.Contains(lines, "option command_gate") != ((backend == "api" || backend == "claude" || backend == "codex") && enabled) {
 				t.Fatalf("%s enabled=%v: %v", backend, enabled, lines)
 			}
 		}
