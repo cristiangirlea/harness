@@ -132,7 +132,8 @@ func hidden(stack []ast.Node, hideName string) bool {
 		return false
 	}
 	assign, ok := stack[len(stack)-3].(*ast.AssignStmt)
-	if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+	// A plain = could fill a variable that an earlier closure already starts.
+	if !ok || assign.Tok != token.DEFINE || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 		return false
 	}
 	id, ok := assign.Lhs[0].(*ast.Ident)
@@ -152,10 +153,10 @@ func hidden(stack []ast.Node, hideName string) bool {
 	if at < 0 {
 		return false
 	}
-	for _, stmt := range list[at+1:] {
+	for i, stmt := range list[at+1:] {
 		if expr, ok := stmt.(*ast.ExprStmt); ok {
 			if set, ok := expr.X.(*ast.CallExpr); ok && isSelector(set.Fun, hideName, "Set") && len(set.Args) == 1 && isIdent(set.Args[0], id.Name) {
-				return true
+				return keptHidden(list[at+2+i:], id.Name)
 			}
 		}
 		if uses(stmt, id.Name) {
@@ -163,6 +164,61 @@ func hidden(stack []ast.Node, hideName string) bool {
 		}
 	}
 	return false
+}
+
+// keptHidden reports whether the statements after nowindow.Set leave its HideWindow in place until the command is used.
+func keptHidden(rest []ast.Stmt, name string) bool {
+	for _, stmt := range rest {
+		undone := false
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			if assign, ok := n.(*ast.AssignStmt); ok {
+				for _, lhs := range assign.Lhs {
+					undone = undone || undoesHide(lhs, name)
+				}
+			}
+			return !undone
+		})
+		if undone {
+			return false
+		}
+		if uses(stmt, name) {
+			return true
+		}
+	}
+	return true
+}
+
+// undoesHide matches x.SysProcAttr, x.SysProcAttr.HideWindow and *x, the targets that can drop the hidden flag.
+func undoesHide(lhs ast.Expr, name string) bool {
+	e, star := bare(lhs)
+	if isIdent(e, name) {
+		return star
+	}
+	sel, ok := e.(*ast.SelectorExpr)
+	if ok && sel.Sel.Name == "HideWindow" {
+		e, _ = bare(sel.X)
+		sel, ok = e.(*ast.SelectorExpr)
+	}
+	if !ok || sel.Sel.Name != "SysProcAttr" {
+		return false
+	}
+	x, _ := bare(sel.X)
+	return isIdent(x, name)
+}
+
+// bare strips parentheses and dereferences, and reports whether it met a dereference.
+func bare(e ast.Expr) (ast.Expr, bool) {
+	star := false
+	for {
+		switch x := e.(type) {
+		case *ast.ParenExpr:
+			e = x.X
+		case *ast.StarExpr:
+			e, star = x.X, true
+		default:
+			return e, star
+		}
+	}
 }
 
 // uses reports a statement that names the command other than to reach one of its fields or non-starting methods.
