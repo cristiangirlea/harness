@@ -24,8 +24,11 @@ func gatedRun(t *testing.T, backend, tool string, gate bool) *runlog.Writer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"hi\n\n[exit code 0]", "out\n[exit code 3]\nexit code 3",
-		tools.GuardError("gh-publish").Error(), shapedResult} {
+	failed := "out\n[exit code 3]\nexit code 3"
+	if backend == "codex" {
+		failed = "out\n[exit code 3]" // the gate's tool server adds no error line that the output holds
+	}
+	for _, text := range []string{"hi\n\n[exit code 0]", failed, tools.GuardError("gh-publish").Error(), shapedResult} {
 		w.Event(agent.Event{Kind: agent.EventToolCall, Tool: tool, Text: "echo hi"})
 		w.Event(agent.Event{Kind: agent.EventToolResult, Tool: tool, Text: text})
 	}
@@ -51,7 +54,7 @@ func TestAGatedRunShowsTheGatesRecordOfEachCommand(t *testing.T) {
 			t.Fatal(err)
 		}
 		body := runPageBody(t, srv, w.ID())
-		for _, want := range []string{"gate: allowed · exit 0", "gate: allowed · exit 3", "hrn guard: refused · gh-publish",
+		for _, want := range []string{"gate: allowed · exit 0", "gate: allowed · exit 3", "guard: refused · gh-publish",
 			"through adanext-exec · audit run_id " + w.ID()} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s: the run page lacks %q", backend, want)
@@ -134,7 +137,7 @@ func TestTheRunStreamCarriesTheGatesRecord(t *testing.T) {
 		if !ok {
 			t.Fatal("stream ended early")
 		}
-		if strings.Contains(m.data, "hrn guard: refused · gh-publish") {
+		if strings.Contains(m.data, "guard: refused · gh-publish") {
 			return
 		}
 	}
@@ -165,5 +168,58 @@ func TestAnOriginalLineIsNotAShapedSizeOnARunThatDidNotShape(t *testing.T) {
 	body := runPageBody(t, srv, w.ID())
 	if !strings.Contains(body, "gate: allowed · exit 0") || strings.Contains(body, "shaped from") {
 		t.Error("a run without shape_tools shows a shaped size")
+	}
+}
+
+func TestAGatedRunThatNeverReachedTheGateIsMarkedUngated(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	srv := httptest.NewServer(New(context.Background(), Options{}))
+	defer srv.Close()
+	for backend, why := range map[string]string{
+		"gemini": "gate: the gemini backend's commands do not run through adanext-exec yet",
+		"api":    "gate: adanext-exec is not in PATH",
+	} {
+		w := gatedRun(t, backend, "run_command", true)
+		if err := w.Close(agent.Result{Backend: backend, Status: agent.StatusError, Error: why}); err != nil {
+			t.Fatal(err)
+		}
+		body := runPageBody(t, srv, w.ID())
+		if strings.Contains(body, "<dd>through adanext-exec") || strings.Contains(body, "audit run_id") || !strings.Contains(body, "<dd>ungated · ") {
+			t.Errorf("%s: a run that never reached the gate claims it, or is not marked ungated", backend)
+		}
+	}
+}
+
+func TestTheGatesRecordShortensPathsLikeTheResult(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	srv := httptest.NewServer(New(context.Background(), Options{}))
+	defer srv.Close()
+	dir := t.TempDir()
+	task := agent.Task{Prompt: "p", Dir: dir}
+	task.Gate = true
+	w, err := runlog.Create("api", task, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Event(agent.Event{Kind: agent.EventToolResult, Tool: "run_command", Text: tools.GuardError("x " + filepath.Join(dir, "notes.txt")).Error()})
+	if err := w.Close(agent.Result{Backend: "api", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	if body := runPageBody(t, srv, w.ID()); strings.Contains(body, "guard: refused · x "+dir) || !strings.Contains(body, "guard: refused · x .") {
+		t.Error("the gate's record shows the workspace's whole path, or is missing")
+	}
+}
+
+func TestACodexRunStoppedForAnUngatedCommandShowsNoGateRecord(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	srv := httptest.NewServer(New(context.Background(), Options{}))
+	defer srv.Close()
+	w := gatedRun(t, "codex", "shell", true)
+	if err := w.Close(agent.Result{Backend: "codex", Status: agent.StatusError,
+		Error: agent.GateStopped + "codex ran a command through its own shell tool, outside the gate"}); err != nil {
+		t.Fatal(err)
+	}
+	if body := runPageBody(t, srv, w.ID()); strings.Contains(body, `class="gate-note"`) {
+		t.Error("a codex run hrn stopped shows the gate's record on results that may be its own shell's")
 	}
 }

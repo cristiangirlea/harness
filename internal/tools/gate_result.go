@@ -2,6 +2,7 @@ package tools
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -15,6 +16,8 @@ const (
 	gatePolicyMoved  = "refused: the run's gate policy file was changed or removed"
 	commandTimedOut  = "command timed out"
 	originalReadable = "; read_original reads it"
+	// gateNoRule is the name hrn gives a refusal by the gate's check that names no rule.
+	gateNoRule = "gate-policy"
 )
 
 var (
@@ -35,7 +38,8 @@ type GateResult struct {
 }
 
 // ReadGateResult reads a run_command result as the api loop or the gate's tool server recorded it.
-// A command's own output cannot fake the lines hrn appends after it, so those are read from the end.
+// A command's own output cannot fake the lines hrn appends after it, so those are read from the end,
+// and the first line only of a result that holds none, which no command ran to write.
 func ReadGateResult(text string) (GateResult, bool) {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	n := len(lines)
@@ -43,7 +47,7 @@ func ReadGateResult(text string) (GateResult, bool) {
 	tail := -1
 	r := GateResult{By: "gate", Decision: "allowed"}
 	switch {
-	case exitLine.MatchString(last):
+	case exitLine.MatchString(last), timeoutLine.MatchString(last):
 		tail = n - 1
 	case n >= 2 && "["+last+"]" == lines[n-2] && exitLine.MatchString(lines[n-2]):
 		tail = n - 2
@@ -62,6 +66,9 @@ func ReadGateResult(text string) (GateResult, bool) {
 		}
 		return r, true
 	}
+	if slices.ContainsFunc(lines, func(l string) bool { return exitLine.MatchString(l) || timeoutLine.MatchString(l) }) {
+		return GateResult{}, false
+	}
 	first := lines[0]
 	switch {
 	case strings.HasPrefix(first, gateRefusedBy):
@@ -70,7 +77,11 @@ func ReadGateResult(text string) (GateResult, bool) {
 			r.Rule = m[1]
 		}
 	case guardRuleOf.MatchString(first):
-		r.By, r.Decision, r.Rule = "hrn guard", "refused", guardRuleOf.FindStringSubmatch(first)[1]
+		// hrn's guard and, on a gated run, the gate's check write the same refusal.
+		r.By, r.Decision = "guard", "refused"
+		if rule := guardRuleOf.FindStringSubmatch(first)[1]; rule != gateNoRule {
+			r.Rule = rule
+		}
 	case strings.HasPrefix(first, hrnRefused), strings.HasPrefix(first, gatePolicyMoved):
 		r.By, r.Decision = "hrn", "refused"
 	case notRunExit.MatchString(first):

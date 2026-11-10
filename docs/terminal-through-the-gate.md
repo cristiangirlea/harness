@@ -235,15 +235,17 @@ default off) until a maintainer turns it on.
 5. **Watch shows the gate's record**: decision, rule, exit, wait, shaped size, the audit link,
    and `ungated` on the header of a run that is not routed. Display only.
    *Built* from what records hold today, with these differences. The decision, a refusal's rule,
-   the exit code and a shaped result's size are read from the lines hrn appends to a gated
-   `run_command` result (api, and codex's gate tool), never from the command's own output; a
-   shaped size shows only when the run's `originals` holds that file at that size. claude's
+   the exit code and a shaped result's size are read from what hrn writes in a gated
+   `run_command` result (api, and codex's gate tool), so they say what hrn reported to the model
+   (a command that prints the gate's message and exits with its code reads as the gate's, there
+   as here); a shaped size shows only when the run's `originals` holds that file at that size. A
+   refusal by hrn's guard and by the gate's check read the same, labelled `guard`. claude's
    results show none of it: the hook's answers are checked during the run but not stored, which
    would need a record field. The gate's wait is never recorded (hrn passes no `--slots` and
    asks no person), nor the rule of an allow. The audit link is the key the gate's audit lines
    carry, shown in the header (`run_id` on api and codex, claude's `session`): watch does not
    read the gate's audit directory, since the read-back gap above is still open. `ungated`
-   marks every run without `--gate`.
+   marks every run without `--gate`, and one that ended before any command reached the gate.
 6. **Shaping through the gate** (needs #1 and the ranged `original` gap). `--shape-tools` reaches the routed combinations only: api, claude through the hook, and
    codex in `yolo`. hrn names `<run>/originals` to the gate; the summary's last line says how to
    read the original (`read_original` through the hrn tool, or `adanext-exec original <handle>

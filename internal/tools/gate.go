@@ -139,7 +139,7 @@ func (ws *Workspace) guardRule(command string) string {
 	if err != nil || answer.Version != GateProtocol || answer.Decision == "" || answer.Decision == "allow" {
 		return ""
 	}
-	return cmp.Or(answer.Rule, "gate-policy")
+	return cmp.Or(answer.Rule, gateNoRule)
 }
 
 // FindGate returns the gate's path once it answers the protocol handshake under the run's policy,
@@ -221,7 +221,7 @@ func runGated(ctx context.Context, ws *Workspace, command string, timeout time.D
 		return res, fmt.Errorf(gateRefusedBy+"%s. Do not retry it unchanged; say in your answer why it is needed",
 			strings.TrimSpace(res.Output))
 	case slices.Contains(gateNotRun, res.ExitCode) && said:
-		return res, fmt.Errorf(gateDidNotRun+" (exit %d): %s", res.ExitCode, strings.TrimSpace(res.Output))
+		return res, fmt.Errorf(gateDidNotRun+" (exit %d): %s; nothing ran in its place", res.ExitCode, strings.TrimSpace(res.Output))
 	}
 	return res, nil
 }

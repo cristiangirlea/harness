@@ -67,7 +67,7 @@ type eventView struct {
 	Summary string
 	Body    string
 	More    string
-	Gate    string // the gate's record of a command result
+	Gate    string
 }
 
 func eventOf(l Line, prev time.Time) (eventView, time.Time) {

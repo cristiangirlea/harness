@@ -719,7 +719,7 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var v eventView
-		note := gateNote(rec, l.Event)
+		note := sh.shorten(s.clean(gateNote(rec, l.Event)))
 		l.Event = sh.event(s.cleanEvent(l.Event))
 		if feedsChart(l) {
 			usage = append(usage, l.Event)
@@ -1021,7 +1021,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			var v eventView
-			note := gateNote(rec, l.Event)
+			note := sh.shorten(s.clean(gateNote(rec, l.Event)))
 			l.Event = sh.event(s.cleanEvent(l.Event))
 			if feedsChart(l) {
 				usage = append(usage, l.Event)

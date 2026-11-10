@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/cristiangirlea/harness/internal/agent"
-	"github.com/cristiangirlea/harness/internal/mask"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -15,10 +14,20 @@ import (
 // answers are read to stop a run but not recorded, so its results carry none of the gate's record.
 var gateCommandTools = map[string]string{"api": "run_command", "codex": "shell"}
 
+// gateStopped says hrn stopped a gated run because a command may have run outside the gate.
+func gateStopped(rec runlog.Record) bool {
+	return strings.HasPrefix(rec.Result.Error, agent.GateStopped)
+}
+
 // gateFact says whether a run's commands went through the gate, and the key its audit lines carry.
+// Every other error that starts "gate: " stopped the run before its first command.
 func gateFact(rec runlog.Record) fact {
-	if !rec.Task.Gate {
+	routed := rec.Backend == "api" || rec.Backend == "codex" || rec.Backend == "claude"
+	switch {
+	case !rec.Task.Gate:
 		return fact{Label: "Commands", Value: "ungated"}
+	case !routed || strings.HasPrefix(rec.Result.Error, "gate: ") && !gateStopped(rec):
+		return fact{Label: "Commands", Value: "ungated · " + tools.GateName + " was asked for, and the run ended before any command reached it"}
 	}
 	value := "through " + tools.GateName
 	switch {
@@ -27,16 +36,18 @@ func gateFact(rec runlog.Record) fact {
 	case rec.Result.Session != "":
 		value += " · audit session " + rec.Result.Session
 	}
-	if strings.HasPrefix(rec.Result.Error, agent.GateStopped) {
+	if gateStopped(rec) {
 		value += " · stopped: a command may have run ungated"
 	}
 	return fact{Label: "Commands", Value: value}
 }
 
 // gateNote is the gate's record of one command result on a routed run, read before masking so
-// the lines hrn appends are whole.
+// the lines hrn appends are whole. codex names its own shell's results like the gate tool's, so a
+// codex run hrn stopped for using that shell shows none.
 func gateNote(rec runlog.Record, e agent.Event) string {
-	if !rec.Task.Gate || e.Kind != agent.EventToolResult || gateCommandTools[rec.Backend] == "" || e.Tool != gateCommandTools[rec.Backend] {
+	tool := gateCommandTools[rec.Backend]
+	if !rec.Task.Gate || e.Kind != agent.EventToolResult || tool == "" || e.Tool != tool || rec.Backend == "codex" && gateStopped(rec) {
 		return ""
 	}
 	r, ok := tools.ReadGateResult(e.Text)
@@ -46,7 +57,7 @@ func gateNote(rec runlog.Record, e agent.Event) string {
 	parts := []string{r.By + ": " + r.Decision}
 	for _, part := range []string{r.Rule, r.Exit} {
 		if part != "" {
-			parts = append(parts, mask.Text(part))
+			parts = append(parts, part)
 		}
 	}
 	if r.Original != "" && rec.Task.ShapeTools && heldOriginal(rec.ID, r.Original, r.OriginalBytes) {
