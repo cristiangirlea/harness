@@ -287,6 +287,16 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-10: `--gate` reaches the codex backend through a gate-backed MCP tool (#435 slice 4,
+  PR #903). hrn turns codex's command tools off and serves `run_command` from `hrn gate-tools`,
+  in `yolo` only. `code_mode_host` stays on: on codex-cli 0.167 MCP tools are reached only
+  through `functions.exec`, and a live probe found no file or process access in its scripts.
+  codex's file tools can write the run's policy, so the server keeps hrn's guard and checks the
+  policy's SHA-256 before each command. A `command_execution` item or an item type hrn does not
+  know stops the run. Variable names with `(` are left out of `env_vars` for the `codex.cmd`
+  shim, and a configured `hrn_gate` server refuses the run. The live claude run with `--policy`
+  that slice 2 left unchecked passed (2026-11-09). Not checked: codex subagents' items, other
+  codex versions, Linux or macOS. Slices 5 to 7 stay open.
 - 2026-11-09: hrn hands its guard to adanext-exec as one policy file per run (#435 slice 2, PR
   #900), passed with `--policy` to `check --json`, `run` and the claude hook. A gated api run takes
   its guard's answer from `check --json`, and `--allow-dangerous` now lifts the gate's rules too.
