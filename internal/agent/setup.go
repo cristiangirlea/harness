@@ -115,13 +115,13 @@ func optionLines(backend string, o Options) []string {
 	if backend == "api" && o.NoInstructions {
 		out = append(out, "option no_instructions")
 	}
-	if backend == "api" && o.ShapeTools {
+	if (backend == "api" || backend == "codex" && o.Gate) && o.ShapeTools {
 		out = append(out, "option shape_tools")
 	}
 	if backend == "api" && o.ParseCheck {
 		out = append(out, "option parse_check")
 	}
-	if backend == "api" && o.Gate {
+	if (backend == "api" || backend == "claude" || backend == "codex") && o.Gate {
 		out = append(out, "option command_gate")
 	}
 	if backend == "api" && o.MaskToolResults > 0 {

@@ -104,6 +104,7 @@ non-zero exit and an error object; be safe to re-run; call other scripts, never 
 - `scripts/fix-test-check.sh`: Require a changed test for closing fixes that change Go code.
 - `scripts/fix-test-check/main.go`: Require a changed test for closing fixes that change Go code.
 - `scripts/fix-test-check/main_test.go`: Check closing fixes, test patches, exemptions and input errors.
+- `scripts/gate-guard.sh`: Run hrn's guard tests against a real adanext-exec built at the pinned commit.
 - `scripts/privacy-check.sh`: Check tracked text files for personal folders, local work paths and narration of a person.
 - `scripts/privacy-check/main.go`: Check tracked text files for personal folders, local work paths and narration of a person.
 - `scripts/privacy-check/main_test.go`: Check the personal folder, local path and narration rules on fixture files.

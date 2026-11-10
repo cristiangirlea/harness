@@ -184,21 +184,39 @@ on that repository instead of the task's.
 With `--gate` (`command_gate`), the api backend's `run_command` runs each command through
 [adanext-exec](https://github.com/cristiangirlea/adanext-exec) instead of starting the shell
 itself: `adanext-exec run --shell <bash|powershell|sh> --agent hrn --timeout <t> --run-id <run>
--- <command>`, with the same working directory and the same guarded environment. hrn names the
-kind of shell it would pick; the gate finds that shell's program itself (Git Bash on Windows,
-never a WSL launcher), which can be another copy than the one hrn found. hrn's guard still runs
-first, so a command it refuses never reaches the gate. A command that names the gate's
+--policy <file> -- <command>`, with the same working directory and the same guarded environment.
+hrn names the kind of shell it would pick; the gate finds that shell's program itself (Git Bash
+on Windows, never a WSL launcher), which can be another copy than the one hrn found.
+
+The guard is handed to the gate. hrn writes the run's policy to a temporary file, removed when
+the run ends: the gate's built-in rules, which are this guard's, each named so that a gate
+lacking one rejects the policy and no run starts, plus two rules of the policy's own, `guard-env`
+and `gate-policy-file`, which refuses a command naming that file; under `--allow-dangerous`,
+every built-in rule lifted and neither of the two. That file replaces `policy.json` in the
+user's adanext-exec config for the run, so a rule there, stricter or looser, does not apply to
+an hrn run. Before each command, and before anyone is asked about it, hrn asks
+`adanext-exec check --json --policy <file>`. A refusal comes back as this guard's own refusal
+with the gate's rule name (a line that meets a built-in rule and `guard-env` names the built-in),
+and the command never reaches `run`, so it has no audit line. An unusable answer refuses nothing
+at this step: `run` judges every command again under the same policy and runs nothing it cannot
+judge. On the api backend hrn's own rule table then decides only runs without `--gate`; claude
+keeps it in the guard's hook below. `gate-policy-file` is textual like the rest: a command that
+reaches the file without naming it can still change the policy, which is the gate's trust in its
+user again, as below. A gated api run is only as current as the gate in PATH: a rule the gate
+lacks stops the run at the handshake, but a rule whose pattern differs is caught only by
+`scripts/gate-guard.sh`, which runs this guard's tests against a pinned gate.
+
+A command that names the gate's
 `-approved` or `-script-b64` flag is refused before the gate, `--allow-dangerous` or not, as
 the gate's own hook refuses it, so a nested `adanext-exec run` cannot plainly approve its own
 ask. It is a text check that quoting can get past: the boundary is the gate's own trust in
-its user, as its design says. The gate applies its own policy (`policy.json` in the user's adanext-exec config, or its
-built-in rules), kills the command's whole tree at the timeout and writes one audit line per
-command in its own state directory. Its output and exit code pass through unchanged.
+its user, as its design says. The gate kills the command's whole tree at the timeout and writes
+one audit line per command in its own state directory. Its output and exit code pass through
+unchanged.
 
 hrn reads the gate's exit codes as [its protocol](https://github.com/cristiangirlea/adanext-exec/blob/main/docs/protocol.md)
 gives them. 125 with the gate's own message is a refusal, returned to the model as an error it
-should not retry unchanged; an `ask` from the policy is refused the same way, since hrn passes
-no approval to the gate yet. 121, 123, 126 and 127 with the gate's message mean the gate did not
+should not retry unchanged; hrn's policy has no `ask`, and hrn passes the gate no approval. 121, 123, 126 and 127 with the gate's message mean the gate did not
 run the command, which is an error naming the gate's reason. 124 after the timeout is a
 timeout. The same codes from a command that ran (its output does not start with the gate's
 message, or 124 before the timeout) stay the command's own. A gate that cannot be started is an
@@ -208,10 +226,99 @@ writes its audit line) and kills it if it has not ended five seconds later; it d
 seconds after the timeout if the gate has not ended by then. On Windows hrn ends the gate and
 its command at once, through its job, and the gate writes no audit line for that command.
 
-The run checks the gate once before it starts (`adanext-exec check --json` must answer
-`adanext-exec/1`); the CLI backends refuse `--gate` until their commands are routed. Neither
-the gate's decision nor its rule is in the run record yet: the tool result carries the gate's
-message, and the audit line is the gate's record.
+The run checks the gate once before it starts (`adanext-exec check --json --policy <file>` must
+answer `adanext-exec/1`), so a gate that cannot use the run's policy does not start a run. Neither
+the gate's decision nor its rule is a field of the run record yet: the tool result carries the
+refusal or the gate's message, and the audit line is the gate's record.
+
+**claude** goes through the gate's Claude Code hook. For one run hrn passes `--settings` with a
+temporary file holding only a `PreToolUse` hook for `Bash|PowerShell`, `--tools` with an allow
+list and `--include-hook-events`. Claude Code adds `--settings` to the settings it already
+reads, so your own settings files, hooks and rules still apply; the gate's hook also applies
+your own `Bash(...)` and `PowerShell(...)` deny and ask rules to the original text. Two hooks
+run side by side on each command:
+
+- `adanext-exec hook claude-code --policy <file> || exit 2` judges the command by the run's
+  policy (as above) and rewrites an allowed one to `adanext-exec run ...`, which runs it under the
+  gate's audit and whole-tree kill, with the call's own `timeout` when it set one. A rewrite
+  under another policy, or none, stops the run as another hook's rewrite does.
+- `hrn guard-hook || exit 2` runs hrn's guard and its claude deny rules on the original text.
+  After the rewrite claude's deny rules see only `adanext-exec run ...`, so `--disallowedTools`
+  no longer stops a command the gate allows; this hook is what keeps them. `--allow-dangerous`
+  leaves it out, and the run's policy lifts the gate's rules too.
+
+The `|| exit 2` matters: Claude Code runs a command whose hook fails with any other code.
+
+`--gate` on claude needs `--mode yolo`, and is refused otherwise. The hook's allow skips Claude
+Code's own permission mode: checked live, a file write the gate allowed ran in `plan`, `default`
+and `acceptEdits`. Only `yolo` has no mode check to skip.
+
+The allow list leaves out Monitor, which takes a command the hook does not rewrite, and REPL,
+Workflow and Skill, which run code the hook does not see; a run that calls one of them anyway
+is stopped. MCP servers' tools are not routed, and the run's setup line says so. Before claude
+starts, hrn also asks the hook once, so a gate from before the hook does not start a run.
+
+What the stream shows is checked: each Bash or PowerShell call must have the gate's own answer
+(another hook's event, or the guard's refusal, does not count) before its result, and a run with
+a call that has none is stopped with an error. So is a run where another hook rewrites the
+command, since the last hook to finish decides what runs: a hook of your own that rewrites Bash
+commands cannot be used with `--gate`. Hook events name no call, so answers are matched by
+command text: two identical commands in parallel cannot be told apart. So a hook that did not
+load, failed or timed out cannot pass silently. This detects and does not prevent: claude had already run that command
+when its result arrived. `disableAllHooks` in any settings file, for instance, turns the hook
+off, and the run stops after its first command.
+
+At a call's `timeout`, claude's Bash tool moves the command to the background and tells the
+model, and the gate ends the command's tree at about that time (exit 124); a call without a
+`timeout`, or one run in the background, has no limit from the gate, and the run's `--timeout`
+ends everything together. A gate whose hook does not carry the timeout does not start a run,
+unless it refuses hrn's start-up probe, which then says nothing about the timeout. The
+audit line carries claude's session id, not hrn's run id. The two hooks and the gate add about
+120 ms a command on the development PC (hooks 13 and 18 ms side by side; the `run` wrapper about
+100 ms).
+
+##### codex through the gate
+
+codex has no way to rewrite one command, so with `--gate` hrn turns its command tools off
+(`--disable` for `shell_tool`, `unified_exec`, `computer_use`, `browser_use`, `apps` and
+`plugins`) and serves `run_command` over MCP for the one run, from `hrn gate-tools`. Its code
+host (`code_mode_host`, the `functions.exec` tool) stays on: codex reaches MCP tools only through
+it, so without it there is no `run_command`, and its script can call tools but has no file or
+process access of its own. The tool asks the gate as the api loop does, applies the guard to the
+environment again, and is recorded as a shell call. codex hands the server the variables the
+run allows, by name (`env_vars`; names with characters other than letters, digits and `_`, such
+as `ProgramFiles(x86)`, are left out so the npm `codex.cmd` shim can pass the list), and waits
+up to 660 seconds for a call.
+
+codex's file tools still work in yolo, and they can write the run's policy file. So the server
+does not rest on the policy alone: it applies hrn's own command guard to every call, and it
+refuses every command once the policy file no longer matches the SHA-256 hrn passed it at the
+start. A configured MCP server named `hrn_gate` would be merged with this one, so a routed run
+refuses to start with one. Those file tools can also reach hrn's and the gate's own binaries and
+any script a command later runs; hrn's guard still applies to each command's text, but treat a
+routed codex run as no stronger than the files its user can write.
+
+It needs `--mode yolo` and is refused otherwise: the server runs outside codex's sandbox,
+which the other modes rely on. A `command_execution` item in a routed run stops the run with
+an error, and so does an item of a type hrn does not know, since a new tool may run code; that
+detects and does not prevent. MCP servers' tools are not routed, and the
+run's setup line says so. A codex subagent gets the same limits.
+
+Checked live on Windows with codex-cli 0.167.0-alpha.3.2, `-b codex --mode yolo --gate` and a
+real adanext-exec: an allowed command ran, `git push` and a command naming the run's policy
+file were refused with the remote still empty, a 70-second command returned, and no
+`command_execution` item appeared. A script in `functions.exec` could not import `node:fs` or
+`node:child_process`, and had no `process`, `require` or `fetch`. Repeat this check on a codex
+update: a new feature can add a tool that does not reach the gate.
+
+Checked live on Windows with Claude Code 2.1.284, `-b claude --mode yolo --gate` and a real
+adanext-exec: `git push` refused by both hooks and the remote still empty; a PowerShell pipeline
+with `$_` and a script block unchanged; a project's deny rule refusing and its ask rule held; a
+user-level hook still running; a subagent's Bash call and two parallel calls routed; `gh repo
+edit ... --visibility public`, which the gate allows, refused by the guard's hook; hooks turned
+off by `disableAllHooks` and the run stopped; a long `go test` and its child, with an 8-second
+`timeout` on the call, alive at 9 s and gone by 12 s while the run went on, and gone at the
+run's `--timeout`. Repeat this list on a Claude Code update. Not checked live on Linux or macOS.
 
 #### The guard for every backend
 

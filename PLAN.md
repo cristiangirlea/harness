@@ -287,6 +287,40 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-10: `--gate` reaches the codex backend through a gate-backed MCP tool (#435 slice 4,
+  PR #903). hrn turns codex's command tools off and serves `run_command` from `hrn gate-tools`,
+  in `yolo` only. `code_mode_host` stays on: on codex-cli 0.167 MCP tools are reached only
+  through `functions.exec`, and a live probe found no file or process access in its scripts.
+  codex's file tools can write the run's policy, so the server keeps hrn's guard and checks the
+  policy's SHA-256 before each command. A `command_execution` item or an item type hrn does not
+  know stops the run. Variable names with `(` are left out of `env_vars` for the `codex.cmd`
+  shim, and a configured `hrn_gate` server refuses the run. The live claude run with `--policy`
+  that slice 2 left unchecked passed (2026-11-09). Not checked: codex subagents' items, other
+  codex versions, Linux or macOS. Slices 5 to 7 stay open.
+- 2026-11-09: hrn hands its guard to adanext-exec as one policy file per run (#435 slice 2, PR
+  #900), passed with `--policy` to `check --json`, `run` and the claude hook. A gated api run takes
+  its guard's answer from `check --json`, and `--allow-dangerous` now lifts the gate's rules too.
+  Binary only, with no import (2026-11-07), so `guard.go` keeps its table for runs without `--gate`
+  and the adapter is `Workspace.guardRule`, not a shorter file. The policy replaces the user's
+  `policy.json` for hrn runs. A rewrite counts as the gate's only when it names exactly the run's
+  policy. `scripts/gate-guard.sh` runs the guard tests against a pinned real gate, on Linux in CI
+  since Windows hosted runners are elevated. A live claude run with `--policy` was not checked.
+  Slices 4 to 7 stay open.
+- 2026-11-09: the number of slots a repository may have can be set (#896, PR #897).
+  `{"max_slots": N}`, 1 to 10, in `<main checkout>/.hrn/ws.json` for one repository or in the hrn
+  home's `ws.json` as the machine default; the repository's file wins, to allow more as well as
+  fewer. `hrn ws take` without `--max` tries slots up to the limit and refuses a larger `--max`
+  with exit 2, a slots batch never takes a slot above it whatever its `parallel` is, and `hrn ws
+  list` names the limit and its file. With no file nothing changes (5 by default, `--max` up to
+  10). A lowered limit does not take held slots back, `--json` does not carry the limit, and
+  `hrn ws free` and `hrn gc` do not read the file, so they work when it is broken.
+- 2026-11-09: `--gate` reaches the claude backend through the adanext-exec hook (#435 slice 3, PR
+  #894), after adanext-exec #68 carried a call's `timeout` into the rewrite. Slice 2 was not
+  needed. Live on Claude Code 2.1.284, the hook's allow skipped `plan`, `default` and
+  `acceptEdits`, so the route is `yolo` only. A rewrite hides a command from claude's deny rules,
+  so `hrn guard-hook` applies the guard and those rules to the original text. Monitor, REPL,
+  Workflow and Skill are off, and a command call without the gate's own answer stops the run.
+  Slices 4 to 7 stay open. Not checked live on Linux or macOS.
 - 2026-11-09: a child process of an hrn that has no console no longer opens a terminal window on
   Windows (#874, PR #891). `internal/nowindow.Set` sets `HideWindow` at every spawn site in
   `cmd/hrn` and `internal/`; the browser the bot opens stays visible. `archtest` lets every root

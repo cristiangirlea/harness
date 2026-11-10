@@ -50,9 +50,9 @@
 | `hrn route from-eval <id> [--margin 0.05]` | Print and save the cheapest qualifying rows from saved eval results. |
 | `hrn report [--since 7d] [--by backend\|model\|dir\|purpose\|routed\|day] [--json]` | Tables over the finished runs, their tokens and context per turn, and the batches; `routed` groups by the source routing row (see [Reports](evaluations.md#reports)). |
 | `hrn gc [--apply] [--grace 1h] [--idle 24h] [--min-idle 2h] [--free-below SIZE] [--slot-cap SIZE] [PATH…]` | Remove merged worktrees and idle build caches; trim slot caches instead (see [Clearing merged worktrees](batches.md#clearing-merged-worktrees) and [Build caches](batches.md#build-caches)). |
-| `hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]` | Lease a reusable worktree of the repository and print only its path, on `--branch` or detached at origin's default branch (see [Reusable workspaces](workspaces.md#take)). |
+| `hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]` | Lease a reusable worktree of the repository and print only its path, on `--branch` or detached at origin's default branch. `--max` defaults to the `ws.json` limit, or 5 without settings; values above the configured limit are refused (see [Reusable workspaces](workspaces.md#take)). |
 | `hrn ws free [PATH]` | Give the slot back once its work is pushed: HEAD detached, lease removed (see [Free](workspaces.md#free)). |
-| `hrn ws list [--repo DIR] [--json]` | The slots: who holds each, since when, its branch and what is in it (see [List](workspaces.md#list)). |
+| `hrn ws list [--repo DIR] [--json]` | The slots: who holds each, since when, its branch and what is in it. Text output ends with the limit and its source; JSON remains an array of slot rows (see [List](workspaces.md#list)). |
 | `hrn ws issues [--json] [--free owner/name#N]` | The issue leases: state (`held`, `held by pull request`, `stale`, `released`), holder, run, backend, branch, pull request and since; `--free` removes one no running process holds (see [Issue leases](workspaces.md#issue-leases)). |
 | `hrn scripts hint` | A Claude Code PreToolUse hook that reads the payload on stdin and names the kept script whose `matches:` header covers the inline script a command is about to run; advice only, silent otherwise (see [The hint hook](scripts.md#the-hint-hook)). |
 
@@ -177,23 +177,28 @@ subtest; if the subtest passed, the summary drops it and only `read_original` sh
 boolean is also available in run options, batch specs/tasks and MCP
 run inputs. Eval matrix variants each select `shape_tools` (default false),
 overriding task/spec shaping so a suite can compare raw and shaped variants;
-give the variants distinct names. This flag does not change CLI backend tools.
+give the variants distinct names. This flag does not change CLI backend tools, except on codex with `--gate`, where the
+gate-backed `run_command` shapes its results and `read_original` is offered.
 `--parse-check` opts the api backend's `edit_file` and `write_file` tools into
 syntax checks for `.go` and `.json` files (case-insensitive). It is off by default;
 `parse_check` is also available in run options, batch specs/tasks and MCP run
 inputs. Invalid changes are refused with a line and column, leaving the file
 unchanged. Existing unparseable files remain editable so they can be repaired;
 new files are checked. Make each edit whole. Shell, MCP and CLI tools are unaffected.
-`--gate` runs the api backend's `run_command` through the
-[adanext-exec](https://github.com/cristiangirlea/adanext-exec) binary found in PATH, which
-applies its own policy, kills the command's whole tree at the timeout and writes its audit
-line ([permissions](permissions.md#the-command-gate)). Before the run starts, hrn asks the
-binary for a decision with `adanext-exec check --json`; a binary that is missing, is a batch
-file, or does not answer protocol `adanext-exec/1` stops the run with an error, so no command
+`--gate` runs the api backend's `run_command`, the claude backend's Bash and PowerShell
+commands, or codex's commands through a gate-backed tool, through the
+[adanext-exec](https://github.com/cristiangirlea/adanext-exec) binary found in PATH. hrn hands
+it the guard as a policy for the run (every rule lifted under `--allow-dangerous`, and the
+user's own `policy.json` does not apply); the binary judges each command by it, kills the
+command's whole tree at the timeout (on claude, a foreground
+call's own `timeout`) and writes its audit line ([permissions](permissions.md#the-command-gate)). Before the run starts, hrn asks the
+binary for a decision with `adanext-exec check --json` under that policy; a binary that is missing, is a batch
+file, cannot use the policy or does not answer protocol `adanext-exec/1` stops the run with an error, so no command
 runs ungated. It is off by default and in JSON is `command_gate` (a batch spec's `gate` is its
 list of check commands), in run options, batch specs/tasks and MCP run inputs. A run continued
-with `--continue` does not inherit it: pass `--gate` again. The CLI backends refuse it: their
-commands do not reach the gate yet ([the design](terminal-through-the-gate.md)).
+with `--continue` does not inherit it: pass `--gate` again. On claude and codex it needs `--mode yolo`
+and is refused otherwise; gemini, opencode and agy refuse it, since their commands do
+not reach the gate yet ([the design](terminal-through-the-gate.md)).
 
 `--retrieval off|optional|required` opts into project references; enabled modes
 require `--retrieval-tenant`, `--retrieval-project`, `--retrieval-revision` and

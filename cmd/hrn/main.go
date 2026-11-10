@@ -157,7 +157,7 @@ Run flags:
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
       --shape-tools    summarises large terminal, log and test results and keeps the original behind a handle (api backend; off by default)
       --parse-check    refuse edit_file and write_file changes that leave a .go or .json file unparseable (api backend; off by default)
-      --gate           run run_command through adanext-exec from PATH; the run does not start without it (api backend only; off by default)
+      --gate           run commands through adanext-exec from PATH; the run does not start without it (api, and claude or codex in --mode yolo; off by default)
       --retrieval MODE  off | optional | required
       --retrieval-tenant ID
       --retrieval-project ID
@@ -222,6 +222,10 @@ func main() {
 		err = cmdShow(os.Args[2:])
 	case "flow":
 		err = cmdFlow(os.Args[2:])
+	case "guard-hook":
+		os.Exit(tools.GuardHook(os.Stdin, os.Stdout, agent.GuardHookRule))
+	case "gate-tools":
+		err = cmdGateTools(os.Args[2:])
 	case "mcp":
 		err = cmdMCP(os.Args[2:])
 	case "batch":
@@ -852,6 +856,48 @@ func cmdMCP(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// cmdGateTools serves a gated run's command tools to its CLI; hrn starts it, once per run.
+func cmdGateTools(args []string) error {
+	ws, policySum, err := gateToolsWorkspace(args)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer stop()
+	ws.RunContext = ctx
+	if err := tools.NewGateServer(ws, agent.Version, ws.ShapeTools, policySum).Serve(ctx, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
+		return err
+	}
+	return nil
+}
+
+func gateToolsWorkspace(args []string) (*tools.Workspace, string, error) {
+	fs := flag.NewFlagSet("gate-tools", flag.ContinueOnError)
+	dir := fs.String("dir", ".", "")
+	gate := fs.String("gate", "", "")
+	policy := fs.String("policy", "", "")
+	policySum := fs.String("policy-sha256", "", "")
+	runDir := fs.String("run-dir", "", "")
+	dangerous := fs.Bool("allow-dangerous", false, "")
+	shape := fs.Bool("shape-tools", false, "")
+	if err := fs.Parse(args); err != nil {
+		return nil, "", errors.New("invalid arguments")
+	}
+	if *gate == "" || *policy == "" || *policySum == "" {
+		return nil, "", errors.New("--gate, --policy and --policy-sha256 are required; hrn starts this server for a run")
+	}
+	if sum, err := tools.GatePolicySum(*policy); err != nil || sum != *policySum {
+		return nil, "", fmt.Errorf("--policy %s: the file does not match --policy-sha256", *policy)
+	}
+	ws, err := tools.NewWorkspace(*dir)
+	if err != nil {
+		return nil, "", fmt.Errorf("--dir %s: %w", *dir, err)
+	}
+	ws.Gate, ws.GatePolicy = *gate, *policy
+	ws.RunDir, ws.AllowDangerous, ws.ShapeTools = *runDir, *dangerous, *shape
+	return ws, *policySum, nil
 }
 
 func cmdEval(args []string) (int, error) {

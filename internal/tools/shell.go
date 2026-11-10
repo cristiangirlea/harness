@@ -58,18 +58,18 @@ func runCommand() Tool {
 		Summary:  summaryOf("command"),
 		Refuse: func(ws *Workspace, raw json.RawMessage) string {
 			args, err := decode[in](raw)
-			if err != nil || ws.AllowDangerous {
+			if err != nil {
 				return "" // a call that cannot be read is the loop's to report
 			}
-			return Guard(args.Command)
+			return ws.guardRule(args.Command)
 		},
 		Run: func(ctx context.Context, ws *Workspace, raw json.RawMessage) (string, error) {
 			args, err := decode[in](raw)
 			if err != nil {
 				return "", err
 			}
-			// Direct callers bypass Refuse; recheck here.
-			if !ws.AllowDangerous {
+			// Direct callers bypass Refuse; recheck here, unless the gate's own run will judge it.
+			if !ws.AllowDangerous && ws.GatePolicy == "" {
 				if rule := Guard(args.Command); rule != "" {
 					return "", GuardError(rule)
 				}
