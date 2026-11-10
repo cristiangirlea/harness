@@ -46,7 +46,8 @@ Batch gate output is stored as UTF-8 after decoding detected UTF-16 shell output
 A gate whose shell cannot start or be waited for includes an optional `infrastructure_error`
 reason; the task fails with that reason without retrying. Older gate records
 without the field still load. See [Batches](batches.md) for the launcher errors
-that count as infrastructure failures.
+that count as infrastructure failures. A gate run through adanext-exec (`command_gate`) is
+marked `gated: true`; a gate run directly, and an older record, omits it.
 
 A batch attempt carries `did_not_start` when a backend or gate could not start
 before any turn or tool call. Its value is the first line of the recorded error;

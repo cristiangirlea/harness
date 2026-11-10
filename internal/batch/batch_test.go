@@ -2410,7 +2410,7 @@ func TestGateThatCannotStartAfterCancelIsCanceled(t *testing.T) {
 	// which is the same cancellation as a gate killed mid-way, not exited -1.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	g := runGate(ctx, t.TempDir(), "echo never", time.Minute, nil)
+	g := runGate(ctx, t.TempDir(), "echo never", time.Minute, nil, commandGate{})
 	if g.ExitCode != -1 || g.Killed != KilledCanceled || g.Timeout != 0 || g.Outcome() != "canceled" || g.Brief() != "was canceled" {
 		t.Errorf("gate = %+v, want it recorded as canceled", g)
 	}

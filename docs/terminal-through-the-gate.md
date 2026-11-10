@@ -254,6 +254,14 @@ default off) until a maintainer turns it on.
    combinations it does reach.
 7. **Batch gates through the gate** (needs M1, M3). An operator profile with no guard rules, as
    today, gaining the timeout, tree kill and audit; heavy-command slots when M4 lands.
+   *Built* with these differences. The operator profile is a `--policy` file like slice 2's
+   with every built-in rule allowed, as under `--allow-dangerous`; the gate's handshake runs
+   once per task before its first attempt, so a missing or older gate ends the task before any
+   agent runs. The run id given to the gate is the attempt's, linking each gate's audit line to
+   that run. hrn's check for the gate's approval flags is left out, since it guards against a
+   model. A refusal, a command the gate did not run or a gate that cannot start is an
+   infrastructure failure, which ends the task without a retry, and a gate run so is marked
+   `gated` in the batch record. Heavy-command slots still wait on M4.
 
 ## How shaping reaches every backend, and the eval
 

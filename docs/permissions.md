@@ -321,6 +321,21 @@ off by `disableAllHooks` and the run stopped; a long `go test` and its child, wi
 `timeout` on the call, alive at 9 s and gone by 12 s while the run went on, and gone at the
 run's `--timeout`. Repeat this list on a Claude Code update. Not checked live on Linux or macOS.
 
+##### Batch gates through the gate
+
+A batch with `command_gate` also runs its gate commands through the gate
+([batches](batches.md#batches)). They are the operator's commands, not the agent's, so they
+get a policy of their own with no guard: every built-in rule named and allowed, as under
+`--allow-dangerous`, and neither `guard-env` nor `gate-policy-file`. hrn does not check them
+for the `-approved` and `-script-b64` flags either, since that check keeps a model from
+approving its own ask. The policy is written once per task, removed when the task ends, and
+checked with `adanext-exec check --json` before the first attempt. Each gate runs with
+`--timeout` set to its `gate_timeout` and `--run-id` set to the attempt's run, so its audit
+line sits with that run's; exit codes are read as above, and a refusal, a command the gate did
+not run or a gate that cannot start fails the task without a retry, naming the gate's message
+without the advice given to a model. hrn hands the gate the environment a gate gets without
+it: the operator's, without git repository overrides or explicit credentials.
+
 #### The guard for every backend
 
 A command line can be spelled many ways, so every backend also runs under a guarded

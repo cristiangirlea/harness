@@ -178,6 +178,7 @@ type GateResult struct {
 	InfrastructureError string `json:"infrastructure_error,omitempty"`
 	// Guard marks the protect check, so a user gate whose command starts the same way is not taken for it.
 	Guard bool `json:"guard,omitempty"`
+	Gated bool `json:"gated,omitempty"`
 }
 
 const (

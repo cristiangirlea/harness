@@ -186,6 +186,28 @@ func runGated(ctx context.Context, ws *Workspace, command string, timeout time.D
 	if strings.Contains(command, "-approved") || strings.Contains(command, "-script-b64") {
 		return ShellResult{}, fmt.Errorf(hrnRefused+"a command that names %s's -approved or -script-b64 flag could approve its own ask, and only a person approves one", GateName)
 	}
+	return gateRun(ctx, ws, command, timeout, env)
+}
+
+// RunGated runs an operator's command, such as a batch gate, in dir through the gate at path under
+// policy, auditing it under runDir's run id; an operator's own command is not checked for approval flags.
+func RunGated(ctx context.Context, path, policy, dir, runDir, command string, timeout time.Duration, env []string) (ShellResult, error) {
+	res, err := gateRun(ctx, &Workspace{Root: dir, Gate: path, GatePolicy: policy, RunDir: runDir}, command, timeout, env)
+	if r, ok := errors.AsType[*gateRefusal](err); ok {
+		// The advice in a refusal is the model's; an operator reads the gate's own reason.
+		err = errors.New(gateRefusedBy + r.said)
+	}
+	return res, err
+}
+
+// gateRefusal is the gate's refusal of a command it judged; said is the gate's message.
+type gateRefusal struct{ said string }
+
+func (r *gateRefusal) Error() string {
+	return gateRefusedBy + r.said + ". Do not retry it unchanged; say in your answer why it is needed"
+}
+
+func gateRun(ctx context.Context, ws *Workspace, command string, timeout time.Duration, env []string) (ShellResult, error) {
 	shell, _ := Shell()
 	argv := []string{ws.Gate, "run", "--shell", shell, "--agent", "hrn"}
 	if ws.GatePolicy != "" {
@@ -218,8 +240,7 @@ func runGated(ctx context.Context, ws *Workspace, command string, timeout time.D
 	case res.ExitCode == gateTimedOut && timeout > 0 && time.Since(started) >= timeout:
 		res.TimedOut, res.ExitCode = true, -1
 	case res.ExitCode == gateRefused && said:
-		return res, fmt.Errorf(gateRefusedBy+"%s. Do not retry it unchanged; say in your answer why it is needed",
-			strings.TrimSpace(res.Output))
+		return res, &gateRefusal{strings.TrimSpace(res.Output)}
 	case slices.Contains(gateNotRun, res.ExitCode) && said:
 		return res, fmt.Errorf(gateDidNotRun+" (exit %d): %s; nothing ran in its place", res.ExitCode, strings.TrimSpace(res.Output))
 	}

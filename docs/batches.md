@@ -279,6 +279,21 @@ committed for inspection. Other nonzero exits, including a command not found
 inside a running shell, keep the normal retry behavior. Cancellation and
 `gate_timeout` keep the behavior described above.
 
+With `command_gate` (`--gate`) on the spec or a task, its gate commands run through the
+[adanext-exec](https://github.com/cristiangirlea/adanext-exec) binary in PATH, as the
+agent's commands do ([the command gate](permissions.md#batch-gates-through-the-gate)):
+`adanext-exec run --shell <shell> --agent hrn --policy <file> --timeout <gate_timeout>
+--run-id <attempt's run> -- <command>`, in the same folder with the same environment. Gates
+are the operator's commands, so that policy refuses nothing; the gate adds its kill of the
+command's whole tree at `gate_timeout` and an audit line under the attempt's run id. Before a
+task with gates starts its first attempt, hrn asks the gate for a decision under that policy:
+a gate that is missing, is a batch file or does not answer `adanext-exec/1` ends the task with
+an error before any agent runs, so no gate runs without it. A command the gate refuses or did
+not run, and a gate that cannot start, is an infrastructure failure as above, with the gate's
+message as `infrastructure_error`. A timeout, a cancel, the exit code and UTF-16 output read as
+they do without the gate, and each such gate's record is marked `gated: true`. The gate's
+heavy-command slots are not used yet.
+
 Gate output is decoded from UTF-16 to UTF-8 before it is checked, shortened,
 recorded or shown. A little- or big-endian BOM identifies UTF-16; without a BOM,
 alternating NUL bytes over the first few code units identify the byte order. One
