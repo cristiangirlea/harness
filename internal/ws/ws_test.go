@@ -1513,3 +1513,27 @@ func TestRangeBeyondSessionsRefusesLessThanOne(t *testing.T) {
 		t.Error("a range of no slots is a mistake")
 	}
 }
+
+func TestCommitCountsReadHEADOnlyAsARevision(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote=%v", remote), func(t *testing.T) {
+			f := newFixture(t)
+			if !remote {
+				git(t, f.repo, "remote", "remove", "origin")
+			}
+			git(t, f.repo, "switch", "--detach")
+			f.commit(f.repo, "detached.txt")
+			f.write(f.repo, "HEAD", "file\n")
+			for name, count := range map[string]func(context.Context, string) (int, error){
+				"stranded": stranded,
+				"unpushed": unpushed,
+			} {
+				t.Run(name, func(t *testing.T) {
+					if got, err := count(context.Background(), f.repo); err != nil || got != 1 {
+						t.Fatalf("%s = %d, %v; want 1", name, got, err)
+					}
+				})
+			}
+		})
+	}
+}

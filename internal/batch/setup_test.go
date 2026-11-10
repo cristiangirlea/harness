@@ -235,3 +235,46 @@ func TestAnUnknownSetupSourceOrBaseIsNamedInTheError(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestSetupReadsHeadAndSourceOnlyAsRevisions(t *testing.T) {
+	dir, base, head := setupRepo(t)
+	for _, which := range []string{"head", "source"} {
+		t.Run(which, func(t *testing.T) {
+			written := filepath.Join(t.TempDir(), "written")
+			h, s := head, base
+			if which == "head" {
+				h = "--output=" + written
+			} else {
+				s = "--output=" + written
+			}
+			if _, err := SetupCommit(context.Background(), dir, h, s, DefaultSetupPaths); err == nil {
+				t.Error("SetupCommit accepted an option as a revision")
+			}
+			for _, path := range []string{written, written + "^{commit}"} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Errorf("git wrote %s (%v)", path, err)
+				}
+			}
+		})
+	}
+	t.Run("dash-named refs", func(t *testing.T) {
+		git(t, dir, "update-ref", "refs/heads/-head", head)
+		git(t, dir, "update-ref", "refs/heads/-source", base)
+		want, err := SetupCommit(context.Background(), dir, head, base, DefaultSetupPaths)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := SetupCommit(context.Background(), dir, "-head", "-source", DefaultSetupPaths)
+		if err != nil || got.Source != want.Source || strings.Join(got.Changed, ",") != strings.Join(want.Changed, ",") {
+			t.Errorf("SetupCommit(-head, -source) = %+v, %v; want %+v", got, err, want)
+		}
+	})
+}
+
+func TestABatchReadsADashNamedBaseOnlyAsARevision(t *testing.T) {
+	dir, base, _ := setupRepo(t)
+	git(t, dir, "update-ref", "refs/heads/-base", base)
+	if dashed, _ := run(t, Spec{Dir: dir, Backend: "wb-ok", Base: "-base", Tasks: []Task{{ID: "d", Prompt: "x"}}}); dashed.Base != base {
+		t.Errorf("a base named -base resolved to %q, want %s", dashed.Base, base)
+	}
+}

@@ -32,6 +32,10 @@ func takeSlot(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, 
 // Save ownership before waiting; clear it before branch deletion.
 // On save failure, leak rather than delete unproven work.
 func takeSlotFlow(ctx context.Context, spec *Spec, batchID string, kept *keptSlots, id, branch, root, base string, fw *flow.Writer, notify func(Event), made func(mine bool) error) (_ ws.Taken, failed error) {
+	ref, err := branchRef(branch)
+	if err != nil {
+		return ws.Taken{}, err
+	}
 	step := SlotStep(id)
 	fw.Emit(flow.Event{Step: step, Parent: TaskStep(id), Kind: flow.KindSlot, Task: id, Status: flow.StatusWaiting, Next: "waits for a free worktree slot"})
 	defer func() {
@@ -48,7 +52,10 @@ func takeSlotFlow(ctx context.Context, spec *Spec, batchID string, kept *keptSlo
 	if err != nil {
 		return ws.Taken{}, err
 	}
-	if _, err := gitOut(ctx, root, "branch", branch, base); err != nil {
+	if _, err := gitOut(ctx, root, "check-ref-format", ref); err != nil {
+		return ws.Taken{}, err
+	}
+	if _, err := gitOut(ctx, root, "branch", "--", branch, base); err != nil {
 		return ws.Taken{}, err
 	}
 	_ = made(true) // unsaved, the branch is only left behind if hrn crashes
@@ -250,12 +257,19 @@ func (k *keptSlots) count() int {
 }
 
 func dropBranch(root, branch string) {
+	ref, err := branchRef(branch)
+	if err != nil {
+		return
+	}
 	if droppingBranch != nil {
 		droppingBranch()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	_, _ = gitOut(ctx, root, "branch", "-D", branch)
+	if _, err := gitOut(ctx, root, "show-ref", "--verify", "--quiet", "--", ref); err != nil {
+		return
+	}
+	_, _ = gitOut(ctx, root, "branch", "-D", "--", branch)
 }
 
 // Release at base so branch deletion cannot leave an unreferenced slot tip.

@@ -469,3 +469,17 @@ func TestCheckoutTreeKeepsNTFSProtectionWhatTheSharedConfigSays(t *testing.T) {
 		t.Fatalf("CheckoutTree wrote GIT~1 (err %v, stat %v)", err, statErr)
 	}
 }
+
+func TestCheckoutTreeReadsARecordedCommitOnlyAsARevision(t *testing.T) {
+	dir := initRepo(t)
+	written := filepath.Join(t.TempDir(), "written")
+	if err := CheckoutTree(context.Background(), dir, "--index-output="+written, t.TempDir()); err == nil {
+		t.Error("CheckoutTree took an option for the commit and succeeded")
+	}
+	// read-tree appends ^{tree}, so an option would write to that name.
+	for _, path := range []string{written, written + "^{tree}"} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("git read-tree read the commit as an option and wrote %s (%v)", path, err)
+		}
+	}
+}

@@ -331,6 +331,13 @@ records one commit per task, `<id>: <prompt>`, instead of a merge commit. Undo a
 call with the printed `git reset --hard <commit>` command. It names the commit
 from before the call and undoes every task merged in it, even if a later task conflicts.
 
+Recorded branches name exact local branches, never tags or revision expressions.
+An empty recorded branch or one starting with `-` reports `invalid recorded branch
+"<name>"` before a Git command uses it. This also applies to branch cleanup by
+`batch rm` and `gc`. Revisions such as the recorded base and commit are passed as
+revisions even when files share their names. Merge messages retain Git's branch
+names, destination, shortlog and branch-description settings.
+
 Watch, CLI and MCP merges share `<git common dir>/hrn-merge.lock`, a process lease
 that refuses concurrent mergers and takes over stale holders. A confirmed watch
 merge finishes even if the page disconnects (within a ten-minute limit). If the

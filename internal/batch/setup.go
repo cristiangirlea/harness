@@ -33,7 +33,7 @@ func SetupCommit(ctx context.Context, repo, head, source string, paths []string)
 	// Environment pathspec modes must not reinterpret the supplied patterns.
 	base := append(g.env(ctx), "GIT_LITERAL_PATHSPECS=0", "GIT_GLOB_PATHSPECS=0", "GIT_NOGLOB_PATHSPECS=0", "GIT_ICASE_PATHSPECS=0")
 	resolve := func(rev string) (string, error) {
-		return gitOutEnv(ctx, g.dir, base, "", "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+		return gitOutEnv(ctx, g.dir, base, "", "rev-parse", "--verify", "--quiet", "--end-of-options", rev+"^{commit}")
 	}
 	if head, err = resolve(head); err != nil {
 		return out, fmt.Errorf("head: %w", err)
@@ -42,11 +42,11 @@ func SetupCommit(ctx context.Context, repo, head, source string, paths []string)
 	if err != nil {
 		return out, fmt.Errorf("setup source %q is not a commit in %s: name another with --base", source, repo)
 	}
-	src, err := gitOutEnv(ctx, g.dir, base, "", "merge-base", head, tip)
+	src, err := gitOutEnv(ctx, g.dir, base, "", "merge-base", "--end-of-options", head, tip)
 	if err != nil {
 		return out, fmt.Errorf("setup source %q shares no history with %s: %w", source, head, err)
 	}
-	args := append([]string{"diff-tree", "-r", "--name-only", "-z", "--no-renames", head, src, "--"}, paths...)
+	args := append([]string{"diff-tree", "-r", "--name-only", "-z", "--no-renames", "--end-of-options", head, src, "--"}, paths...)
 	list, err := gitStdoutEnv(ctx, g.dir, base, args...)
 	if err != nil {
 		return out, err
@@ -67,12 +67,12 @@ func SetupCommit(ctx context.Context, repo, head, source string, paths []string)
 	}
 	defer os.RemoveAll(scratch)
 	env := append(slices.Clone(base), "GIT_INDEX_FILE="+filepath.Join(scratch, "index"))
-	if _, err := gitOutEnv(ctx, g.dir, env, "", "read-tree", head+"^{tree}"); err != nil {
+	if _, err := gitOutEnv(ctx, g.dir, env, "", "read-tree", "--", head+"^{tree}"); err != nil {
 		return out, err
 	}
 	var stdin strings.Builder
 	for _, name := range changed {
-		entry, err := gitStdoutEnv(ctx, g.dir, env, "ls-tree", "-z", "--full-tree", src, "--", ":(literal)"+name)
+		entry, err := gitStdoutEnv(ctx, g.dir, env, "ls-tree", "-z", "--full-tree", "--end-of-options", src, ":(literal)"+name)
 		if err != nil {
 			return out, err
 		}
@@ -95,7 +95,7 @@ func SetupCommit(ctx context.Context, repo, head, source string, paths []string)
 		return out, err
 	}
 	msg := fmt.Sprintf("hrn: setup files from %s (%s) on top of %s", source, src, head)
-	commit, err := gitOutEnv(ctx, g.dir, env, "", "commit-tree", tree, "-p", head, "-m", msg)
+	commit, err := gitOutEnv(ctx, g.dir, env, "", "commit-tree", "-p", head, "-m", msg, "--", tree)
 	if err != nil {
 		return out, err
 	}

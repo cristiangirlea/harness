@@ -52,7 +52,7 @@ func RemoveTasks(res Result, ids []string) ([]string, error) {
 }
 
 var branchProbe = func(ctx context.Context, dir, ref string) (string, error) {
-	return gitOut(ctx, dir, "for-each-ref", "--format=%(refname)", ref)
+	return gitOut(ctx, dir, "for-each-ref", "--format=%(refname)", "--", ref)
 }
 
 func removeTask(res Result, tr TaskResult) (bool, error) {
@@ -76,11 +76,17 @@ func removeTask(res Result, tr TaskResult) (bool, error) {
 }
 
 func removeTaskClaim(res Result, tr TaskResult) (bool, error) {
+	if !branchOnly(tr) && (tr.Worktree == "" || notMine(res, tr)) {
+		return false, nil
+	}
+	ref, err := branchRef(tr.Branch)
+	if err != nil {
+		return false, err
+	}
 	// Bound probes; claim removal only after both probes succeed.
 	branchState := func() (exists, ok bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		ref := "refs/heads/" + tr.Branch
 		out, err := branchProbe(ctx, res.Dir, ref)
 		if err != nil {
 			return false, false
@@ -98,9 +104,6 @@ func removeTaskClaim(res Result, tr TaskResult) (bool, error) {
 		had := hadBranch()
 		err := removeSlotBranch(res.Dir, tr)
 		return had && branchGone(), err
-	}
-	if tr.Worktree == "" || notMine(res, tr) {
-		return false, nil
 	}
 	// Deregistered directories' status describes the surrounding repo.
 	registered, err := isWorktree(res.Dir, tr.Worktree)
@@ -145,6 +148,10 @@ func takenError(what, name string) string {
 
 // Never delete a branch currently checked out by a task or operator.
 func removeSlotBranch(root string, tr TaskResult) error {
+	ref, err := branchRef(tr.Branch)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	out, err := gitOut(ctx, root, "worktree", "list", "--porcelain")
@@ -165,10 +172,10 @@ func removeSlotBranch(root string, tr TaskResult) error {
 			return fmt.Errorf("branch %s is checked out in %s (a task still running?), so it stays", tr.Branch, filepath.FromSlash(path))
 		}
 	}
-	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err != nil {
+	if _, err := gitOut(ctx, root, "show-ref", "--verify", "--quiet", "--", ref); err != nil {
 		return nil // gone already
 	}
-	_, err = gitOut(ctx, root, "branch", "-D", tr.Branch)
+	_, err = gitOut(ctx, root, "branch", "-D", "--", tr.Branch)
 	return err
 }
 
@@ -206,6 +213,10 @@ func comparablePath(p string) string {
 }
 
 func addWorktree(ctx context.Context, root string, tr TaskResult, base string) error {
+	ref, err := branchRef(tr.Branch)
+	if err != nil {
+		return err
+	}
 	worktreeMu.Lock()
 	defer worktreeMu.Unlock()
 	g, err := newRepoGit(ctx, root)
@@ -213,11 +224,14 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 		return err
 	}
 	defer g.close()
-	oid, err := gitOutEnv(ctx, root, g.env(ctx), "", "rev-parse", "--verify", base+"^{commit}")
+	if _, err := g.out(ctx, "check-ref-format", ref); err != nil {
+		return err
+	}
+	oid, err := gitOutEnv(ctx, root, g.env(ctx), "", "rev-parse", "--verify", "--end-of-options", base+"^{commit}")
 	if err != nil {
 		return err
 	}
-	branch := exec.CommandContext(ctx, "git", "-C", root, "branch", tr.Branch, oid)
+	branch := exec.CommandContext(ctx, "git", "-C", root, "branch", "--", tr.Branch, oid)
 	nowindow.Set(branch)
 	branch.Env = append(gitenv.WithoutRepoVars(branch.Environ()), g.env(ctx)...)
 	if out, err := branch.CombinedOutput(); err != nil {
@@ -226,7 +240,7 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 	_, pathErr := os.Lstat(tr.Worktree)
 	pathAbsent := errors.Is(pathErr, os.ErrNotExist)
 	// Never retry: a failed add may have registered the worktree.
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", tr.Worktree, tr.Branch)
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "worktree", "add", "-q", "--", tr.Worktree, tr.Branch)
 	nowindow.Set(cmd)
 	cmd.Env = append(gitenv.WithoutRepoVars(cmd.Environ()), g.env(ctx)...)
 	out, err := cmd.CombinedOutput()
@@ -237,13 +251,13 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 		registered, listErr := isWorktree(root, tr.Worktree)
 		if pathAbsent {
 			if listErr == nil && registered {
-				if _, removeErr := gitOut(cleanupCtx, root, "worktree", "remove", "--force", tr.Worktree); removeErr != nil {
+				if _, removeErr := gitOut(cleanupCtx, root, "worktree", "remove", "--force", "--", tr.Worktree); removeErr != nil {
 					return errors.Join(addErr, removeErr)
 				}
 			}
 		}
 		if pathAbsent || (listErr == nil && !registered) {
-			if _, deleteErr := gitOut(cleanupCtx, root, "update-ref", "-d", "refs/heads/"+tr.Branch, oid); deleteErr != nil {
+			if _, deleteErr := gitOut(cleanupCtx, root, "update-ref", "-d", "--", ref, oid); deleteErr != nil {
 				return errors.Join(addErr, deleteErr)
 			}
 		}
@@ -255,11 +269,15 @@ func addWorktree(ctx context.Context, root string, tr TaskResult, base string) e
 // Only registered worktrees or surviving branches prove ownership.
 // If listing fails, trust only the branch; stray paths may be reused.
 func stillMade(root string, tr TaskResult) (made bool, left string) {
+	ref, err := branchRef(tr.Branch)
+	if err != nil {
+		return false, err.Error()
+	}
 	registered, lerr := isWorktree(root, tr.Worktree)
 	registered = lerr == nil && registered
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	_, berr := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch)
+	_, berr := gitOut(ctx, root, "show-ref", "--verify", "--quiet", "--", ref)
 	var parts []string
 	switch _, serr := os.Stat(tr.Worktree); {
 	case registered:
@@ -284,6 +302,10 @@ func stillMade(root string, tr TaskResult) (made bool, left string) {
 }
 
 func removeWorktree(root string, tr TaskResult) error {
+	ref, err := branchRef(tr.Branch)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	worktreeMu.Lock()
@@ -294,7 +316,7 @@ func removeWorktree(root string, tr TaskResult) error {
 	case err != nil:
 		return err
 	case registered:
-		if _, err := gitOut(ctx, root, "worktree", "remove", "--force", tr.Worktree); err != nil {
+		if _, err := gitOut(ctx, root, "worktree", "remove", "--force", "--", tr.Worktree); err != nil {
 			return err
 		}
 	default:
@@ -302,8 +324,8 @@ func removeWorktree(root string, tr TaskResult) error {
 		_, _ = gitOut(ctx, root, "worktree", "prune")
 		leftover = RemoveEmptyDir(tr.Worktree)
 	}
-	if _, err := gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "refs/heads/"+tr.Branch); err == nil {
-		if _, err := gitOut(ctx, root, "branch", "-D", tr.Branch); err != nil {
+	if _, err := gitOut(ctx, root, "show-ref", "--verify", "--quiet", "--", ref); err == nil {
+		if _, err := gitOut(ctx, root, "branch", "-D", "--", tr.Branch); err != nil {
 			return errors.Join(leftover, err)
 		}
 	}
