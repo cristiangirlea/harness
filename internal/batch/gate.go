@@ -181,7 +181,7 @@ func gateTempParent(dir string) string {
 }
 
 // commandGate is the adanext-exec binary and operator policy gate commands run through; zero runs them directly.
-type commandGate struct{ path, policy, runDir string }
+type commandGate struct{ path, policy, policySum, runDir string }
 
 func runGate(ctx context.Context, dir, command string, timeout time.Duration, env []string, through commandGate) GateResult {
 	started := time.Now()
@@ -190,7 +190,7 @@ func runGate(ctx context.Context, dir, command string, timeout time.Duration, en
 	var res tools.ShellResult
 	var err error
 	if through.path != "" {
-		res, err = tools.RunGated(ctx, through.path, through.policy, dir, through.runDir, command, timeout, env)
+		res, err = tools.RunGated(ctx, through.path, through.policy, through.policySum, dir, through.runDir, command, timeout, env)
 	} else {
 		res, err = runGateShell(ctx, dir, command, timeout, env)
 	}

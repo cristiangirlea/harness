@@ -174,7 +174,7 @@ type GateResult struct {
 	// Killed says why an exit -1 gate never finished (KilledTimeout or KilledCanceled); empty in older records.
 	Killed  string         `json:"killed,omitempty"`
 	Timeout agent.Duration `json:"timeout,omitempty"`
-	// InfrastructureError is a gate shell that could not start or be waited for: the operator's to fix, not a retry backend's.
+	// InfrastructureError is a gate shell, or command gate, that could not run the command: the operator's to fix, not a retry backend's.
 	InfrastructureError string `json:"infrastructure_error,omitempty"`
 	// Guard marks the protect check, so a user gate whose command starts the same way is not taken for it.
 	Guard bool `json:"guard,omitempty"`

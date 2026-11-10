@@ -329,7 +329,9 @@ get a policy of their own with no guard: every built-in rule named and allowed, 
 `--allow-dangerous`, and neither `guard-env` nor `gate-policy-file`. hrn does not check them
 for the `-approved` and `-script-b64` flags either, since that check keeps a model from
 approving its own ask. The policy is written once per task, removed when the task ends, and
-checked with `adanext-exec check --json` before the first attempt. Each gate runs with
+checked with `adanext-exec check --json` before the first attempt. The agent runs before the
+gates and could reach that file, so hrn keeps its SHA-256 and runs no gate once it differs: that
+is an infrastructure failure too. Each gate runs with
 `--timeout` set to its `gate_timeout` and `--run-id` set to the attempt's run, so its audit
 line sits with that run's; exit codes are read as above, and a refusal, a command the gate did
 not run or a gate that cannot start fails the task without a retry, naming the gate's message

@@ -4,7 +4,7 @@
 # effects: read, exec, network
 # parameters: --pin:bool=false
 # example: bash scripts/gate-guard.sh --pin | grep -Eq '^[0-9a-f]{40}$'
-# hash: 5be8f5d8d89958cc05828091e34e83fd1e2d8198215156923e1e10a292ea14ea
+# hash: 473351603b2ee51fdf497f8d45aec202473e6a440e4d3afc2448d19627cdbd78
 set -euo pipefail
 cd "$(dirname "$0")/.."
 pin=eb6714faa442eecc59e76582f3b326ba89b36632
@@ -30,7 +30,7 @@ if ! log=$(HRN_TEST_GATE="$native/adanext-exec$ext" go test -v -count=1 -timeout
   exit 1
 fi
 passed=$(grep -c '^--- PASS: TestRealGate' <<< "$log" || true)
-want=6
+want=7
 if (( passed != want )); then
   printf '{"error":"the real gate tests did not all run","passed":%d,"want":%d}\n' "$passed" "$want" >&2
   exit 1

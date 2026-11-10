@@ -58,10 +58,18 @@ func fakeCommandGate(args []string) int {
 		if fs.Parse(args[1:]) != nil || len(fs.Args()) != 1 {
 			return 121
 		}
-		seen, _ := os.ReadFile(*policy)
+		// Like the real gate, it runs nothing without its policy.
+		seen, err := os.ReadFile(*policy)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "adanext-exec: refused: the policy cannot be read")
+			return 125
+		}
 		_ = os.WriteFile(filepath.Join(dir, "policy.seen"), seen, 0o644)
 		script := fs.Args()[0]
 		switch script {
+		case "fake-cannot":
+			fmt.Fprintln(os.Stderr, "adanext-exec: could not contain the command")
+			return 126
 		case "fake-refuse":
 			fmt.Fprintln(os.Stderr, "adanext-exec: refused by the policy: git-push")
 			return 125
@@ -83,6 +91,25 @@ func fakeCommandGate(args []string) int {
 		return res.ExitCode
 	}
 	return 121
+}
+
+// operatorGate is a command gate on the installed fake, with an operator policy whose sum it keeps.
+func operatorGate(t *testing.T, dir string) commandGate {
+	t.Helper()
+	path := filepath.Join(dir, tools.GateName)
+	if runtime.GOOS == "windows" {
+		path += ".exe"
+	}
+	policy, done, err := tools.WriteGatePolicy(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(done)
+	sum, err := tools.GatePolicySum(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return commandGate{path: path, policy: policy, policySum: sum}
 }
 
 // installCommandGate copies the test binary under the gate's name first in PATH and returns its directory.
@@ -236,7 +263,7 @@ func TestBatchGateThroughTheGateKeepsTheTasksTimeout(t *testing.T) {
 }
 
 func TestBatchGateExitThroughTheGateIsTheCommandsAndTellsTheRetry(t *testing.T) {
-	installCommandGate(t)
+	gate := installCommandGate(t)
 	spec := gatedSpec(initRepo(t), "echo broken; exit 3")
 	spec.Retry = []string{"wb-ok"}
 	res, _ := run(t, spec)
@@ -244,8 +271,14 @@ func TestBatchGateExitThroughTheGateIsTheCommandsAndTellsTheRetry(t *testing.T) 
 	if tr.Status != StatusFail || len(tr.Attempts) != 2 {
 		t.Fatalf("task = %+v", tr)
 	}
-	if g := tr.Attempts[0].Gates[0]; g.ExitCode != 3 || g.InfrastructureError != "" || !strings.Contains(g.Output, "broken") {
-		t.Errorf("gate = %+v, want the command's exit 3", g)
+	for i, att := range tr.Attempts {
+		if g := att.Gates[0]; g.ExitCode != 3 || g.InfrastructureError != "" || !strings.Contains(g.Output, "broken") || !g.Gated {
+			t.Errorf("attempt %d gate = %+v, want the command's exit 3 through the gate", i+1, g)
+		}
+	}
+	// The retry's gate still has the task's policy, which the real gate needs to run anything.
+	if runs := commandGateRuns(t, gate); len(runs) != 2 || argAfter(runs[0], "--policy") != argAfter(runs[1], "--policy") {
+		t.Errorf("gate runs = %q, want one per attempt under the task's policy", runs)
 	}
 	if p := tr.Attempts[1].Prompt; !strings.Contains(p, "`echo broken; exit 3` exited 3") || !strings.Contains(p, "broken") {
 		t.Errorf("attempt 2 prompt:\n%s", p)
@@ -262,7 +295,7 @@ func TestBatchGateTheGateRefusesIsAnInfrastructureFailure(t *testing.T) {
 		t.Fatalf("task = %+v, want no retry", tr)
 	}
 	g := tr.Attempts[0].Gates[0]
-	if g.ExitCode == 0 || !strings.Contains(g.InfrastructureError, "refused by the adanext-exec gate") || !strings.Contains(g.Output, "git-push") ||
+	if g.ExitCode != -1 || !strings.Contains(g.InfrastructureError, "refused by the adanext-exec gate") || !strings.Contains(g.Output, "git-push") ||
 		strings.Contains(g.InfrastructureError, "in your answer") {
 		t.Errorf("gate = %+v, want the gate's refusal as an infrastructure failure", g)
 	}
@@ -270,16 +303,7 @@ func TestBatchGateTheGateRefusesIsAnInfrastructureFailure(t *testing.T) {
 
 func TestBatchGateThroughTheGateDecodesUTF16(t *testing.T) {
 	gate := installCommandGate(t)
-	path := filepath.Join(gate, tools.GateName)
-	if runtime.GOOS == "windows" {
-		path += ".exe"
-	}
-	policy, done, err := tools.WriteGatePolicy(true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(done)
-	g := runGate(context.Background(), t.TempDir(), "fake-utf16", time.Minute, nil, commandGate{path: path, policy: policy})
+	g := runGate(context.Background(), t.TempDir(), "fake-utf16", time.Minute, nil, operatorGate(t, gate))
 	if g.ExitCode != 2 || !strings.Contains(g.Output, "gate says café ✓") || !g.Gated {
 		t.Errorf("gate = %+v, want decoded UTF-8 and the command's exit", g)
 	}
@@ -289,11 +313,66 @@ func TestBatchGateThroughTheGateCanceledBeforeStartIsCanceled(t *testing.T) {
 	gate := installCommandGate(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	g := runGate(ctx, t.TempDir(), "echo never", time.Minute, nil, commandGate{path: filepath.Join(gate, tools.GateName), policy: "unused"})
+	g := runGate(ctx, t.TempDir(), "echo never", time.Minute, nil, operatorGate(t, gate))
 	if g.ExitCode != -1 || g.Killed != KilledCanceled || g.InfrastructureError != "" || g.Outcome() != "canceled" {
 		t.Errorf("gate = %+v, want it recorded as canceled", g)
 	}
 	if runs := commandGateRuns(t, gate); runs != nil {
 		t.Errorf("gate runs = %q, want none", runs)
+	}
+}
+
+func TestBatchGateDoesNotRunOnceItsPolicyWasChanged(t *testing.T) {
+	gate := installCommandGate(t)
+	through := operatorGate(t, gate)
+	if err := os.WriteFile(through.policy, []byte(`{"version":1,"default":"refuse","rules":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g := runGate(context.Background(), t.TempDir(), "echo never", time.Minute, nil, through)
+	if g.ExitCode != -1 || !strings.Contains(g.InfrastructureError, "gate policy file was changed or removed") || !g.Gated {
+		t.Errorf("gate = %+v, want an infrastructure failure naming the policy", g)
+	}
+	if runs := commandGateRuns(t, gate); runs != nil {
+		t.Errorf("gate runs = %q, want none", runs)
+	}
+}
+
+func TestBatchGateTheGateCouldNotRunIsAnInfrastructureFailure(t *testing.T) {
+	installCommandGate(t)
+	spec := gatedSpec(initRepo(t), "fake-cannot")
+	spec.Retry = []string{"wb-ok"}
+	res, _ := run(t, spec)
+	tr := res.Tasks[0]
+	if tr.Status != StatusFail || len(tr.Attempts) != 1 {
+		t.Fatalf("task = %+v, want no retry", tr)
+	}
+	g := tr.Attempts[0].Gates[0]
+	if g.ExitCode != -1 || !strings.Contains(g.InfrastructureError, "did not run the command (exit 126)") ||
+		!strings.Contains(g.InfrastructureError, "could not contain the command") || strings.Contains(g.InfrastructureError, "shell could not start") {
+		t.Errorf("gate = %+v, want the gate's own reason", g)
+	}
+}
+
+func TestBatchGateThroughTheGateCanceledMidRunIsCanceled(t *testing.T) {
+	gate := installCommandGate(t)
+	flag := filepath.ToSlash(filepath.Join(t.TempDir(), "gate.started"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for {
+			if _, err := os.Stat(flag); err == nil {
+				cancel()
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}()
+	g := runGate(ctx, t.TempDir(), "touch "+flag+" && sleep 30", time.Minute, nil, operatorGate(t, gate))
+	if g.ExitCode != -1 || g.Killed != KilledCanceled || g.Timeout != 0 || g.InfrastructureError != "" || g.Outcome() != "canceled" || g.Duration > 20*time.Second {
+		t.Errorf("gate = %+v, want it recorded as canceled", g)
 	}
 }

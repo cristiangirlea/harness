@@ -252,11 +252,15 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			return s.fail(err)
 		}
 		defer done()
+		sum, err := tools.GatePolicySum(policy)
+		if err != nil {
+			return s.fail(err)
+		}
 		path, err := tools.FindGate(s.ctx, os.Environ(), policy)
 		if err != nil {
 			return s.fail(err)
 		}
-		through = commandGate{path: path, policy: policy}
+		through = commandGate{path: path, policy: policy, policySum: sum}
 	}
 
 	// Skip exhausted backends even without a reset time.

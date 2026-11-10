@@ -190,8 +190,12 @@ func runGated(ctx context.Context, ws *Workspace, command string, timeout time.D
 }
 
 // RunGated runs an operator's command, such as a batch gate, in dir through the gate at path under
-// policy, auditing it under runDir's run id; an operator's own command is not checked for approval flags.
-func RunGated(ctx context.Context, path, policy, dir, runDir, command string, timeout time.Duration, env []string) (ShellResult, error) {
+// policy, auditing it under runDir's run id; it runs nothing once the policy no longer has policySum.
+func RunGated(ctx context.Context, path, policy, policySum, dir, runDir, command string, timeout time.Duration, env []string) (ShellResult, error) {
+	// An agent that ran before the gate could reach the file; an operator's command is not checked for approval flags.
+	if sum, err := GatePolicySum(policy); err != nil || sum != policySum {
+		return ShellResult{}, errors.New(gatePolicyMoved + ", so the command did not run")
+	}
 	res, err := gateRun(ctx, &Workspace{Root: dir, Gate: path, GatePolicy: policy, RunDir: runDir}, command, timeout, env)
 	if r, ok := errors.AsType[*gateRefusal](err); ok {
 		// The advice in a refusal is the model's; an operator reads the gate's own reason.

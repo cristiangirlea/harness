@@ -283,9 +283,9 @@ With `command_gate` (`--gate`) on the spec or a task, its gate commands run thro
 [adanext-exec](https://github.com/cristiangirlea/adanext-exec) binary in PATH, as the
 agent's commands do ([the command gate](permissions.md#batch-gates-through-the-gate)):
 `adanext-exec run --shell <shell> --agent hrn --policy <file> --timeout <gate_timeout>
---run-id <attempt's run> -- <command>`, in the same folder with the same environment. Gates
-are the operator's commands, so that policy refuses nothing; the gate adds its kill of the
-command's whole tree at `gate_timeout` and an audit line under the attempt's run id. Before a
+--run-id <attempt's run> -- <command>`, in the same folder, handed the same environment. Gates
+are the operator's commands, so that policy refuses nothing; the gate kills the command's whole
+tree at `gate_timeout` and adds an audit line under the attempt's run id. Before a
 task with gates starts its first attempt, hrn asks the gate for a decision under that policy:
 a gate that is missing, is a batch file or does not answer `adanext-exec/1` ends the task with
 an error before any agent runs, so no gate runs without it. A command the gate refuses or did
