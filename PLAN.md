@@ -287,6 +287,16 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-10: watch shows the gate's record (#435 slice 5, PR #905), display only. A run's header
+  says `ungated` without `--gate` or when the run ended before any command reached the gate,
+  else `through adanext-exec` with the key its audit lines carry (`run_id` on api and codex,
+  claude's `session`); watch does not read the gate's audit directory. On gated api and codex
+  runs each command result shows the decider (`gate`, `guard`, `hrn`), the decision, a refusal's
+  rule, the exit or timeout, and a shaped size that the run's `originals` confirms, read from the
+  lines hrn appends, so it shows what hrn reported to the model. A refusal by hrn's guard and by
+  the gate's check read the same (`guard`). Not shown, since no record holds it: claude's
+  per-command answers (a record field, a maintainer's call), the gate's wait, the rule of an
+  allow. Not checked against a real gate, codex stream or claude session. Slices 6 and 7 stay open.
 - 2026-11-10: `--gate` reaches the codex backend through a gate-backed MCP tool (#435 slice 4,
   PR #903). hrn turns codex's command tools off and serves `run_command` from `hrn gate-tools`,
   in `yolo` only. `code_mode_host` stays on: on codex-cli 0.167 MCP tools are reached only
