@@ -103,7 +103,7 @@ func runCommand() Tool {
 				res.Output = ws.toolOutput(res.Output)
 			}
 			if res.TimedOut {
-				return res.Output + fmt.Sprintf("\n[timed out after %s]", timeout), errors.New("command timed out")
+				return res.Output + fmt.Sprintf("\n[timed out after %s]", timeout), errors.New(commandTimedOut)
 			}
 			result := res.Output
 			if result == "" {

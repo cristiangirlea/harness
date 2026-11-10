@@ -156,8 +156,8 @@
 {{define "event"}}<li class="ev {{.Class}}"{{with .When}} data-at="{{.}}"{{end}}>
 <div class="when">{{if .Clock}}<time datetime="{{.When}}">{{.Clock}}</time>{{end}}{{with .Gap}} <span class="gap{{if $.Slow}} slow{{end}}">{{.}}</span>{{end}}</div>
 <div class="what">{{if .Text}}<div class="text">{{.Body}}</div>{{with .More}}<p class="more">{{.}}</p>{{end}}
-{{else if .Body}}<details><summary><span class="tag">{{.Label}}</span> <span class="sum">{{.Summary}}</span></summary><pre>{{.Body}}</pre>{{with .More}}<p class="more">{{.}}</p>{{end}}</details>
-{{else}}<span class="tag">{{.Label}}</span> <span class="sum">{{.Summary}}</span>{{end}}</div>
+{{else if .Body}}<details><summary><span class="tag">{{.Label}}</span> <span class="sum">{{.Summary}}</span>{{with .Gate}} <span class="gate-note">{{.}}</span>{{end}}</summary><pre>{{.Body}}</pre>{{with .More}}<p class="more">{{.}}</p>{{end}}</details>
+{{else}}<span class="tag">{{.Label}}</span> <span class="sum">{{.Summary}}</span>{{with .Gate}} <span class="gate-note">{{.}}</span>{{end}}{{end}}</div>
 </li>{{end}}
 
 {{define "usage"}}{{if .Turns}}<section class="card usage" aria-labelledby="usage-h">

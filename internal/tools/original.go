@@ -56,7 +56,7 @@ func (w *Workspace) toolOutput(text string) string {
 	if !ok {
 		summary = Truncate(text)
 	}
-	return fmt.Sprintf("%s\noriginal: %s (%d bytes); read_original reads it", summary, handle, len(text))
+	return fmt.Sprintf("%s\noriginal: %s (%d bytes)"+originalReadable, summary, handle, len(text))
 }
 
 // The second root confines replaced-file links to originals too.

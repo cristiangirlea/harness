@@ -101,10 +101,10 @@ func fakeGate(args []string) int {
 		script := fs.Args()[0]
 		switch {
 		case strings.HasPrefix(script, "fake-refuse"):
-			fmt.Fprintln(os.Stderr, "adanext-exec: refused: git-push")
+			fmt.Fprintln(os.Stderr, "adanext-exec: refused by the policy: git-push")
 			return 125
 		case strings.HasPrefix(script, "fake-ask"):
-			fmt.Fprintln(os.Stderr, "adanext-exec: refused: git-push asks a person, and none can be asked here")
+			fmt.Fprintln(os.Stderr, "adanext-exec: refused by the policy: git-push asks a person, and none can be asked here")
 			return 125
 		case strings.HasPrefix(script, "fake-unusable"):
 			fmt.Fprintln(os.Stderr, "adanext-exec: the policy cannot be used")
@@ -302,7 +302,7 @@ func TestGatedRunCommandKeepsTheCommandsOwnGateLikeExitCodes(t *testing.T) {
 
 func TestGatedRunCommandReportsTheGatesRefusal(t *testing.T) {
 	for script, want := range map[string]string{
-		"fake-refuse make release": "refused: git-push",
+		"fake-refuse make release": "refused by the policy: git-push",
 		"fake-ask make release":    "git-push asks a person, and none can be asked here",
 	} {
 		ws, tl, _ := gatedWorkspace(t)
