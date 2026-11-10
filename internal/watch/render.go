@@ -67,6 +67,7 @@ type eventView struct {
 	Summary string
 	Body    string
 	More    string
+	Gate    string
 }
 
 func eventOf(l Line, prev time.Time) (eventView, time.Time) {
@@ -318,6 +319,7 @@ func runPageOf(rec runlog.Record, events []eventView, last time.Time, v viewer) 
 	}
 	p.Facts = []fact{{Label: "Backend", Value: backend}, {Label: "Mode", Value: string(rec.Task.Mode)},
 		v.place("Workspace", repoOf(rec.Task.Dir), rec.Task.Dir), {Label: "Started", Value: rec.Started.Local().Format("2006-01-02 15:04:05")}}
+	p.Facts = append(p.Facts, gateFact(rec))
 	p.Facts = append(p.Facts, gitFacts(rec)...)
 	if rec.ContinueRoute != "" {
 		p.Facts = append(p.Facts, fact{Label: "Continuation", Value: rec.ContinueRoute})

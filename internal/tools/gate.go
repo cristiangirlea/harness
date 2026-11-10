@@ -139,7 +139,7 @@ func (ws *Workspace) guardRule(command string) string {
 	if err != nil || answer.Version != GateProtocol || answer.Decision == "" || answer.Decision == "allow" {
 		return ""
 	}
-	return cmp.Or(answer.Rule, "gate-policy")
+	return cmp.Or(answer.Rule, gateNoRule)
 }
 
 // FindGate returns the gate's path once it answers the protocol handshake under the run's policy,
@@ -184,7 +184,7 @@ func firstLine(texts ...string) string {
 func runGated(ctx context.Context, ws *Workspace, command string, timeout time.Duration, env []string) (ShellResult, error) {
 	// As the gate's own hook does: a nested run with these flags could approve its own ask.
 	if strings.Contains(command, "-approved") || strings.Contains(command, "-script-b64") {
-		return ShellResult{}, fmt.Errorf("refused by hrn: a command that names %s's -approved or -script-b64 flag could approve its own ask, and only a person approves one", GateName)
+		return ShellResult{}, fmt.Errorf(hrnRefused+"a command that names %s's -approved or -script-b64 flag could approve its own ask, and only a person approves one", GateName)
 	}
 	shell, _ := Shell()
 	argv := []string{ws.Gate, "run", "--shell", shell, "--agent", "hrn"}
@@ -206,7 +206,7 @@ func runGated(ctx context.Context, ws *Workspace, command string, timeout time.D
 		if errors.Is(err, ErrWait) {
 			return res, err
 		}
-		return res, fmt.Errorf("the %s gate could not start, so the command did not run: %w", GateName, err)
+		return res, fmt.Errorf(gateCouldNot+", so the command did not run: %w", err)
 	}
 	if res.TimedOut || ctx.Err() != nil {
 		return res, nil
@@ -218,10 +218,10 @@ func runGated(ctx context.Context, ws *Workspace, command string, timeout time.D
 	case res.ExitCode == gateTimedOut && timeout > 0 && time.Since(started) >= timeout:
 		res.TimedOut, res.ExitCode = true, -1
 	case res.ExitCode == gateRefused && said:
-		return res, fmt.Errorf("refused by the %s gate: %s. Do not retry it unchanged; say in your answer why it is needed",
-			GateName, strings.TrimSpace(res.Output))
+		return res, fmt.Errorf(gateRefusedBy+"%s. Do not retry it unchanged; say in your answer why it is needed",
+			strings.TrimSpace(res.Output))
 	case slices.Contains(gateNotRun, res.ExitCode) && said:
-		return res, fmt.Errorf("the %s gate did not run the command (exit %d): %s", GateName, res.ExitCode, strings.TrimSpace(res.Output))
+		return res, fmt.Errorf(gateDidNotRun+" (exit %d): %s; nothing ran in its place", res.ExitCode, strings.TrimSpace(res.Output))
 	}
 	return res, nil
 }

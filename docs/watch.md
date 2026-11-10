@@ -48,6 +48,24 @@ one outer PowerShell, bash, sh, zsh or cmd invocation, in both summaries and fol
 input. Commands with unbalanced quotes keep their wrapper. Workspace and home paths
 still show as `.` and `~`. These display rules also apply to live streams, `--lan`
 and `--public`; records on disk and `hrn show` keep the full commands.
+A run's header says how its commands ran: `ungated` for a run without
+[`--gate`](permissions.md#the-command-gate) or one that ended before any command reached the
+gate, else `through adanext-exec` with the key its audit lines carry in the gate's own audit
+directory (`audit run_id <run>` on api and codex, `audit session <id>` on claude once the run
+has ended), and `stopped: a command may have run ungated` when hrn stopped the run for that.
+On a gated api or codex run each command result shows the gate's record as hrn reported it to
+the model: who decided (`gate`; `guard` for a refusal before the gate, by hrn's guard or the
+gate's check, which share rule names, write the same refusal and leave no audit line; `hrn`),
+the decision (`allowed`, `refused`, `not run`), the rule a refusal names, the exit code or
+timeout, and, under `shape_tools`, the size of the original a shaped result keeps, only when
+the run's `originals` holds that file at that size. A command that ran cannot fake the exit
+or timeout hrn writes after its output. It can do what hrn's own reading allows: print the
+gate's message and exit with one of the gate's codes, which hrn reports, and watch shows, as
+the gate refusing or not running it; or end with the line of an earlier original of the same
+run, which watch shows as that size. A codex run hrn stopped for using its own shell shows no
+record, since those results share the gate tool's name. claude's results show none of it: the
+hook's answers are checked during the run but not recorded. The gate's wait and the rule of an
+allow are not recorded on any backend.
 A batch's page shows each task with a link to each attempt's run, the
 backend a usage limit moved it from, and its gates (command, exit code, folded output) as
 they finish. Steps arrive over Server-Sent Events that check the run's `events.jsonl` twice a

@@ -39,7 +39,7 @@ func NewGateServer(ws *Workspace, version string, shape bool, policySum string) 
 func gateServerRefusal(ws *Workspace, policySum string, raw json.RawMessage) string {
 	if policySum != "" {
 		if sum, err := GatePolicySum(ws.GatePolicy); err != nil || sum != policySum {
-			return "refused: the run's gate policy file was changed or removed, so no command runs; say so in your answer"
+			return gatePolicyMoved + ", so no command runs; say so in your answer"
 		}
 	}
 	var args struct {

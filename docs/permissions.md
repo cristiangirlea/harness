@@ -229,7 +229,8 @@ its command at once, through its job, and the gate writes no audit line for that
 The run checks the gate once before it starts (`adanext-exec check --json --policy <file>` must
 answer `adanext-exec/1`), so a gate that cannot use the run's policy does not start a run. Neither
 the gate's decision nor its rule is a field of the run record yet: the tool result carries the
-refusal or the gate's message, and the audit line is the gate's record.
+refusal or the gate's message, which [watch](watch.md#watching-runs-live) reads back, and the
+audit line is the gate's record.
 
 **claude** goes through the gate's Claude Code hook. For one run hrn passes `--settings` with a
 temporary file holding only a `PreToolUse` hook for `Bash|PowerShell`, `--tools` with an allow

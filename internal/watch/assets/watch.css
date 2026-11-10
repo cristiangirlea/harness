@@ -93,6 +93,7 @@ pre { background: var(--code-bg); color: var(--code-fg); padding: 12px 14px; bor
 .ev-info .sum, .ev-thinking .sum { color: var(--muted); }
 .ev-error .sum, .ev-bad .sum { color: var(--bad-fg); }
 .sum { overflow-wrap: anywhere; }
+.gate-note { font-size: .82rem; color: var(--muted); overflow-wrap: anywhere; }
 .attempt { border-top: 1px solid var(--rule); padding-top: 12px; margin-top: 12px; }
 .gates code { overflow-wrap: anywhere; }
 .result h2 { display: flex; gap: 10px; align-items: center; }

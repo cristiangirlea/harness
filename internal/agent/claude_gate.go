@@ -24,6 +24,9 @@ import (
 
 const gateUnrouted = "gate: stopped: "
 
+// GateStopped starts the error of a gated run hrn stopped because a command may have run ungated.
+const GateStopped = gateUnrouted
+
 // An allow list, since new code-running tools appear; Monitor, REPL, Workflow and Skill run code the hook does not rewrite.
 const claudeGateTools = "Bash,PowerShell,Read,Edit,Write,NotebookEdit,Glob,Grep,LSP,WebFetch,WebSearch,Agent," +
 	"TodoWrite,TaskCreate,TaskGet,TaskList,TaskUpdate,TaskOutput,TaskStop,ToolSearch"

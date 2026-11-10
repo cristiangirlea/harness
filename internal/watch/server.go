@@ -719,6 +719,7 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var v eventView
+		note := sh.shorten(s.clean(gateNote(rec, l.Event)))
 		l.Event = sh.event(s.cleanEvent(l.Event))
 		if feedsChart(l) {
 			usage = append(usage, l.Event)
@@ -727,6 +728,7 @@ func (s *server) run(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		v, prev = eventOf(l, prev)
+		v.Gate = note
 		events = append(events, v)
 	}
 	p := runPageOf(sh.record(s.cleanRecord(rec)), events, prev, vw)
@@ -1019,6 +1021,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			var v eventView
+			note := sh.shorten(s.clean(gateNote(rec, l.Event)))
 			l.Event = sh.event(s.cleanEvent(l.Event))
 			if feedsChart(l) {
 				usage = append(usage, l.Event)
@@ -1028,6 +1031,7 @@ func (s *server) streamRun(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			v, prev = eventOf(l, prev)
+			v.Gate = note
 			html, rerr := s.render("event", v)
 			if rerr != nil {
 				return true, s.problem(r, st, rerr)
