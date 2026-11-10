@@ -177,15 +177,16 @@ subtest; if the subtest passed, the summary drops it and only `read_original` sh
 boolean is also available in run options, batch specs/tasks and MCP
 run inputs. Eval matrix variants each select `shape_tools` (default false),
 overriding task/spec shaping so a suite can compare raw and shaped variants;
-give the variants distinct names. This flag does not change CLI backend tools.
+give the variants distinct names. This flag does not change CLI backend tools, except on codex with `--gate`, where the
+gate-backed `run_command` shapes its results and `read_original` is offered.
 `--parse-check` opts the api backend's `edit_file` and `write_file` tools into
 syntax checks for `.go` and `.json` files (case-insensitive). It is off by default;
 `parse_check` is also available in run options, batch specs/tasks and MCP run
 inputs. Invalid changes are refused with a line and column, leaving the file
 unchanged. Existing unparseable files remain editable so they can be repaired;
 new files are checked. Make each edit whole. Shell, MCP and CLI tools are unaffected.
-`--gate` runs the api backend's `run_command`, or the claude backend's Bash and PowerShell
-commands, through the
+`--gate` runs the api backend's `run_command`, the claude backend's Bash and PowerShell
+commands, or codex's commands through a gate-backed tool, through the
 [adanext-exec](https://github.com/cristiangirlea/adanext-exec) binary found in PATH. hrn hands
 it the guard as a policy for the run (every rule lifted under `--allow-dangerous`, and the
 user's own `policy.json` does not apply); the binary judges each command by it, kills the
@@ -195,8 +196,8 @@ binary for a decision with `adanext-exec check --json` under that policy; a bina
 file, cannot use the policy or does not answer protocol `adanext-exec/1` stops the run with an error, so no command
 runs ungated. It is off by default and in JSON is `command_gate` (a batch spec's `gate` is its
 list of check commands), in run options, batch specs/tasks and MCP run inputs. A run continued
-with `--continue` does not inherit it: pass `--gate` again. On claude it needs `--mode yolo`
-and is refused otherwise; codex, gemini, opencode and agy refuse it, since their commands do
+with `--continue` does not inherit it: pass `--gate` again. On claude and codex it needs `--mode yolo`
+and is refused otherwise; gemini, opencode and agy refuse it, since their commands do
 not reach the gate yet ([the design](terminal-through-the-gate.md)).
 
 `--retrieval off|optional|required` opts into project references; enabled modes

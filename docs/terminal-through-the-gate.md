@@ -221,6 +221,17 @@ default off) until a maintainer turns it on.
    `yolo` only. hrn's codex parser reads only `command_execution` items today, so it learns the
    item codex streams for an MCP call (its name **unverified**) and records it as a shell call.
    Live check: no `command_execution` item in a routed run.
+   *Built* with these differences, from live runs on codex-cli 0.167.0-alpha.3.2. The item is
+   `mcp_tool_call`. `shell_tool` and `unified_exec` are not all of codex's command tools:
+   `computer_use`, `browser_use`, `apps` and `plugins` are turned off too. `code_mode_host` stays
+   on: codex reaches MCP tools only through its `functions.exec`, and a script there could not
+   import `node:fs` or `node:child_process` and had no `process`, `require` or `fetch`. A
+   subagent has the same limits. codex starts an MCP server with
+   almost no environment and a 60-second call limit, so hrn names the run's variables in
+   `env_vars` and sets the limit to 660 seconds. `read_original` is offered only under
+   `--shape-tools`. The server is `hrn gate-tools`. codex's file tools can write the policy
+   file, so the server keeps hrn's command guard and checks the file's SHA-256 before each
+   command. An item type hrn does not know stops the run, as `command_execution` does.
 5. **Watch shows the gate's record**: decision, rule, exit, wait, shaped size, the audit link,
    and `ungated` on the header of a run that is not routed. Display only.
 6. **Shaping through the gate** (needs #1 and the ranged `original` gap). `--shape-tools` reaches the routed combinations only: api, claude through the hook, and

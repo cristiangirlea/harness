@@ -53,7 +53,7 @@ type Options struct {
 	AllowDangerous bool `json:"allow_dangerous,omitempty" desc:"Lift the guard: let agents push, merge and deploy with your credentials, and let run_command run sudo, rm -rf / and the like."`
 
 	// Gate is not named gate in JSON: a batch spec's gate is its list of check commands.
-	Gate bool `json:"command_gate,omitempty" flag:"gate" desc:"Run the agent's commands through the adanext-exec binary in PATH (its policy, tree kill and audit, and on api its timeout); the run does not start when it is missing or does not speak adanext-exec/1 (the api backend, and claude in yolo mode only; default off)."`
+	Gate bool `json:"command_gate,omitempty" flag:"gate" desc:"Run the agent's commands through the adanext-exec binary in PATH (its policy, tree kill and audit, and on api its timeout); the run does not start when it is missing or does not speak adanext-exec/1 (the api backend, and claude or codex in yolo mode only; default off)."`
 
 	// InheritEnv starts an agent CLI with the operator's whole environment
 	// instead of the allowlisted one (sanitizedEnv); the guard still applies.

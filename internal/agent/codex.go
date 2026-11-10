@@ -58,6 +58,13 @@ func NewCodexBackend() *CLIBackend {
 			}
 			return warnings
 		},
+		gateRoute:    codexGateRoute,
+		newGateParse: newCodexGateParse,
+		gateArgsAt:   codexGateArgsAt,
+		gateLine: func(gate string) string {
+			return "gate: codex's shell tools are off and its commands go to hrn's run_command, through " + gate + "; MCP servers' tools are not routed"
+		},
+		stopWhen:   func(r *Result) bool { return strings.HasPrefix(r.Error, gateUnrouted) },
 		parse:      parseCodexStream,
 		end:        codexStreamEnded,
 		exited:     codexReportModel,

@@ -217,7 +217,7 @@ func TestAPIRunWithoutTheGateSaysNothingOfIt(t *testing.T) {
 }
 
 func TestCLIBackendsRefuseTheGate(t *testing.T) {
-	for _, b := range []*CLIBackend{NewCodexBackend(), NewGeminiBackend(), NewOpencodeBackend(), NewAgyBackend()} {
+	for _, b := range []*CLIBackend{NewGeminiBackend(), NewOpencodeBackend(), NewAgyBackend()} {
 		res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Gate: true}}, func(Event) {})
 		if res.Status != StatusError || !strings.Contains(res.Error, "do not run through adanext-exec yet") {
 			t.Errorf("%s: result = %s %q, want the gate refused", b.Name(), res.Status, res.Error)

@@ -80,6 +80,10 @@ type CLIBackend struct {
 	gateRoute func(ctx context.Context, t Task, gate, policy string) (args []string, done func(), err error)
 	// newGateParse reads the stream of a gated run.
 	newGateParse func(gate, policy string) func(line []byte, emit func(Event), res *Result) bool
+	// gateArgsAt places the route's options; nil appends them.
+	gateArgsAt func(args []string) int
+	// gateLine says what the route sends through the gate.
+	gateLine func(gate string) string
 }
 
 func (c *CLIBackend) Name() string { return c.name }
@@ -189,7 +193,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 
 	// A CLI whose commands cannot reach the gate is refused rather than run ungated.
 	if task.Gate && c.gateRoute == nil {
-		return fail(StatusError, fmt.Errorf("gate: the %s backend's commands do not run through %s yet; use the api or claude backend, or run without --gate", c.name, tools.GateName))
+		return fail(StatusError, fmt.Errorf("gate: the %s backend's commands do not run through %s yet; use the api, claude or codex backend, or run without --gate", c.name, tools.GateName))
 	}
 	if task.NoTools && !c.mapsNoTools {
 		return fail(StatusError, fmt.Errorf("no_tools is not supported by the %s backend", c.name))
@@ -240,8 +244,12 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		defer done()
 		gatePath, gatePolicy = gate, policy
-		args = append(args, more...)
-		gateLine = "gate: Bash and PowerShell commands run through " + gate + "; MCP servers' tools are not routed"
+		at := len(args)
+		if c.gateArgsAt != nil {
+			at = c.gateArgsAt(args)
+		}
+		args = slices.Insert(args, at, more...)
+		gateLine = c.gateLine(gate)
 	}
 	if c.name == "codex" {
 		if err := codexBatchArgsError(bin, args); err != nil {

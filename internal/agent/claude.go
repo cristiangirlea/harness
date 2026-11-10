@@ -84,6 +84,9 @@ func NewClaudeBackend() *CLIBackend {
 		newParse:     newClaudeParse,
 		gateRoute:    claudeGateRoute,
 		newGateParse: newClaudeGateParse,
+		gateLine: func(gate string) string {
+			return "gate: Bash and PowerShell commands run through " + gate + "; MCP servers' tools are not routed"
+		},
 		stopWhen: func(r *Result) bool {
 			return strings.HasPrefix(r.Error, perTokenRefusal) || strings.HasPrefix(r.Error, gateUnrouted)
 		},
