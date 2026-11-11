@@ -344,3 +344,27 @@ func TestRealGateRunAppliesTheRunsPolicy(t *testing.T) {
 		t.Fatalf("allow_dangerous: run_command = %q, %v; want the lifted rule to run it", out, err)
 	}
 }
+
+func TestRealGateRunsAnOperatorsCommandUnderTheOperatorPolicy(t *testing.T) {
+	ws, _ := realGate(t, true)
+	sum, err := GatePolicySum(ws.GatePolicy)
+	must(t, err)
+	run := func(command string, timeout time.Duration) ShellResult {
+		t.Helper()
+		res, err := RunGated(context.Background(), ws.Gate, ws.GatePolicy, sum, ws.Root, "", command, timeout, nil)
+		if err != nil {
+			t.Fatalf("%s: RunGated = %v", command, err)
+		}
+		return res
+	}
+	// Gates are the operator's commands: a guard rule's command and the approval flag both run.
+	if res := run("echo sudo -approved", time.Minute); res.ExitCode != 0 || !strings.Contains(res.Output, "sudo -approved") {
+		t.Errorf("guarded command = %+v, want it run", res)
+	}
+	if res := run(script("echo own; exit 3", "Write-Output own; exit 3"), time.Minute); res.ExitCode != 3 || res.TimedOut || !strings.Contains(res.Output, "own") {
+		t.Errorf("exit 3 = %+v, want the command's own exit", res)
+	}
+	if res := run(script("sleep 30", "Start-Sleep 30"), 2*time.Second); !res.TimedOut || res.ExitCode != -1 {
+		t.Errorf("slow command = %+v, want the gate's timeout read as a timeout", res)
+	}
+}

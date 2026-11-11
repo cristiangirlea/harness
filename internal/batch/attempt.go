@@ -34,6 +34,7 @@ type attemptPlan struct {
 	// Keep work for in-place repair on retry.
 	continued               bool
 	gateTimeout             time.Duration
+	gate                    commandGate // set when the gate commands run through adanext-exec
 	switchedFrom, continues string
 	// Model and effort are backend-scoped.
 	chosenFor string
@@ -243,6 +244,24 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 	if err != nil {
 		return s.fail(err)
 	}
+	var through commandGate
+	if opts.Gate && len(gates) > 0 {
+		// Gates are operator commands: the gate lifts every guard rule but still times, kills and audits them.
+		policy, done, err := tools.WriteGatePolicy(true)
+		if err != nil {
+			return s.fail(err)
+		}
+		defer done()
+		sum, err := tools.GatePolicySum(policy)
+		if err != nil {
+			return s.fail(err)
+		}
+		path, err := tools.FindGate(s.ctx, os.Environ(), policy)
+		if err != nil {
+			return s.fail(err)
+		}
+		through = commandGate{path: path, policy: policy, policySum: sum}
+	}
 
 	// Skip exhausted backends even without a reset time.
 	spent := followup.Spent{}
@@ -250,7 +269,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 	var carry *Attempt    // the limited attempt the next one carries on
 	for i := 0; i < len(backends); i++ {
 		name := backends[i]
-		plan := attemptPlan{number: len(s.tr.Attempts) + 1, prompt: s.t.Prompt, gateTimeout: gateTimeout, chosenFor: backends[0], base: s.base, branch: s.tr.Branch}
+		plan := attemptPlan{number: len(s.tr.Attempts) + 1, prompt: s.t.Prompt, gateTimeout: gateTimeout, gate: through, chosenFor: backends[0], base: s.base, branch: s.tr.Branch}
 		if i == 0 {
 			plan.routedBy = routedBy
 		}
@@ -771,11 +790,13 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		report(att)
 	}
 	if pass {
+		through := plan.gate
+		through.runDir = task.RunDir
 		for _, g := range gates {
 			gateN := len(att.Gates) + 1
 			fw.Emit(flow.Event{Step: GateStep(id, plan.number, gateN), Parent: as, Kind: flow.KindGate, Task: id, Attempt: plan.number, Status: flow.StatusStarted, Name: g})
 			stop := beating(gateBeat, func() { report(att) })
-			gr := runGate(ctx, task.Dir, g, plan.gateTimeout, env)
+			gr := runGate(ctx, task.Dir, g, plan.gateTimeout, env, through)
 			stop()
 			att.Result.Evidence = append(att.Result.Evidence, kernel.NewEvidence("gate", gr.Command, []byte(gr.Output)))
 			att.Gates = append(att.Gates, gr)

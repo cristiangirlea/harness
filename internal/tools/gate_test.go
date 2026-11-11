@@ -307,8 +307,9 @@ func TestGatedRunCommandReportsTheGatesRefusal(t *testing.T) {
 	} {
 		ws, tl, _ := gatedWorkspace(t)
 		out, err := call(t, ws, tl, map[string]any{"command": script})
-		if out != "" || err == nil || !strings.Contains(err.Error(), "refused by the adanext-exec gate") || !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: run_command = %q, %v; want a refusal naming %q", script, out, err, want)
+		if out != "" || err == nil || !strings.Contains(err.Error(), "refused by the adanext-exec gate") || !strings.Contains(err.Error(), want) ||
+			!strings.HasSuffix(err.Error(), ". Do not retry it unchanged; say in your answer why it is needed") {
+			t.Errorf("%s: run_command = %q, %v; want a refusal naming %q with the advice", script, out, err, want)
 		}
 	}
 }

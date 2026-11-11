@@ -180,13 +180,23 @@ func gateTempParent(dir string) string {
 	}
 }
 
-func runGate(ctx context.Context, dir, command string, timeout time.Duration, env []string) GateResult {
+// commandGate is the adanext-exec binary and operator policy gate commands run through; zero runs them directly.
+type commandGate struct{ path, policy, policySum, runDir string }
+
+func runGate(ctx context.Context, dir, command string, timeout time.Duration, env []string, through commandGate) GateResult {
 	started := time.Now()
 	// Gates are operator commands: preserve their environment except git repository overrides.
-	res, err := runGateShell(ctx, dir, command, timeout, append(os.Environ(), env...))
+	env = append(os.Environ(), env...)
+	var res tools.ShellResult
+	var err error
+	if through.path != "" {
+		res, err = tools.RunGated(ctx, through.path, through.policy, through.policySum, dir, through.runDir, command, timeout, env)
+	} else {
+		res, err = runGateShell(ctx, dir, command, timeout, env)
+	}
 	output, decodedUTF16 := decodeGateOutput(res.Output)
 	res.Output = output
-	gr := GateResult{Command: command, ExitCode: res.ExitCode, Output: tail(res.Output, 4000), Duration: time.Since(started)}
+	gr := GateResult{Command: command, ExitCode: res.ExitCode, Output: tail(res.Output, 4000), Duration: time.Since(started), Gated: through.path != ""}
 	switch {
 	case err != nil:
 		gr.ExitCode = -1
@@ -194,7 +204,8 @@ func runGate(ctx context.Context, dir, command string, timeout time.Duration, en
 		if ctx.Err() != nil {
 			// Cancellation before shell startup is not an infrastructure failure.
 			gr.Killed = KilledCanceled
-		} else if errors.Is(err, tools.ErrWait) {
+		} else if errors.Is(err, tools.ErrWait) || gr.Gated {
+			// The gate's own errors say whether it could not start or would not run the command.
 			gr.InfrastructureError = err.Error()
 		} else {
 			gr.InfrastructureError = "shell could not start: " + err.Error()

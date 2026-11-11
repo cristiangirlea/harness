@@ -198,7 +198,9 @@ runs ungated. It is off by default and in JSON is `command_gate` (a batch spec's
 list of check commands), in run options, batch specs/tasks and MCP run inputs. A run continued
 with `--continue` does not inherit it: pass `--gate` again. On claude and codex it needs `--mode yolo`
 and is refused otherwise; gemini, opencode and agy refuse it, since their commands do
-not reach the gate yet ([the design](terminal-through-the-gate.md)).
+not reach the gate yet ([the design](terminal-through-the-gate.md)). In a batch it also runs
+the spec's gate commands through the binary, under a policy with no guard rules
+([batches](batches.md#batches)).
 
 `--retrieval off|optional|required` opts into project references; enabled modes
 require `--retrieval-tenant`, `--retrieval-project`, `--retrieval-revision` and
