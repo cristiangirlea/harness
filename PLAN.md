@@ -287,6 +287,16 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-11: git reads recorded branches, commits and bases only as revisions (#909, PR #910).
+  In `internal/batch`, `followup`, `gc` and `ws`, every git call that takes a value from a
+  record, a spec or a worktree ends option parsing before it and the revision list after it. One
+  `branchRef` per package gives `refs/heads/<name>` or refuses an empty name or one starting with
+  `-`, and a branch's existence is asked with `show-ref --verify`, so a tag or an expression never
+  stands in for it. A batch merge takes the resolved commit; its message comes from `git
+  fmt-merge-msg` with the author credit lines removed, through a temporary file (`git merge -F -`
+  does not read stdin), and `GIT_REFLOG_ACTION` keeps the reflog's `merge <branch>`. `hrn ws take`
+  refuses `HEAD` and `@{-1}` and reads a base starting with `-` as a revision. Not covered: the
+  same kind of read in `internal/workmap`, `internal/runlog` and `internal/game`.
 - 2026-11-11: with `--gate` (`command_gate`) on, a batch's gate commands run through adanext-exec
   (#435 slice 7, PR #907), under the gate's timeout set to the task's `gate_timeout`, its tree
   kill and its audit line, with the attempt's run id. Gates are operator commands, so their
