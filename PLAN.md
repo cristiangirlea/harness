@@ -287,6 +287,18 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-11: with `--gate` (`command_gate`) on, a batch's gate commands run through adanext-exec
+  (#435 slice 7, PR #907), under the gate's timeout set to the task's `gate_timeout`, its tree
+  kill and its audit line, with the attempt's run id. Gates are operator commands, so their
+  policy allows every built-in rule (`WriteGatePolicy(true)`) and hrn's check for the gate's
+  approval flags is left out. The handshake runs once per task before the first attempt; a
+  missing or older gate ends the task before any agent runs. The agent runs before the gates and
+  could edit the policy, so hrn checks its SHA-256 before each gate command, as the codex gate
+  server does. A refusal, a command the gate did not run, a gate that cannot start or a changed
+  policy is an `infrastructure_error` with no retry; the record gains `gated: true`. Gate commands
+  share `--agent hrn` and the run id with the agent's own commands in the audit; a separate label
+  is a maintainer's call. Heavy-command slots are not used. Not checked: the real gate's tree kill
+  and audit line for gate commands, Linux or macOS. Slice 6 stays open.
 - 2026-11-10: watch shows the gate's record (#435 slice 5, PR #905), display only. A run's header
   says `ungated` without `--gate` or when the run ended before any command reached the gate,
   else `through adanext-exec` with the key its audit lines carry (`run_id` on api and codex,
