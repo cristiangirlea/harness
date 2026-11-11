@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -36,12 +37,24 @@ func Merge(ctx context.Context, res Result, only []string, squash bool) ([]Merge
 }
 
 func merge(ctx context.Context, res Result, only []string, squash bool, message string) ([]MergeResult, error) {
+	return mergeConfirmed(ctx, res, only, squash, message, "")
+}
+
+func mergeConfirmed(ctx context.Context, res Result, only []string, squash bool, message, confirmed string) ([]MergeResult, error) {
 	if res.Dir == "" {
 		return nil, fmt.Errorf("batch %s has no repository recorded", res.ID)
 	}
 	tasks, err := mergeTasks(res, only)
 	if err != nil {
 		return nil, err
+	}
+	for _, tr := range tasks {
+		if tr.Status != StatusPass || tr.Commit == "" {
+			continue
+		}
+		if _, err := branchRef(tr.Branch); err != nil {
+			return nil, fmt.Errorf("%s: %w", tr.ID, err)
+		}
 	}
 	common, err := gitOut(ctx, res.Dir, "rev-parse", "--git-common-dir")
 	if err != nil {
@@ -75,19 +88,28 @@ func merge(ctx context.Context, res Result, only []string, squash bool, message 
 	var out []MergeResult
 	for _, tr := range tasks {
 		mr := MergeResult{Task: tr.ID, Branch: tr.Branch, Before: before}
+		tip := confirmed
+		if tr.Status == StatusPass && tr.Commit != "" && tip == "" {
+			ref, _ := branchRef(tr.Branch)
+			tip, err = gitOut(ctx, res.Dir, "show-ref", "--hash", "--verify", "--", ref)
+			if err != nil {
+				mr.Error = err.Error()
+				return append(out, mr), fmt.Errorf("%s: %w", tr.ID, err)
+			}
+		}
 		switch {
 		case tr.Status != StatusPass:
 			mr.Skipped = "did not pass (" + string(tr.Status) + ")"
 		case tr.Commit == "":
 			mr.Skipped = "changed nothing"
-		case alreadyIn(ctx, res.Dir, tr.Branch):
+		case alreadyIn(ctx, res.Dir, tip):
 			mr.Skipped = "already merged"
 		}
 		if mr.Skipped != "" {
 			out = append(out, mr)
 			continue
 		}
-		commit, conflicted, err := mergeBranch(ctx, res.Dir, tr, squash, message)
+		commit, conflicted, err := mergeBranch(ctx, res.Dir, tr, tip, squash, message)
 		switch {
 		case errors.Is(err, errNothingStaged):
 			mr.Skipped = "already merged"
@@ -107,8 +129,8 @@ func merge(ctx context.Context, res Result, only []string, squash bool, message 
 	return out, nil
 }
 
-func alreadyIn(ctx context.Context, root, branch string) bool {
-	_, err := gitOut(ctx, root, "merge-base", "--is-ancestor", branch, "HEAD")
+func alreadyIn(ctx context.Context, root, tip string) bool {
+	_, err := gitOut(ctx, root, "merge-base", "--is-ancestor", "--end-of-options", tip, "HEAD")
 	return err == nil
 }
 
@@ -145,27 +167,53 @@ var mergeStep = func(ctx context.Context, g *agentGit, args ...string) (string, 
 var errNothingStaged = errors.New("nothing to commit")
 
 // Hook, identity and cancellation failures are not conflicts.
-func mergeBranch(ctx context.Context, root string, tr TaskResult, squash bool, message string) (commit string, conflicted bool, err error) {
+func mergeBranch(ctx context.Context, root string, tr TaskResult, tip string, squash bool, message string) (commit string, conflicted bool, err error) {
 	pre, err := gitOut(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		return "", false, err
-	}
-	tip, err := gitOut(ctx, root, "rev-parse", tr.Branch+"^{commit}")
-	if err != nil {
-		return "", false, err
-	}
-	args := []string{"merge", "--no-ff", "--no-edit", tr.Branch}
-	if squash {
-		args = []string{"merge", "--squash", tr.Branch}
-	} else if message != "" {
-		args = []string{"merge", "--no-ff", "-m", message, tr.Branch}
 	}
 	g, err := newRepoGit(ctx, root)
 	if err != nil {
 		return "", false, err
 	}
 	defer g.close()
-	if _, err := mergeStep(ctx, g, args...); err != nil {
+	args := []string{"merge", "--squash", "--end-of-options", tip}
+	if !squash {
+		// Let git retain its destination, shortlog and branch-description settings.
+		format := []string{"-c", "core.commentChar=#", "-c", "core.commentString=#", "fmt-merge-msg"}
+		if message != "" {
+			format = append(format, "-m", message)
+		}
+		formatted, err := g.stdoutIn(ctx, tip+"\t\tbranch '"+tr.Branch+"' of .\n", format...)
+		if err != nil {
+			return "", false, err
+		}
+		// Only generated credit lines differ from merge --no-edit; caller text stays intact.
+		generated := strings.TrimPrefix(formatted, message)
+		for _, line := range strings.SplitAfter(generated, "\n") {
+			if !strings.HasPrefix(line, "# By ") && !strings.HasPrefix(line, "# Via ") {
+				message += line
+			}
+		}
+		// A file keeps the message out of the command line an error quotes; merge -F does not read stdin.
+		file, err := os.CreateTemp("", "hrn-merge-msg-")
+		if err != nil {
+			return "", false, err
+		}
+		defer os.Remove(file.Name())
+		_, err = file.WriteString(message)
+		if err = errors.Join(err, file.Close()); err != nil {
+			return "", false, err
+		}
+		args = []string{"merge", "--no-ff", "--no-edit", "--no-log", "-F", file.Name(), "--end-of-options", tip}
+	}
+	pin := g.pin
+	if _, set := os.LookupEnv("GIT_REFLOG_ACTION"); !set {
+		g.pin = append(g.pin, "GIT_REFLOG_ACTION=merge "+tr.Branch)
+	}
+	_, err = mergeStep(ctx, g, args...)
+	g.pin = pin
+	if err != nil {
 		return failedMerge(g, root, pre, tip, squash, err)
 	}
 	if squash {
@@ -201,10 +249,10 @@ func readMergeReceipt(root, pre, tip string, squash bool) (commit string, unchan
 	if commit == pre {
 		return "", true, errors.New("merge did not advance HEAD")
 	}
-	parent, parentErr := gitOut(receiptCtx, root, "rev-parse", commit+"^1")
+	parent, parentErr := gitOut(receiptCtx, root, "rev-parse", "--verify", "--end-of-options", commit+"^1")
 	verified := parentErr == nil && parent == pre
 	if !squash {
-		second, e := gitOut(receiptCtx, root, "rev-parse", commit+"^2")
+		second, e := gitOut(receiptCtx, root, "rev-parse", "--verify", "--end-of-options", commit+"^2")
 		verified = verified && e == nil && second == tip
 	}
 	if !verified {
@@ -259,18 +307,7 @@ func MergeAt(ctx context.Context, res Result, task, commit string) ([]MergeResul
 	if head != commit {
 		return nil, fmt.Errorf("the branch moved")
 	}
-	copyRes := res
-	copyRes.Tasks = append([]TaskResult(nil), res.Tasks...)
-	for i := range copyRes.Tasks {
-		if copyRes.Tasks[i].ID == task {
-			copyRes.Tasks[i].Branch = head
-		}
-	}
-	out, err := merge(ctx, copyRes, []string{task}, false, "Merge branch '"+tr.Branch+"'")
-	for i := range out {
-		out[i].Branch = tr.Branch
-	}
-	return out, err
+	return mergeConfirmed(ctx, res, []string{task}, false, "Merge branch '"+tr.Branch+"'", head)
 }
 
 // BranchHead resolves a task branch to its current commit.
@@ -279,10 +316,14 @@ func BranchHead(ctx context.Context, res Result, task string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if res.Dir == "" || tr.Branch == "" {
+	ref, err := branchRef(tr.Branch)
+	if err != nil {
+		return "", err
+	}
+	if res.Dir == "" {
 		return "", fmt.Errorf("task has no repository or branch")
 	}
-	return gitOut(ctx, res.Dir, "rev-parse", "--verify", "refs/heads/"+tr.Branch+"^{commit}")
+	return gitOut(ctx, res.Dir, "show-ref", "--hash", "--verify", "--", ref)
 }
 
 // TargetBranch returns the currently checked-out branch in the batch repository.

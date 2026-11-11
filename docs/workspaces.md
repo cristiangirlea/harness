@@ -8,6 +8,14 @@ repository and rarely removes it, and each new folder builds its `target/` or
 instead, called slots, and hands them out one at a time. A slot keeps its build output
 from one task to the next.
 
+Branch selection uses exact local or remote-tracking refs, so a tag with the same
+name does not select a branch. A branch starting with `-` reports `"<name>" is not a
+valid branch name` before Git runs; omitting the branch still requests a detached slot.
+`HEAD` and checkout-history expressions such as `@{-1}` are refused before any slot is prepared.
+Bases are read only as revisions, including valid refs starting with `-`. Releasing
+a slot to a revision that cannot resolve reports `"<revision>" is not a commit` and
+keeps its lease.
+
 ```bash
 cd "$(hrn ws take --branch fix-x)"   # a slot on branch fix-x; only its path goes to stdout
 # ... work, commit, git push -u origin fix-x ...

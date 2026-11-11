@@ -289,8 +289,19 @@ func checkSubmoduleRepositories(ctx context.Context, wt, checked string) error {
 
 // Atomic compare-and-delete preserves a branch moved since merge proof.
 func deleteBranch(ctx context.Context, repo, branch, oid string) error {
-	_, err := gitOut(ctx, repo, "update-ref", "-d", "refs/heads/"+branch, oid)
+	ref, err := branchRef(branch)
+	if err != nil {
+		return err
+	}
+	_, err = gitOut(ctx, repo, "update-ref", "-d", "--", ref, oid)
 	return err
+}
+
+func branchRef(branch string) (string, error) {
+	if branch == "" || strings.HasPrefix(branch, "-") {
+		return "", fmt.Errorf("invalid recorded branch %q", branch)
+	}
+	return "refs/heads/" + branch, nil
 }
 
 // Recheck concurrent changes, including ignored files that git worktree remove would delete.
@@ -1131,7 +1142,7 @@ func isAncestor(ctx context.Context, repo, a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	_, err := gitOut(ctx, repo, "merge-base", "--is-ancestor", a, b)
+	_, err := gitOut(ctx, repo, "merge-base", "--is-ancestor", "--end-of-options", a, b)
 	return err == nil
 }
 
@@ -1139,7 +1150,7 @@ var maxCommits = 2000
 
 // Require the whole task diff to match one landed commit; incomplete comparisons prove nothing.
 func landedBatchChange(ctx context.Context, facts *repoFacts, head string) string {
-	base, err := gitOut(ctx, facts.repo, "merge-base", head, facts.def)
+	base, err := gitOut(ctx, facts.repo, "merge-base", "--end-of-options", head, facts.def)
 	if err != nil || base == "" {
 		return ""
 	}
@@ -1154,7 +1165,7 @@ func landedBatchChange(ctx context.Context, facts *repoFacts, head string) strin
 	if len(landed) == 0 {
 		return ""
 	}
-	taskDiff, err := gitStdout(ctx, facts.repo, "diff", "--no-ext-diff", "--no-textconv", "--submodule=short", "--binary", base, head)
+	taskDiff, err := gitStdout(ctx, facts.repo, "diff", "--no-ext-diff", "--no-textconv", "--submodule=short", "--binary", "--end-of-options", base, head, "--")
 	if err != nil || taskDiff == "" {
 		return ""
 	}
@@ -1176,11 +1187,11 @@ func landedBatchChange(ctx context.Context, facts *repoFacts, head string) strin
 
 // A change split over several landed commits, or inside a larger one, leaves the merge nothing to do.
 func mergeChangesNothing(ctx context.Context, facts *repoFacts, head string) bool {
-	base, err := gitOut(ctx, facts.repo, "merge-base", head, facts.def)
+	base, err := gitOut(ctx, facts.repo, "merge-base", "--end-of-options", head, facts.def)
 	if err != nil || base == "" {
 		return false
 	}
-	trees, err := gitOut(ctx, facts.repo, "rev-parse", base+"^{tree}", head+"^{tree}", facts.def+"^{tree}")
+	trees, err := gitOut(ctx, facts.repo, "rev-parse", "--revs-only", "--end-of-options", base+"^{tree}", head+"^{tree}", facts.def+"^{tree}", "--")
 	tree := strings.Fields(trees)
 	// A task that changed nothing proves nothing.
 	if err != nil || len(tree) != 3 || tree[0] == tree[1] {
@@ -1189,7 +1200,7 @@ func mergeChangesNothing(ctx context.Context, facts *repoFacts, head string) boo
 	// A rename moves a content merge to a path that only the other side changed.
 	var paths string
 	for _, tip := range []string{head, facts.def} {
-		changed, err := gitStdout(ctx, facts.repo, "diff", "--no-renames", "--name-only", "-z", base, tip)
+		changed, err := gitStdout(ctx, facts.repo, "diff", "--no-renames", "--name-only", "-z", "--end-of-options", base, tip, "--")
 		if err != nil {
 			return false
 		}
@@ -1212,14 +1223,14 @@ func mergeChangesNothing(ctx context.Context, facts *repoFacts, head string) boo
 	if v, err := gitOut(ctx, facts.repo, "config", "--default=", "--get", "merge.default"); err != nil || v != "" {
 		return false
 	}
-	merged, err := gitStdout(ctx, facts.repo, source, "merge-tree", "--write-tree", "--no-messages", facts.def, head)
+	merged, err := gitStdout(ctx, facts.repo, source, "merge-tree", "--write-tree", "--no-messages", "--end-of-options", facts.def, head)
 	return err == nil && strings.TrimSpace(merged) == tree[2]
 }
 
 type patchID struct{ id, commit string }
 
 var landedPatchIDs = func(ctx context.Context, repo, base, def string) []patchID {
-	countText, err := gitOut(ctx, repo, "rev-list", "--count", "--max-count="+strconv.Itoa(maxCommits), "--no-merges", base+".."+def)
+	countText, err := gitOut(ctx, repo, "rev-list", "--count", "--max-count="+strconv.Itoa(maxCommits), "--no-merges", "--end-of-options", base+".."+def, "--")
 	if err != nil {
 		return nil
 	}
@@ -1246,7 +1257,7 @@ var landedPatchIDs = func(ctx context.Context, repo, base, def string) []patchID
 func logPatchIDs(ctx context.Context, repo, base, def string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	log := gitCommand(ctx, repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+strconv.Itoa(maxCommits), base+".."+def)
+	log := gitCommand(ctx, repo, "log", "-p", "--no-ext-diff", "--no-textconv", "--submodule=short", "--no-merges", "--binary", "--format=commit %H", "--max-count="+strconv.Itoa(maxCommits), "--end-of-options", base+".."+def, "--")
 	// A descendant can retain stderr after git exits on Windows.
 	log.WaitDelay = time.Second
 	var logErr bytes.Buffer

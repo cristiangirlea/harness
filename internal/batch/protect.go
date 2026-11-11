@@ -80,7 +80,7 @@ func changedProtected(ctx context.Context, dir string, p protection) ([]string, 
 	}
 	defer g.close()
 	out, err := g.stdout(ctx, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff",
-		"--ignore-submodules=all", "--diff-filter=MDT", p.base, "--")
+		"--ignore-submodules=all", "--diff-filter=MDT", "--end-of-options", p.base, "--")
 	if err != nil {
 		return nil, err
 	}

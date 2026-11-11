@@ -225,7 +225,11 @@ func (s *taskRun) resolveRoute() (taskRoute, error) {
 	if d := firstNonZero(s.t.GateTimeout, s.spec.GateTimeout); d > 0 {
 		gateTimeout = time.Duration(d)
 	}
-	if _, err := gitOut(s.ctx, s.root, "rev-parse", "--verify", "--quiet", "refs/heads/"+s.tr.Branch); err == nil {
+	ref, err := branchRef(s.tr.Branch)
+	if err != nil {
+		return taskRoute{}, err
+	}
+	if _, err := gitOut(s.ctx, s.root, "show-ref", "--verify", "--quiet", "--", ref); err == nil {
 		return taskRoute{}, errors.New(takenError("branch", s.tr.Branch))
 	}
 	if !s.slots {
@@ -337,7 +341,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			switch {
 			case s.slots && s.slot != nil:
 				// The last attempt left nothing uncommitted, so -C drops only its commit; ignored build output stays.
-				if _, err := gitOut(s.ctx, s.slot.Path, "switch", "-q", "-C", s.tr.Branch, s.base); err != nil {
+				if _, err := gitOut(s.ctx, s.slot.Path, "switch", "-q", "-C", s.tr.Branch, "--end-of-options", s.base); err != nil {
 					return s.fail(err)
 				}
 			case s.slots:

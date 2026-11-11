@@ -2824,3 +2824,214 @@ func TestCleanupFailureReportsOneInfoEventWithoutFailingAttempt(t *testing.T) {
 		t.Errorf("cleanup info events = %d; events = %+v", count, events)
 	}
 }
+
+func TestGitStdoutInKeepsWarningsOutOfTheValue(t *testing.T) {
+	dir := initRepo(t)
+	head := git(t, dir, "rev-parse", "HEAD")
+	git(t, dir, "branch", "dup")
+	git(t, dir, "tag", "dup")
+	g, err := newRepoGit(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.close()
+	// git warns on stderr that dup names both a branch and a tag.
+	got, err := g.stdoutIn(context.Background(), "", "rev-parse", "dup")
+	if err != nil || strings.TrimSpace(got) != head {
+		t.Errorf("stdoutIn = %q, %v; want only %s", got, err, head)
+	}
+}
+
+func TestMergeRefusesAnEmptyOrOptionRecordedBranch(t *testing.T) {
+	for _, branch := range []string{"", "--ff"} {
+		for _, squash := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%q/squash=%v", branch, squash), func(t *testing.T) {
+				dir := initRepo(t)
+				res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+				before := git(t, dir, "rev-parse", "HEAD")
+				current := git(t, dir, "branch", "--show-current")
+				git(t, dir, "config", "branch."+current+".remote", ".")
+				git(t, dir, "config", "branch."+current+".merge", "refs/heads/"+res.Tasks[0].Branch)
+				res.Tasks[0].Branch = branch
+				merged, err := Merge(context.Background(), res, nil, squash)
+				if err == nil || !strings.Contains(err.Error(), "invalid recorded branch") {
+					t.Errorf("Merge = %+v, %v; want an invalid recorded branch error", merged, err)
+				}
+				if head := git(t, dir, "rev-parse", "HEAD"); head != before {
+					t.Errorf("HEAD moved from %s to %s", before, head)
+				}
+				if status := git(t, dir, "status", "--porcelain"); status != "" {
+					t.Errorf("merge left changes: %s", status)
+				}
+			})
+		}
+	}
+}
+
+func TestMergeUsesTheRecordedBranchWhenATagHasTheSameName(t *testing.T) {
+	for _, tagAtBase := range []bool{false, true} {
+		for _, squash := range []bool{false, true} {
+			t.Run(fmt.Sprintf("tagAtBase=%v/squash=%v", tagAtBase, squash), func(t *testing.T) {
+				dir := initRepo(t)
+				res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+				tag := res.Base
+				if !tagAtBase {
+					tag = git(t, dir, "commit-tree", res.Base+"^{tree}", "-p", res.Base, "-m", "other commit")
+				}
+				git(t, dir, "tag", res.Tasks[0].Branch, tag)
+				merged, err := Merge(context.Background(), res, nil, squash)
+				if err != nil || len(merged) != 1 || merged[0].Commit == "" || merged[0].Skipped != "" {
+					t.Fatalf("Merge = %+v, %v", merged, err)
+				}
+				if got := git(t, dir, "rev-parse", "HEAD^{tree}"); got != git(t, dir, "rev-parse", res.Tasks[0].Commit+"^{tree}") {
+					t.Error("merge did not take the branch's tree")
+				}
+				if !squash && git(t, dir, "rev-parse", "HEAD^2") != res.Tasks[0].Commit {
+					t.Error("merge did not take the branch's commit")
+				}
+				if want := "Merge branch '" + res.Tasks[0].Branch + "'"; !squash && git(t, dir, "log", "-1", "--format=%s") != want {
+					t.Errorf("merge subject = %q, want %q", git(t, dir, "log", "-1", "--format=%s"), want)
+				}
+			})
+		}
+	}
+}
+
+func TestMergeKeepsGitsConfiguredMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		destination string
+		suppress    bool
+		log         bool
+		description bool
+	}{
+		{name: "destination", destination: "feature"},
+		{name: "suppressed destination", destination: "feature", suppress: true},
+		{name: "shortlog", log: true},
+		{name: "branch description", log: true, description: true},
+		{name: "destination with shortlog and description", destination: "feature", log: true, description: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+			branch := res.Tasks[0].Branch
+			git(t, dir, "config", "merge.log", fmt.Sprint(tc.log))
+			git(t, dir, "config", "merge.branchdesc", fmt.Sprint(tc.description))
+			git(t, dir, "config", "merge.suppressDest", "main")
+			git(t, dir, "config", "branch."+branch+".description", "The task branch description.")
+			if tc.destination != "" {
+				git(t, dir, "switch", "-q", "-c", tc.destination)
+			}
+			if tc.suppress {
+				git(t, dir, "config", "--add", "merge.suppressDest", tc.destination)
+			}
+			subject := git(t, dir, "log", "-1", "--format=%s", "refs/heads/"+branch, "--")
+			merged, err := Merge(context.Background(), res, nil, false)
+			if err != nil || len(merged) != 1 || merged[0].Commit == "" || merged[0].Skipped != "" {
+				t.Fatalf("Merge = %+v, %v", merged, err)
+			}
+			message := git(t, dir, "log", "-1", "--format=%B")
+			want := "Merge branch '" + branch + "'"
+			if tc.destination != "" && !tc.suppress {
+				want += " into " + tc.destination
+			}
+			if got, _, _ := strings.Cut(message, "\n"); got != want {
+				t.Errorf("merge subject = %q, want %q", got, want)
+			}
+			if tc.log {
+				if label := "* " + branch + ":\n"; strings.Count(message, label) != 1 {
+					t.Errorf("merge message must contain one short branch label %q:\n%s", label, message)
+				}
+				if strings.Count(message, "\n  "+subject) != 1 || strings.Contains(message, "refs/heads/") {
+					t.Errorf("merge message must contain the shortlog once without a full ref:\n%s", message)
+				}
+			}
+			if tc.description && !strings.Contains(message, "The task branch description.") {
+				t.Errorf("merge message lost the branch description:\n%s", message)
+			}
+		})
+	}
+}
+
+func TestMergeRequiresTheExactRecordedBranchRef(t *testing.T) {
+	for _, revision := range []bool{false, true} {
+		t.Run(fmt.Sprintf("revision=%v", revision), func(t *testing.T) {
+			dir := initRepo(t)
+			res := mergeable(t, dir, Task{ID: "alpha", Prompt: "alpha"})
+			before := git(t, dir, "rev-parse", "HEAD")
+			if revision {
+				res.Tasks[0].Branch += "~1"
+			} else {
+				git(t, dir, "tag", "refs/heads/hrn/missing", res.Tasks[0].Commit)
+				res.Tasks[0].Branch = "hrn/missing"
+			}
+			if merged, err := Merge(context.Background(), res, nil, false); err == nil {
+				t.Errorf("Merge = %+v; want a missing branch error", merged)
+			}
+			if head := git(t, dir, "rev-parse", "HEAD"); head != before {
+				t.Errorf("HEAD moved to %s", head)
+			}
+		})
+	}
+}
+
+func TestRemoveRefusesAnEmptyOrOptionRecordedBranch(t *testing.T) {
+	for _, remove := range []struct {
+		name string
+		call func(string, TaskResult) error
+	}{{"slot", removeSlotBranch}, {"worktree", removeWorktree}} {
+		for _, branch := range []string{"", "--force"} {
+			t.Run(remove.name+"/"+branch, func(t *testing.T) {
+				dir := initRepo(t)
+				wt := t.TempDir()
+				if branch != "" {
+					git(t, dir, "update-ref", "refs/heads/"+branch, "HEAD")
+				}
+				err := remove.call(dir, TaskResult{Branch: branch, Worktree: wt})
+				if err == nil || !strings.Contains(err.Error(), "invalid recorded branch") {
+					t.Errorf("remove = %v; want an invalid recorded branch error", err)
+				}
+				if _, err := os.Stat(wt); err != nil {
+					t.Errorf("worktree directory was removed: %v", err)
+				}
+				if branch != "" {
+					git(t, dir, "show-ref", "--verify", "--", "refs/heads/"+branch)
+				}
+			})
+		}
+	}
+}
+
+func TestAgentCommitReadsARevisionRangeEvenWhenAFileHasItsName(t *testing.T) {
+	dir := initRepo(t)
+	base := git(t, dir, "rev-parse", "HEAD")
+	git(t, dir, "switch", "-q", "-c", "task")
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "task")
+	head := git(t, dir, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(dir, head+".."+base), []byte("file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sha, note, err := agentCommit(dir, "task", base)
+	if err != nil || sha != head || note != "" {
+		t.Fatalf("agentCommit = %q, %q, %v; want %s", sha, note, err, head)
+	}
+}
+
+func TestDiffRefusesAnOptionAsARecordedCommit(t *testing.T) {
+	dir := initRepo(t)
+	written := filepath.Join(t.TempDir(), "written")
+	res := Result{Dir: dir, Base: "HEAD", Tasks: []TaskResult{{ID: "task", Commit: "--output=" + written}}}
+	if _, _, err := Diff(context.Background(), res, "task"); err == nil {
+		t.Error("Diff accepted an option as a recorded commit")
+	}
+	for _, path := range []string{written, written + "^{commit}"} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("git wrote %s (%v)", path, err)
+		}
+	}
+	git(t, dir, "update-ref", "refs/heads/-commit", "HEAD")
+	res.Tasks[0].Commit = "-commit"
+	if _, _, err := Diff(context.Background(), res, "task"); err != nil {
+		t.Errorf("Diff of a commit named -commit: %v", err)
+	}
+}

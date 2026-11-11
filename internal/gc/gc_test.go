@@ -1816,3 +1816,36 @@ func TestGCKeepsRunningCandidateWorktree(t *testing.T) {
 	saveBatch(t, "candidate-owner", f.repo, batch.TaskResult{ID: "parent", Status: batch.StatusRunning, Candidates: []batch.RetryCandidate{{Worktree: candidate, BranchMade: true}}})
 	wantVerdict(t, find(t, f.scan(), candidate), Keep, "still running")
 }
+
+func TestGCReadsRevisionsEvenWhenFilesHaveTheirNames(t *testing.T) {
+	for _, command := range []string{"diff", "rev-list", "log"} {
+		t.Run(command, func(t *testing.T) {
+			f := newFixture(t)
+			base := git(t, f.repo, "rev-parse", "HEAD")
+			_, head := f.worktree("task", "hrn/task")
+			git(t, f.repo, "merge", "--squash", "refs/heads/hrn/task")
+			git(t, f.repo, "commit", "-q", "-m", "landed task")
+			def := git(t, f.repo, "rev-parse", "HEAD")
+			switch command {
+			case "diff":
+				f.write(f.repo, base, "base file\n")
+				f.write(f.repo, head, "head file\n")
+				if got := landedBatchChange(context.Background(), &repoFacts{repo: f.repo, def: def}, head); got != def {
+					t.Fatalf("landedBatchChange = %q, want %s", got, def)
+				}
+			case "rev-list":
+				f.write(f.repo, base+".."+def, "range file\n")
+				if got := landedPatchIDs(context.Background(), f.repo, base, def); len(got) != 1 || got[0].commit != def {
+					t.Fatalf("landedPatchIDs = %+v, want commit %s", got, def)
+				}
+			case "log":
+				f.write(f.repo, base+".."+def, "range file\n")
+				got, err := logPatchIDs(context.Background(), f.repo, base, def)
+				fields := strings.Fields(got)
+				if err != nil || len(fields) != 2 || fields[1] != def {
+					t.Fatalf("logPatchIDs = %q, %v; want commit %s", got, err, def)
+				}
+			}
+		})
+	}
+}

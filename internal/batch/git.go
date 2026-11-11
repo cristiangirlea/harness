@@ -18,6 +18,13 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
+func branchRef(branch string) (string, error) {
+	if branch == "" || strings.HasPrefix(branch, "-") {
+		return "", fmt.Errorf("invalid recorded branch %q", branch)
+	}
+	return "refs/heads/" + branch, nil
+}
+
 // Agents start at HEAD and cannot see tracked edits.
 func checkClean(ctx context.Context, root string) error {
 	lines, err := dirtyPaths(ctx, root, false)
@@ -38,6 +45,10 @@ func checkClean(ctx context.Context, root string) error {
 
 // Commit despite cancellation to leave a consistent branch; note says why off-branch work must stay in the worktree.
 func commitChanges(wt, branch, message string) (sha, note string, err error) {
+	ref, err := branchRef(branch)
+	if err != nil && branch != "" {
+		return "", "", err
+	}
 	if _, err := os.Stat(wt); err != nil {
 		return "", "", nil
 	}
@@ -68,7 +79,7 @@ func commitChanges(wt, branch, message string) (sha, note string, err error) {
 			if status != "" {
 				return "", "work left uncommitted in the worktree: " + where, nil
 			}
-			refs, err := g.stdout(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/"+branch)
+			refs, err := g.stdout(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "--", ref)
 			if err != nil {
 				return "", "", err
 			}
@@ -79,7 +90,7 @@ func commitChanges(wt, branch, message string) (sha, note string, err error) {
 				}
 				// Only a confirmed unborn branch can have no HEAD commit.
 				headRef := "refs/heads/" + head
-				headRefs, refErr := g.stdout(ctx, "for-each-ref", "--format=%(refname)", headRef)
+				headRefs, refErr := g.stdout(ctx, "for-each-ref", "--format=%(refname)", "--", headRef)
 				if refErr != nil || slices.Contains(strings.Split(headRefs, "\n"), headRef) {
 					return "", "", err
 				}
@@ -113,6 +124,10 @@ func commitChanges(wt, branch, message string) (sha, note string, err error) {
 
 // gitTips is the task branch's tip and HEAD's commit, so a commit off the branch shows too; "" without a worktree.
 func gitTips(wt, branch string) (string, error) {
+	ref, err := branchRef(branch)
+	if err != nil && branch != "" {
+		return "", err
+	}
 	if _, err := os.Stat(wt); err != nil || branch == "" {
 		return "", err
 	}
@@ -123,7 +138,7 @@ func gitTips(wt, branch string) (string, error) {
 		return "", err
 	}
 	defer g.close()
-	out, err := g.stdout(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/"+branch)
+	out, err := g.stdout(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "--", ref)
 	if err != nil {
 		return "", err
 	}
@@ -142,6 +157,10 @@ func gitTips(wt, branch string) (string, error) {
 // and left nothing for commitChanges, or "" while the branch is still at the base;
 // note says why a moved tip was left out. A commit on no branch is never taken.
 func agentCommit(wt, branch, base string) (sha, note string, err error) {
+	ref, err := branchRef(branch)
+	if err != nil && branch != "" {
+		return "", "", err
+	}
 	if _, err := os.Stat(wt); err != nil || branch == "" || base == "" {
 		return "", "", nil
 	}
@@ -153,7 +172,7 @@ func agentCommit(wt, branch, base string) (sha, note string, err error) {
 	}
 	defer g.close()
 	// for-each-ref matches descendants too; require the exact ref.
-	out, err := g.stdout(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/"+branch)
+	out, err := g.stdout(ctx, "for-each-ref", "--format=%(refname) %(objectname)", "--", ref)
 	if err != nil {
 		return "", "", err
 	}
@@ -163,7 +182,7 @@ func agentCommit(wt, branch, base string) (sha, note string, err error) {
 			continue
 		}
 		// A tip that dropped the base would revert it when merged.
-		missing, err := g.stdout(ctx, "rev-list", "--count", head+".."+base)
+		missing, err := g.stdout(ctx, "rev-list", "--count", "--end-of-options", head+".."+base, "--")
 		if err != nil {
 			return "", "", err
 		}
@@ -285,6 +304,11 @@ func (g *agentGit) in(ctx context.Context, stdin string, args ...string) (string
 
 func (g *agentGit) stdout(ctx context.Context, args ...string) (string, error) {
 	return gitStdoutEnv(ctx, g.dir, g.env(ctx), args...)
+}
+
+// Untranslated wording keeps a value git prints the same on every machine.
+func (g *agentGit) stdoutIn(ctx context.Context, stdin string, args ...string) (string, error) {
+	return gitStdoutIn(ctx, g.dir, append(g.env(ctx), "LC_ALL=C", "LANGUAGE="), stdin, args...)
 }
 
 // Rescan: agent descendants can install filters between commands.
@@ -424,7 +448,7 @@ func Diff(ctx context.Context, res Result, taskID string) (diff string, untracke
 	}
 	if tr.Commit != "" {
 		// Branch removal permits commit collection; explain "bad object".
-		if _, err := gitOut(ctx, res.Dir, "cat-file", "-e", tr.Commit+"^{commit}"); err != nil {
+		if _, err := gitOut(ctx, res.Dir, "cat-file", "-e", "--", tr.Commit+"^{commit}"); err != nil {
 			return "", nil, fmt.Errorf("task %s: commit %s is no longer in %s, so its branch was removed",
 				taskID, tools.ShortSHA(tr.Commit), res.Dir)
 		}
@@ -476,7 +500,7 @@ func CheckoutTree(ctx context.Context, repo, commit, dir string) error {
 	env := append(g.env(ctx), "GIT_INDEX_FILE="+filepath.Join(scratch, "index"), "GIT_WORK_TREE="+dir)
 	// Block fsmonitor and aliases like GIT~1 that could overwrite .git.
 	guard := []string{"-c", "core.fsmonitor=false", "-c", "core.protectNTFS=true", "-c", "core.protectHFS=true"}
-	if _, err := gitOutEnv(ctx, g.dir, env, "", append(slices.Clone(guard), "read-tree", commit+"^{tree}")...); err != nil {
+	if _, err := gitOutEnv(ctx, g.dir, env, "", append(slices.Clone(guard), "read-tree", "--", commit+"^{tree}")...); err != nil {
 		return err
 	}
 	_, err = gitOutEnv(ctx, g.dir, env, "", append(guard, "checkout-index", "-a")...)
@@ -516,9 +540,14 @@ func gitStdout(ctx context.Context, dir string, args ...string) (string, error) 
 }
 
 func gitStdoutEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
+	return gitStdoutIn(ctx, dir, env, "", args...)
+}
+
+func gitStdoutIn(ctx context.Context, dir string, env []string, stdin string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	nowindow.Set(cmd)
 	cmd.Env = append(gitenv.WithoutRepoVars(cmd.Environ()), env...)
+	cmd.Stdin = strings.NewReader(stdin)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

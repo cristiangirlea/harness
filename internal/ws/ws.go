@@ -114,6 +114,11 @@ func Take(ctx context.Context, opt TakeOptions) (Taken, error) {
 }
 
 func take(ctx context.Context, opt TakeOptions) (Taken, error) {
+	if opt.Branch != "" {
+		if _, err := branchRef(opt.Branch); err != nil {
+			return Taken{}, err
+		}
+	}
 	if opt.Repo == "" {
 		opt.Repo = "."
 	}
@@ -138,13 +143,8 @@ func take(ctx context.Context, opt TakeOptions) (Taken, error) {
 	if opt.Max > limit.Max {
 		return Taken{}, &MaxError{Max: opt.Max, Limit: limit}
 	}
-	for _, v := range []string{opt.Branch, opt.Base} {
-		if strings.HasPrefix(v, "-") {
-			return Taken{}, fmt.Errorf("%q is not a branch or ref", v)
-		}
-	}
 	if opt.Branch != "" {
-		if _, err := gitOut(ctx, main, "check-ref-format", "--branch", opt.Branch); err != nil {
+		if name, err := gitOut(ctx, main, "check-ref-format", "--branch", opt.Branch); err != nil || name != opt.Branch {
 			return Taken{}, fmt.Errorf("%q is not a valid branch name", opt.Branch)
 		}
 	}
@@ -292,15 +292,19 @@ func fetchRemote(ctx context.Context, main, name string, notes *[]string) (strin
 func planSwitch(ctx context.Context, main, base string, opt TakeOptions, notes *[]string) ([]string, error) {
 	b := opt.Branch
 	if b == "" {
-		return []string{"switch", "--detach", base}, nil
+		return []string{"switch", "--detach", "--end-of-options", base}, nil
 	}
-	if _, err := commitOf(ctx, main, "refs/heads/"+b); err == nil {
-		return []string{"switch", b}, nil
+	ref, err := branchRef(b)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := gitOut(ctx, main, "show-ref", "--verify", "--quiet", "--", ref); err == nil {
+		return []string{"switch", "--no-guess", "--end-of-options", b}, nil
 	}
 	if hasOrigin(ctx, main) {
 		remote := "refs/remotes/origin/" + b
 		if !opt.NoFetch {
-			out, err := gitOut(ctx, main, "ls-remote", "--heads", "origin", "refs/heads/"+b)
+			out, err := gitOut(ctx, main, "ls-remote", "--heads", "--", "origin", ref)
 			if err != nil {
 				return nil, fmt.Errorf("asking origin for branch %s (--no-fetch uses what is already fetched): %w", b, err)
 			}
@@ -310,11 +314,18 @@ func planSwitch(ctx context.Context, main, base string, opt TakeOptions, notes *
 				}
 			}
 		}
-		if _, err := commitOf(ctx, main, remote); err == nil {
-			return []string{"switch", "--track", "-c", b, remote}, nil
+		if _, err := gitOut(ctx, main, "show-ref", "--verify", "--quiet", "--", remote); err == nil {
+			return []string{"switch", "--track", "-c", b, "--end-of-options", remote}, nil
 		}
 	}
-	return []string{"switch", "-c", b, base}, nil
+	return []string{"switch", "-c", b, "--end-of-options", base}, nil
+}
+
+func branchRef(branch string) (string, error) {
+	if branch == "" || strings.HasPrefix(branch, "-") {
+		return "", fmt.Errorf("%q is not a valid branch name", branch)
+	}
+	return "refs/heads/" + branch, nil
 }
 
 func hasOrigin(ctx context.Context, main string) bool {
@@ -323,7 +334,7 @@ func hasOrigin(ctx context.Context, main string) bool {
 }
 
 func commitOf(ctx context.Context, dir, ref string) (string, error) {
-	return gitOut(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	return gitOut(ctx, dir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
 }
 
 var beforeTakeoverLock func()
@@ -497,7 +508,7 @@ func prepare(ctx context.Context, main, path, base string) (skip string, err err
 			return "", err
 		}
 		defer unlock()
-		if _, err := gitOut(ctx, main, "worktree", "add", "--detach", path, base); err != nil {
+		if _, err := gitOut(ctx, main, "worktree", "add", "--detach", "--", path, base); err != nil {
 			return err.Error(), nil
 		}
 		_, err = gitOut(ctx, main, "worktree", "lock", "--reason", lockReason, path)
@@ -610,7 +621,7 @@ func TryLock(p string) (unlock func(), ok bool, err error) {
 
 // Local branches and tags preserve commits across switches without a push.
 func stranded(ctx context.Context, dir string) (int, error) {
-	out, err := gitOut(ctx, dir, "rev-list", "--count", "HEAD", "--not", "--remotes", "--branches", "--tags")
+	out, err := gitOut(ctx, dir, "rev-list", "--count", "--not", "--remotes", "--branches", "--tags", "--not", "--end-of-options", "HEAD", "--")
 	if err != nil {
 		if unbornHEAD(ctx, dir) {
 			return 0, nil
@@ -769,7 +780,7 @@ func Free(ctx context.Context, path string) (Taken, error) {
 		if err != nil {
 			return Taken{}, err
 		}
-		detach = append(detach, base)
+		detach = append(detach, "--end-of-options", base)
 	}
 	if _, err := gitOut(ctx, slot, detach...); err != nil {
 		return Taken{}, err
@@ -783,8 +794,12 @@ func Free(ctx context.Context, path string) (Taken, error) {
 // Release detaches t's clean slot at detachAt (empty: HEAD), removing only its exact lease under lock.
 // Local branches preserve unpushed batch results; stranded commits prevent release.
 func Release(ctx context.Context, t Taken, detachAt string) error {
-	if strings.HasPrefix(detachAt, "-") {
-		return fmt.Errorf("%q is not a commit", detachAt)
+	if detachAt != "" {
+		commit, err := commitOf(ctx, t.Path, detachAt)
+		if err != nil {
+			return fmt.Errorf("%q is not a commit", detachAt)
+		}
+		detachAt = commit
 	}
 	main, err := MainCheckout(ctx, t.Path)
 	if err != nil {
@@ -836,7 +851,7 @@ func Release(ctx context.Context, t Taken, detachAt string) error {
 	}
 	detach := []string{"switch", "--detach"}
 	if detachAt != "" {
-		detach = append(detach, detachAt)
+		detach = append(detach, "--end-of-options", detachAt)
 	}
 	if _, err := gitOut(ctx, slot, detach...); err != nil {
 		return err
@@ -853,12 +868,13 @@ func unpushed(ctx context.Context, dir string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	args := []string{"rev-list", "--count", "HEAD", "--not"}
+	args := []string{"rev-list", "--count", "--not"}
 	if remotes != "" {
 		args = append(args, "--remotes")
 	} else {
 		args = append(args, "--branches", "--tags")
 	}
+	args = append(args, "--not", "--end-of-options", "HEAD", "--")
 	out, err := gitOut(ctx, dir, args...)
 	if err != nil {
 		if unbornHEAD(ctx, dir) {

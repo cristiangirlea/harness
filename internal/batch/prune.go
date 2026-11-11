@@ -51,8 +51,12 @@ func WorktreesRemain(res Result) bool {
 			}
 		}
 		if branchOnly(t) {
+			ref, err := branchRef(t.Branch)
+			if err != nil {
+				return true
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			_, err := gitOut(ctx, res.Dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+t.Branch)
+			_, err = gitOut(ctx, res.Dir, "show-ref", "--verify", "--quiet", "--", ref)
 			cancel()
 			if err == nil {
 				return true

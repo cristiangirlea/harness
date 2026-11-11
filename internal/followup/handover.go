@@ -109,7 +109,7 @@ func changes(dir, base string) string {
 	if err != nil {
 		return fmt.Sprintf("%s(git config could not be read, so no diff was taken: %s)\n", title, clipTo(err.Error(), 200))
 	}
-	stat, err := git(dir, off, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "--stat", ref, "--")
+	stat, err := git(dir, off, "diff", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "--stat", "--end-of-options", ref, "--")
 	if err != nil {
 		return fmt.Sprintf("%s(git diff failed: %s)\n", title, clipTo(err.Error(), 200))
 	}

@@ -45,7 +45,7 @@ func Run(ctx context.Context, spec Spec, notify func(Event)) (Result, error) {
 		return Result{}, err
 	}
 	if spec.Base != "" {
-		if base, err = gitOut(ctx, root, "rev-parse", "--verify", "--quiet", spec.Base+"^{commit}"); err != nil {
+		if base, err = gitOut(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", spec.Base+"^{commit}"); err != nil {
 			return Result{}, fmt.Errorf("base %s: %w", spec.Base, err)
 		}
 	}
