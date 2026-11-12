@@ -261,6 +261,19 @@ func originalsCap(name string, def int64) int64 {
 	return def
 }
 
+// GateShapeArgs are the gate's flags that shape a command's output into runDir's originals under
+// hrn's caps and threshold; none when the run keeps no originals, since the gate takes no zero cap.
+func GateShapeArgs(runDir string) []string {
+	runCap := originalsCap("HRN_ORIGINALS_RUN_MAX", defaultOriginalsRunMax)
+	allCap := originalsCap("HRN_ORIGINALS_MAX", defaultOriginalsMax)
+	if runDir == "" || runCap == 0 || allCap == 0 {
+		return nil
+	}
+	return []string{"--shape", "--originals", filepath.Join(runDir, "originals"), "--originals-root", runpaths.Root(),
+		"--originals-max", strconv.FormatInt(runCap, 10), "--originals-all-max", strconv.FormatInt(allCap, 10),
+		"--output-cap", strconv.Itoa(maxOutput)}
+}
+
 // CopyOriginals copies from's hash-named originals into to past the caps, since the
 // continued conversation already cites them; it counts the files it skips.
 func CopyOriginals(from, to string) (copied, skipped int, err error) {

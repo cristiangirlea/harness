@@ -3,8 +3,8 @@
 [← README](../README.md)
 
 Status: proposed 2026-10-20 for issue #435 and approved 2026-10-31, to be built slice by slice
-in the order below, each its own pull request. Slices 1 to 5 are built
-([the command gate](permissions.md#the-command-gate)); the others are not. The gate is
+in the order below, each its own pull request. All seven slices are built
+([the command gate](permissions.md#the-command-gate)). The gate is
 [adanext-exec](https://github.com/cristiangirlea/adanext-exec); its design and build happen there.
 
 ## The goal
@@ -252,6 +252,17 @@ default off) until a maintainer turns it on.
    --range`, itself run through the gate). The sentence in
    [commands](commands.md) that the flag does not change CLI backend tools becomes the list of
    combinations it does reach.
+   *Built* with these differences. Only claude's route changed: api and codex's gate tool already
+   shaped what the gate returned with hrn's summarizer, which they keep; the gate's own copy
+   shapes claude's commands. That makes two copies, since harness calls the gate's binary and
+   never imports its code. On claude the gate's hook gets `--shape`, the run's
+   `originals` directory, the runs directory as `--originals-root`, hrn's caps and its 30,000-byte
+   threshold; the gate writes the same `<handle>.txt` files hrn does. A run whose caps keep no
+   original, or that has no record directory, is not shaped. The hook is asked once with those
+   flags before claude starts, so a gate from before shaping ends the run there. The live check
+   ran the gate from adanext-exec main without a model: a 154 KB test log came back as a 235-byte
+   summary that kept the failing test, its original read back whole in six ranges, and a range
+   past the bound was refused. claude's own run with `--shape-tools` waits for a maintainer's yes.
 7. **Batch gates through the gate** (needs M1, M3). An operator profile with no guard rules, as
    today, gaining the timeout, tree kill and audit; heavy-command slots when M4 lands.
    *Built* with these differences. The operator profile is a `--policy` file like slice 2's

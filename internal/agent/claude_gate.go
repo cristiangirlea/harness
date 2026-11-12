@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -42,10 +43,14 @@ func claudeGateRoute(ctx context.Context, t Task, gate, policy string) ([]string
 	if t.Mode != ModeYolo {
 		return nil, nil, fmt.Errorf("gate: on the claude backend it needs --mode yolo: the hook's allow skips Claude Code's own permission mode, so plan, default and acceptEdits would run what they should not (mode %q)", t.Mode)
 	}
-	if err := checkClaudeGateHook(ctx, t, gate, policy); err != nil {
+	var shape []string
+	if t.ShapeTools {
+		shape = tools.GateShapeArgs(t.RunDir)
+	}
+	if err := checkClaudeGateHook(ctx, t, gate, policy, shape); err != nil {
 		return nil, nil, err
 	}
-	settings, err := claudeGateSettings(gate, policy, t.AllowDangerous)
+	settings, err := claudeGateSettings(gate, policy, t.AllowDangerous, shape)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -72,10 +77,10 @@ func claudeGateRoute(ctx context.Context, t Task, gate, policy string) ([]string
 
 // checkClaudeGateHook asks the hook once, since a binary from before the hook answers the protocol
 // handshake and its run would only stop at the first command, with the plan already spent.
-func checkClaudeGateHook(ctx context.Context, t Task, gate, policy string) error {
+func checkClaudeGateHook(ctx context.Context, t Task, gate, policy string, shape []string) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, gate, "hook", "claude-code", "--policy", policy)
+	cmd := exec.CommandContext(ctx, gate, append([]string{"hook", "claude-code", "--policy", policy}, shape...)...)
 	cmd.Dir = t.Dir
 	cmd.Env = envpolicy.Filter(gitenv.WithoutRepoVars(append(os.Environ(), t.ChildEnv...)))
 	cmd.Stdin = strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git status","timeout":1000}}`)
@@ -91,13 +96,16 @@ func checkClaudeGateHook(ctx context.Context, t Task, gate, policy string) error
 	// A refusal of the probe shows no rewrite, so it says nothing about the timeout.
 	case !a.denied && !a.timed:
 		return fmt.Errorf("gate: the Claude Code hook of %s does not carry a call's timeout; it is older than this hrn", gate)
+	// A hook from before shaping refuses the flags rather than ignoring them.
+	case len(shape) > 0 && (a.denied && strings.Contains(a.reason, "the hook's arguments") || !a.denied && !a.shaped):
+		return fmt.Errorf("gate: the Claude Code hook of %s cannot shape output for --shape-tools (%s); it is older than this hrn", gate, cmp.Or(a.reason, "its rewrite does not shape"))
 	}
 	return nil
 }
 
 // claudeGateSettings holds hooks and nothing else, since claude merges --settings over the user's own.
 // hrn's guard is a hook of its own because a rewritten command no longer matches its deny rules.
-func claudeGateSettings(gate, policy string, allowDangerous bool) ([]byte, error) {
+func claudeGateSettings(gate, policy string, allowDangerous bool, shape []string) ([]byte, error) {
 	type hook struct {
 		Type    string `json:"type"`
 		Command string `json:"command"`
@@ -110,7 +118,11 @@ func claudeGateSettings(gate, policy string, allowDangerous bool) ([]byte, error
 	command := func(exe, args string) hook {
 		return hook{"command", tools.PosixQuote(filepath.ToSlash(exe)) + " " + args + " || exit 2"}
 	}
-	hooks := []hook{command(gate, "hook claude-code --policy "+tools.PosixQuote(filepath.ToSlash(policy)))}
+	gateArgs := "hook claude-code --policy " + tools.PosixQuote(filepath.ToSlash(policy))
+	for _, a := range shape {
+		gateArgs += " " + tools.PosixQuote(filepath.ToSlash(a))
+	}
+	hooks := []hook{command(gate, gateArgs)}
 	if !allowDangerous {
 		self, err := os.Executable()
 		if err != nil {
@@ -274,8 +286,8 @@ var gateRewriteUnquote = map[string]*strings.Replacer{
 // gateAnswerRead is what one hook's answer says: the gate's own, with the command an allow carries,
 // or another hook's rewrite of the command.
 type gateAnswerRead struct {
-	answered, denied, rewritten, timed bool
-	command                            string
+	answered, denied, rewritten, timed, shaped bool
+	command, reason                            string
 }
 
 func readGateAnswer(tool, stdout, gate, policy string) gateAnswerRead {
@@ -292,7 +304,7 @@ func readGateAnswer(tool, stdout, gate, policy string) gateAnswerRead {
 		return gateAnswerRead{}
 	}
 	if a.Specific.Decision == "deny" {
-		return gateAnswerRead{answered: strings.HasPrefix(a.Specific.Reason, tools.GateName+": "), denied: true}
+		return gateAnswerRead{answered: strings.HasPrefix(a.Specific.Reason, tools.GateName+": "), denied: true, reason: a.Specific.Reason}
 	}
 	if a.Specific.Input.Command == "" {
 		return gateAnswerRead{}
@@ -311,7 +323,7 @@ func readGateAnswer(tool, stdout, gate, policy string) gateAnswerRead {
 		return gateAnswerRead{rewritten: true}
 	}
 	return gateAnswerRead{answered: a.Specific.Decision == "allow" || a.Specific.Decision == "ask", command: string(command),
-		timed: strings.Contains(m[0], " '--timeout' ")}
+		timed: strings.Contains(m[0], " '--timeout' "), shaped: strings.Contains(m[0], " '--shape' ")}
 }
 
 func sameFile(a, b string) bool {

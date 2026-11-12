@@ -72,7 +72,19 @@ func fakeGate(args []string) int {
 		if i := slices.Index(args, "--policy"); i >= 0 && i+1 < len(args) {
 			policy = ` '--policy' ` + tools.PosixQuote(filepath.ToSlash(args[i+1]))
 		}
-		command, _ := json.Marshal(tools.PosixQuote(filepath.ToSlash(exe)) + ` 'run' '--hook-build' 'ab' '--shell' 'bash'` + policy + timeout + ` '--agent' 'claude-code' '--script-b64' 'Z2l0IHN0YXR1cw'`)
+		shaping := ""
+		if i := slices.Index(args, "--shape"); i >= 0 {
+			if _, err := os.Stat(filepath.Join(filepath.Dir(exe), "noshape")); err == nil {
+				fmt.Println(`{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"adanext-exec: the hook's arguments: flag provided but not defined: -shape"}}`)
+				return 0
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(exe), "dropshape")); err != nil {
+				for _, a := range args[i:] {
+					shaping += " " + tools.PosixQuote(a)
+				}
+			}
+		}
+		command, _ := json.Marshal(tools.PosixQuote(filepath.ToSlash(exe)) + ` 'run' '--hook-build' 'ab' '--shell' 'bash'` + policy + timeout + shaping + ` '--agent' 'claude-code' '--script-b64' 'Z2l0IHN0YXR1cw'`)
 		fmt.Printf(`{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"allowed","updatedInput":{"command":%s}}}`+"\n", command)
 		return 0
 	case "run":

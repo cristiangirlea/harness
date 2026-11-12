@@ -202,7 +202,8 @@ home cannot be resolved, record operations fail; set `HRN_HOME` to a usable dire
   result over 30,000 bytes. The handle is the first 16 lowercase hex characters of
   its SHA-256; files are created on demand with mode `0644`.
   Originals are written and closed in temporary files inside `originals/` before
-  being renamed to the handle; failed writes remove the temporary file.
+  being renamed to the handle; failed writes remove the temporary file. On claude with
+  `--gate` the gate writes them instead, under the same name, caps and threshold.
   A checked summary or a cut after failed checks ends with
   `original: <handle> (<n> bytes); read_original reads it` whenever the original was saved. The `read_original`
   tool returns the whole original or one part of it: a byte range (`range: "a-b"`,
