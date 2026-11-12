@@ -312,15 +312,46 @@ func TestGatedClaudeDoesNotShapeWithoutShapeToolsOrAPlaceForOriginals(t *testing
 }
 
 func TestGatedClaudeDoesNotShapeWhenACapKeepsNoOriginal(t *testing.T) {
-	t.Setenv("HRN_HOME", t.TempDir())
-	t.Setenv("HRN_ORIGINALS_RUN_MAX", "0")
-	installFakeGate(t)
-	res, _, rec := runGatedClaudeTask(t, "routed", Task{Options: Options{Mode: ModeYolo, Gate: true, ShapeTools: true}, RunDir: t.TempDir()})
-	if res.Status != StatusOK || rec == nil {
-		t.Fatalf("result = %s %q", res.Status, res.Error)
+	for _, capName := range []string{"HRN_ORIGINALS_RUN_MAX", "HRN_ORIGINALS_MAX"} {
+		t.Run(capName, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			t.Setenv(capName, "0")
+			installFakeGate(t)
+			res, _, rec := runGatedClaudeTask(t, "routed", Task{Options: Options{Mode: ModeYolo, Gate: true, ShapeTools: true}, RunDir: t.TempDir()})
+			if res.Status != StatusOK || rec == nil {
+				t.Fatalf("result = %s %q", res.Status, res.Error)
+			}
+			if hook := gateHookCommand(t, rec); strings.Contains(hook, "shape") {
+				t.Errorf("the gate's hook shapes though no original may be kept: %q", hook)
+			}
+		})
 	}
-	if hook := gateHookCommand(t, rec); strings.Contains(hook, "shape") {
-		t.Errorf("the gate's hook shapes though no original may be kept: %q", hook)
+}
+
+func TestGatedClaudeWithShapeToolsStartsWhenTheGateRefusesTheProbe(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := installFakeGate(t)
+	if err := os.WriteFile(filepath.Join(dir, "refuses"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _, rec := runGatedClaudeTask(t, "routed", Task{Options: Options{Mode: ModeYolo, Gate: true, ShapeTools: true}, RunDir: t.TempDir()})
+	if rec == nil {
+		t.Fatalf("a refusal under a rule says nothing about shaping, but the CLI did not start: %s %q", res.Status, res.Error)
+	}
+}
+
+func TestGateHookCommandQuotesTheShapingPaths(t *testing.T) {
+	data, err := claudeGateSettings("C:/g/adanext-exec.exe", "C:/p.json", true, []string{"--shape", "--originals", `C:/t'mp x/runs/r/originals`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s gateSettings
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatal(err)
+	}
+	got := s.Hooks["PreToolUse"][0].Hooks[0].Command
+	if want := `--policy 'C:/p.json' '--shape' '--originals' 'C:/t'\''mp x/runs/r/originals' || exit 2`; !strings.HasSuffix(got, want) {
+		t.Fatalf("got %s, want it to end %s", got, want)
 	}
 }
 

@@ -918,3 +918,22 @@ func TestDefaultRunCapRefusesOversizedOriginal(t *testing.T) {
 		t.Fatalf("events = %v", events)
 	}
 }
+
+func TestGateShapeArgsNameTheRunsOriginalsCapsAndThreshold(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	runDir := filepath.Join(home, "runs", "r1")
+	for _, bad := range []string{"", "-1", "lots"} {
+		t.Setenv("HRN_ORIGINALS_RUN_MAX", bad)
+		t.Setenv("HRN_ORIGINALS_MAX", bad)
+		got := strings.Join(GateShapeArgs(runDir), " ")
+		want := fmt.Sprintf("--shape --originals %s --originals-root %s --originals-max 67108864 --originals-all-max 1073741824 --output-cap %d",
+			filepath.Join(runDir, "originals"), filepath.Join(home, "runs"), maxOutput)
+		if got != want {
+			t.Errorf("caps %q: got %q, want %q", bad, got, want)
+		}
+	}
+	if got := GateShapeArgs(""); got != nil {
+		t.Errorf("a run with no record directory shapes: %q", got)
+	}
+}

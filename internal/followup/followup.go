@@ -422,8 +422,8 @@ func (p Plan) Apply(task *agent.Task, runDir string, emit func(agent.Event)) {
 	if warning := p.ContextWarning(); warning != "" {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: warning})
 	}
-	if p.Resume != nil && p.carried != nil {
-		// The resumed conversation cites these handles; read_original looks only in runDir.
+	if p.carried != nil && (p.Resume != nil || p.ForkSession != "") {
+		// The carried conversation cites these handles; read_original and the gate look only in runDir.
 		n, skipped, err := tools.CopyOriginals(filepath.Join(runlog.Root(), p.carried.ID), runDir)
 		if err != nil {
 			emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: "originals not carried over: " + err.Error()})

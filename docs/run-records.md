@@ -130,7 +130,7 @@ never file contents:
   not visible locally and are not listed.
 - `base_digest`: a sha256 over all of the above; `digest`: the same plus the harness
   options the backend applies (`append_system_prompt` on api and claude, `retrieval` with
-  its version on every backend, `no_instructions`, `shape_tools`, `parse_check` and `mask_tool_results N` on api, `command_gate` on api and claude, `no_skills` on claude,
+  its version on every backend, `no_instructions`, `parse_check` and `mask_tool_results N` on api, `shape_tools` on api and on claude and codex with `--gate`, `command_gate` on api and claude, `no_skills` on claude,
   `lean` on claude and codex, and `skills` on a lean claude run without `no_skills`). Options do not remove names or files: they count in `digest` only, so
   runs that differ only by those options share `base_digest`.
 - `truncated`: set when the scan stopped at 500 files; files past the cap are not covered.
@@ -200,12 +200,14 @@ home cannot be resolved, record operations fail; set `HRN_HOME` to a usable dire
   the outcome and usage; a returned summary error clears the intent and keeps the prior view
 - `originals/<handle>.txt` — with `--shape-tools`, the full text of a shell or MCP
   result over 30,000 bytes. The handle is the first 16 lowercase hex characters of
-  its SHA-256; files are created on demand with mode `0644`.
+  its SHA-256; files are created on demand with mode `0600`.
   Originals are written and closed in temporary files inside `originals/` before
   being renamed to the handle; failed writes remove the temporary file. On claude with
   `--gate` the gate writes them instead, under the same name, caps and threshold.
   A checked summary or a cut after failed checks ends with
-  `original: <handle> (<n> bytes); read_original reads it` whenever the original was saved. The `read_original`
+  `original: <handle> (<n> bytes); read_original reads it` whenever the original was saved; on claude
+  the gate's summary ends `original: <handle> (<n> bytes); adanext-exec original <handle> --range 0-<k>
+  reads it, at most <m> bytes a read` instead, since claude has no `read_original`. The `read_original`
   tool returns the whole original or one part of it: a byte range (`range: "a-b"`,
   zero-based, end exclusive), a line range (`lines: "a-b"`, 1-based, inclusive; a
   last line without a newline still counts), or, for an original that is one JSON
@@ -231,7 +233,7 @@ home cannot be resolved, record operations fail; set `HRN_HOME` to a usable dire
   saves and together may pass the cap a little. When the runs directory or any run's
   originals folder cannot be read, nothing new is saved until it can. Linked originals
   count once toward the machine total; an `originals` directory link is not followed.
-  A continuation that resumes an api conversation first links that run's
+  A continuation that resumes an api conversation or forks a session first links that run's
   originals into its own `originals/`, so the handles in the conversation still
   read. hrn picks that run from the record, never from a path the model gives;
   only regular files named for their content's SHA-256 prefix are carried, never

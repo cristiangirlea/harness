@@ -155,7 +155,7 @@ Run flags:
       --timeout D      stop the run after D (e.g. 20m)
       --max-cost USD   stop the api loop before a turn that would pass this estimated cost
       --task-budget N  token ceiling the api backend gives the model to pace itself (min 20000)
-      --shape-tools    summarises large terminal, log and test results and keeps the original behind a handle (api backend; off by default)
+      --shape-tools    summarises large terminal, log and test results and keeps the original behind a handle (api, and claude and codex with --gate; off by default)
       --parse-check    refuse edit_file and write_file changes that leave a .go or .json file unparseable (api backend; off by default)
       --gate           run commands through adanext-exec from PATH; the run does not start without it (api, and claude or codex in --mode yolo; off by default)
       --retrieval MODE  off | optional | required

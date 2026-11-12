@@ -589,6 +589,32 @@ func TestAResumedConversationCarriesItsOriginals(t *testing.T) {
 	}
 }
 
+func TestAForkedSessionCarriesItsOriginals(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	id := finished(t, "", agent.Task{Prompt: "p", Dir: workspace(t)}, agent.Result{Backend: "claude", Session: "s1", Final: "a"})
+	text := "a shaped command's original"
+	handle := fmt.Sprintf("%x", sha256.Sum256([]byte(text)))[:16]
+	from := filepath.Join(runlog.Root(), id, "originals")
+	if err := os.MkdirAll(from, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(from, handle+".txt"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Make(Request{RunID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ForkSession != "s1" {
+		t.Fatalf("plan %+v does not fork the session", p)
+	}
+	next := t.TempDir()
+	p.Apply(&agent.Task{Prompt: "go on"}, next, func(agent.Event) {})
+	if data, err := os.ReadFile(filepath.Join(next, "originals", handle+".txt")); err != nil || string(data) != text {
+		t.Fatalf("the forked conversation cites this handle, but it was not carried over: %q %v", data, err)
+	}
+}
+
 func TestAResumedConversationCarriesOriginalsPastALoweredCapAndReportsSkippedFiles(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("HRN_ORIGINALS_RUN_MAX", "1")
