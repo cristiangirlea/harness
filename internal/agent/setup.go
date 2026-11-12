@@ -115,7 +115,7 @@ func optionLines(backend string, o Options) []string {
 	if backend == "api" && o.NoInstructions {
 		out = append(out, "option no_instructions")
 	}
-	if (backend == "api" || backend == "codex" && o.Gate) && o.ShapeTools {
+	if (backend == "api" || (backend == "codex" || backend == "claude") && o.Gate) && o.ShapeTools {
 		out = append(out, "option shape_tools")
 	}
 	if backend == "api" && o.ParseCheck {

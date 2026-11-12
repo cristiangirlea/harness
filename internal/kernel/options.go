@@ -12,7 +12,7 @@ import (
 // Options shares CLI, batch, and MCP configuration.
 type Options struct {
 	ParseCheck        bool   `json:"parse_check,omitempty" flag:"parse-check" desc:"Refuse edit_file and write_file changes that leave a Go or JSON file unparseable (api backend; default off)."`
-	ShapeTools        bool   `json:"shape_tools,omitempty" flag:"shape-tools" desc:"Summarise large terminal, log and test results and keep the original behind a handle (api backend; default off)."`
+	ShapeTools        bool   `json:"shape_tools,omitempty" flag:"shape-tools" desc:"Summarise large terminal, log and test results and keep the original behind a handle (api, and claude and codex with --gate; default off)."`
 	Retrieval         string `json:"retrieval,omitempty" desc:"Project retrieval: off | optional | required (default off)."`
 	RetrievalTenant   string `json:"retrieval_tenant,omitempty" flag:"retrieval-tenant" desc:"Authorized retrieval tenant ID; no credentials."`
 	RetrievalProject  string `json:"retrieval_project,omitempty" flag:"retrieval-project" desc:"Authorized retrieval project ID."`

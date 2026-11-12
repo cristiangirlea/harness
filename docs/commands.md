@@ -177,8 +177,12 @@ subtest; if the subtest passed, the summary drops it and only `read_original` sh
 boolean is also available in run options, batch specs/tasks and MCP
 run inputs. Eval matrix variants each select `shape_tools` (default false),
 overriding task/spec shaping so a suite can compare raw and shaped variants;
-give the variants distinct names. This flag does not change CLI backend tools, except on codex with `--gate`, where the
-gate-backed `run_command` shapes its results and `read_original` is offered.
+give the variants distinct names. On CLI backends it reaches only commands routed through the
+gate: codex with `--gate`, whose gate-backed `run_command` shapes its results and offers
+`read_original`, and claude with `--gate`, whose Bash and PowerShell calls the gate's hook
+shapes into the run's `originals/`; the summary's last line names `adanext-exec original
+<handle> --range a-b`, which reads the original back through the gate a part at a time. It does
+not change gemini, opencode, agy, or claude and codex without `--gate`.
 `--parse-check` opts the api backend's `edit_file` and `write_file` tools into
 syntax checks for `.go` and `.json` files (case-insensitive). It is off by default;
 `parse_check` is also available in run options, batch specs/tasks and MCP run

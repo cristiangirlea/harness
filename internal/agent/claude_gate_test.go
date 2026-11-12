@@ -256,6 +256,124 @@ func TestGatedClaudeWithAllowDangerousHasNoGuardHookButKeepsTheGate(t *testing.T
 	}
 }
 
+func gateHookCommand(t *testing.T, rec *gateRecord) string {
+	t.Helper()
+	var s gateSettings
+	if err := json.Unmarshal([]byte(rec.Settings), &s); err != nil || len(s.Hooks["PreToolUse"]) != 1 {
+		t.Fatalf("settings %q: %v", rec.Settings, err)
+	}
+	return s.Hooks["PreToolUse"][0].Hooks[0].Command
+}
+
+func TestGatedClaudeWithShapeToolsShapesIntoTheRunsOriginals(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	t.Setenv("HRN_ORIGINALS_RUN_MAX", "1000")
+	t.Setenv("HRN_ORIGINALS_MAX", "")
+	dir := installFakeGate(t)
+	runDir := filepath.Join(home, "runs", "r1")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, _, rec := runGatedClaudeTask(t, "routed", Task{Options: Options{Mode: ModeYolo, Gate: true, ShapeTools: true}, RunDir: runDir})
+	if res.Status != StatusOK || rec == nil {
+		t.Fatalf("result = %s %q", res.Status, res.Error)
+	}
+	want := " '--shape' '--originals' " + tools.PosixQuote(filepath.ToSlash(filepath.Join(runDir, "originals"))) +
+		" '--originals-root' " + tools.PosixQuote(filepath.ToSlash(filepath.Join(home, "runs"))) +
+		" '--originals-max' '1000' '--originals-all-max' '1073741824' '--output-cap' '30000' || exit 2"
+	if hook := gateHookCommand(t, rec); !strings.HasSuffix(hook, want) {
+		t.Errorf("the gate's hook = %q, want it to end %q", hook, want)
+	}
+	probe, _ := os.ReadFile(filepath.Join(dir, "hook.args"))
+	if !strings.Contains(string(probe), `"--shape"`) {
+		t.Errorf("the probe asked the hook without shaping: %s", probe)
+	}
+}
+
+func TestGatedClaudeDoesNotShapeWithoutShapeToolsOrAPlaceForOriginals(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	runDir := t.TempDir()
+	for name, task := range map[string]Task{
+		"no shape_tools": {Options: Options{Mode: ModeYolo, Gate: true}, RunDir: runDir},
+		"no run dir":     {Options: Options{Mode: ModeYolo, Gate: true, ShapeTools: true}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			installFakeGate(t)
+			res, _, rec := runGatedClaudeTask(t, "routed", task)
+			if res.Status != StatusOK || rec == nil {
+				t.Fatalf("result = %s %q", res.Status, res.Error)
+			}
+			if hook := gateHookCommand(t, rec); strings.Contains(hook, "shape") || strings.Contains(hook, "originals") {
+				t.Errorf("the gate's hook shapes: %q", hook)
+			}
+		})
+	}
+}
+
+func TestGatedClaudeDoesNotShapeWhenACapKeepsNoOriginal(t *testing.T) {
+	for _, capName := range []string{"HRN_ORIGINALS_RUN_MAX", "HRN_ORIGINALS_MAX"} {
+		t.Run(capName, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			t.Setenv(capName, "0")
+			installFakeGate(t)
+			res, _, rec := runGatedClaudeTask(t, "routed", Task{Options: Options{Mode: ModeYolo, Gate: true, ShapeTools: true}, RunDir: t.TempDir()})
+			if res.Status != StatusOK || rec == nil {
+				t.Fatalf("result = %s %q", res.Status, res.Error)
+			}
+			if hook := gateHookCommand(t, rec); strings.Contains(hook, "shape") {
+				t.Errorf("the gate's hook shapes though no original may be kept: %q", hook)
+			}
+		})
+	}
+}
+
+func TestGatedClaudeWithShapeToolsStartsWhenTheGateRefusesTheProbe(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := installFakeGate(t)
+	if err := os.WriteFile(filepath.Join(dir, "refuses"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, _, rec := runGatedClaudeTask(t, "routed", Task{Options: Options{Mode: ModeYolo, Gate: true, ShapeTools: true}, RunDir: t.TempDir()})
+	if rec == nil {
+		t.Fatalf("a refusal under a rule says nothing about shaping, but the CLI did not start: %s %q", res.Status, res.Error)
+	}
+}
+
+func TestGateHookCommandQuotesTheShapingPaths(t *testing.T) {
+	data, err := claudeGateSettings("C:/g/adanext-exec.exe", "C:/p.json", true, []string{"--shape", "--originals", `C:/t'mp x/runs/r/originals`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s gateSettings
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatal(err)
+	}
+	got := s.Hooks["PreToolUse"][0].Hooks[0].Command
+	if want := `--policy 'C:/p.json' '--shape' '--originals' 'C:/t'\''mp x/runs/r/originals' || exit 2`; !strings.HasSuffix(got, want) {
+		t.Fatalf("got %s, want it to end %s", got, want)
+	}
+}
+
+func TestGatedClaudeDoesNotStartWithAHookThatCannotShape(t *testing.T) {
+	for _, marker := range []string{"noshape", "dropshape"} {
+		t.Run(marker, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			dir := installFakeGate(t)
+			if err := os.WriteFile(filepath.Join(dir, marker), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			res, _, rec := runGatedClaudeTask(t, "routed", Task{Options: Options{Mode: ModeYolo, Gate: true, ShapeTools: true}, RunDir: t.TempDir()})
+			if res.Status != StatusError || !strings.Contains(res.Error, "cannot shape") {
+				t.Fatalf("result = %s %q", res.Status, res.Error)
+			}
+			if rec != nil {
+				t.Fatal("the CLI started with a hook that cannot shape")
+			}
+		})
+	}
+}
+
 func TestGatedClaudeKeepsNoToolsEmpty(t *testing.T) {
 	installFakeGate(t)
 	_, _, rec := runGatedClaudeTask(t, "routed", Task{NoTools: true, Options: Options{Mode: ModeYolo, Gate: true}})
@@ -448,6 +566,7 @@ func TestReadGateAnswerKnowsTheGatesOwnRewrite(t *testing.T) {
 		{"the gate's rewrite", "Bash", gate, answer("allow", bash(gate)), gateAnswerRead{answered: true, command: "echo"}},
 		{"an ask", "Bash", gate, answer("ask", bash(gate)), gateAnswerRead{answered: true, command: "echo"}},
 		{"a rewrite with a timeout", "Bash", gate, answer("allow", strings.Replace(bash(gate), ` '--agent'`, ` '--timeout' '8s' '--agent'`, 1)), gateAnswerRead{answered: true, timed: true, command: "echo"}},
+		{"a rewrite that shapes", "Bash", gate, answer("allow", strings.Replace(bash(gate), ` '--agent'`, ` '--shape' '--originals' '/r/originals' '--agent'`, 1)), gateAnswerRead{answered: true, shaped: true, command: "echo"}},
 		{"no policy", "Bash", gate, answer("allow", strings.Replace(bash(gate), ` '--policy' `+bashWord(policy), "", 1)), gateAnswerRead{rewritten: true}},
 		{"no policy on powershell", "PowerShell", gate, answer("allow", strings.Replace(ps(gate), ` '--policy' `+psWord(policy), "", 1)), gateAnswerRead{rewritten: true}},
 		{"another policy", "Bash", gate, answer("allow", strings.ReplaceAll(bash(gate), bashWord(policy), bashWord(otherPolicy))), gateAnswerRead{rewritten: true}},
@@ -468,8 +587,8 @@ func TestReadGateAnswerKnowsTheGatesOwnRewrite(t *testing.T) {
 		{"the bash form on powershell", "PowerShell", gate, answer("allow", bash(gate)), gateAnswerRead{rewritten: true}},
 		{"a bash quote in the powershell form", "PowerShell", gate, answer("allow", `& 'a'\''; evil #'\''b' 'run' '--hook-build' 'x' '--shell' 'pwsh' '--script-b64' 'aa'`), gateAnswerRead{rewritten: true}},
 		{"another hook's rewrite", "Bash", gate, answer("allow", `echo mine`), gateAnswerRead{rewritten: true}},
-		{"the gate's refusal", "Bash", gate, refusal("adanext-exec: refused"), gateAnswerRead{answered: true, denied: true}},
-		{"the guard's refusal", "Bash", gate, refusal("blocked by the hrn guard (x)"), gateAnswerRead{denied: true}},
+		{"the gate's refusal", "Bash", gate, refusal("adanext-exec: refused"), gateAnswerRead{answered: true, denied: true, reason: "adanext-exec: refused"}},
+		{"the guard's refusal", "Bash", gate, refusal("blocked by the hrn guard (x)"), gateAnswerRead{denied: true, reason: "blocked by the hrn guard (x)"}},
 		{"another hook's allow", "Bash", gate, `{"hookSpecificOutput":{"permissionDecision":"allow"}}`, gateAnswerRead{}},
 		{"nothing", "Bash", gate, ``, gateAnswerRead{}},
 		{"not json", "Bash", gate, `adanext-exec: oops`, gateAnswerRead{}},
@@ -481,7 +600,7 @@ func TestReadGateAnswerKnowsTheGatesOwnRewrite(t *testing.T) {
 }
 
 func TestGateHookCommandQuotesTheGatePath(t *testing.T) {
-	data, err := claudeGateSettings(`C:/a'b c/adanext-exec.exe`, `C:/t'mp/policy.json`, false)
+	data, err := claudeGateSettings(`C:/a'b c/adanext-exec.exe`, `C:/t'mp/policy.json`, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
