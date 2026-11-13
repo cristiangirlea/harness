@@ -262,7 +262,10 @@ default off) until a maintainer turns it on.
    flags before claude starts, so a gate from before shaping ends the run there. The live check
    ran the gate from adanext-exec main without a model: a 154 KB test log came back as a 235-byte
    summary that kept the failing test, its original read back whole in six ranges, and a range
-   past the bound was refused. claude's own run with `--shape-tools` waits for a maintainer's yes.
+   past the bound was refused. A claude run (Claude Code 2.1.284, Windows) with `--gate
+   --shape-tools` then saw a 160 KB test log as a 252-byte summary that named the failing test and
+   its message, and read the first 200 bytes of the original back with the command the summary
+   names.
 7. **Batch gates through the gate** (needs M1, M3). An operator profile with no guard rules, as
    today, gaining the timeout, tree kill and audit; heavy-command slots when M4 lands.
    *Built* with these differences. The operator profile is a `--policy` file like slice 2's

@@ -287,6 +287,19 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-13: with `--gate` and `--shape-tools`, claude's Bash and PowerShell commands are shaped
+  by the gate's hook (#435 slice 6, PR #913), the last slice of #435. hrn passes the hook the run's
+  `originals` directory, the runs directory as the root the caps count over, hrn's caps and its
+  30,000-byte threshold; the gate writes the same `<handle>.txt` files hrn does, and its summary
+  ends with `adanext-exec original <handle> --range a-b`, which the gate passes through unshaped.
+  api and codex keep shaping the gate's output with hrn's own summarizer, so the summarizer has two
+  copies, since harness calls the gate's binary and never imports it. hrn asks the hook once with
+  the shaping flags before claude starts, so a gate that cannot shape ends the run there; a run
+  with no record directory or a cap of 0 is not shaped. A continuation that forks a session now
+  carries its run's originals, as resuming an api conversation did. Live check on Windows: a
+  160 KB test log reached the model as a 252-byte summary naming the failing test, and the
+  original read back through the gate. Not checked: Linux or macOS. Left on #435: the shaping
+  eval, which needs a maintainer's yes.
 - 2026-11-11: git reads recorded branches, commits and bases only as revisions (#909, PR #910).
   In `internal/batch`, `followup`, `gc` and `ws`, every git call that takes a value from a
   record, a spec or a worktree ends option parsing before it and the revision list after it. One
