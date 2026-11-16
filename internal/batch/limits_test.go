@@ -209,6 +209,46 @@ func TestARoutedAttemptMovedByALimitDropsTheRoutedChoice(t *testing.T) {
 	}
 }
 
+func TestARoutedAttemptMovedByALimitUsesThePartnersFallbackRow(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	_ = limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"codex","model":"routed","effort":"medium","eval":"e1",
+		"fallbacks":[{"backend":"claude","model":"second","effort":"low","eval":"e2"}]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, Spec{Dir: dir, Tasks: []Task{{ID: "moved", Prompt: "Implement a widget"}}})
+	tr := res.Tasks[0]
+	if len(tr.Attempts) != 1 || tr.Attempts[0].Backend != "claude" || tr.Attempts[0].SwitchedFrom != "codex" {
+		t.Fatalf("attempts = %+v, want one moved from codex to claude", tr.Attempts)
+	}
+	rec := firstRun(t, tr)
+	if rec.Task.Model != "second" || rec.Task.Effort != "low" || rec.RoutedBy == nil || !rec.RoutedBy.Fallback || rec.RoutedBy.Eval != "e2" {
+		t.Errorf("moved attempt ran model %q, effort %q, routed by %+v", rec.Task.Model, rec.Task.Effort, rec.RoutedBy)
+	}
+}
+
+func TestARoutedAttemptThatReachesItsLimitIsCarriedOnWithThePartnersFallbackRow(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"codex","model":"routed","effort":"medium","eval":"e1",
+		"fallbacks":[{"backend":"claude","model":"second","effort":"low","eval":"e2"}]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res, _ := run(t, Spec{Dir: dir, Tasks: []Task{{ID: "carried", Prompt: "Implement a widget"}}})
+	tr := res.Tasks[0]
+	if len(tr.Attempts) != 2 || tr.Attempts[0].Result.Status != agent.StatusLimited || tr.Attempts[1].Backend != "claude" || tr.Attempts[1].SwitchedFrom != "codex" {
+		t.Fatalf("attempts = %+v, want codex limited and then claude carrying on", tr.Attempts)
+	}
+	if rec := firstRun(t, tr); rec.Task.Model != "routed" || rec.RoutedBy == nil || rec.RoutedBy.Fallback {
+		t.Errorf("limited attempt ran model %q, routed by %+v", rec.Task.Model, rec.RoutedBy)
+	}
+	rec := firstRun(t, TaskResult{ID: tr.ID, Attempts: tr.Attempts[1:]})
+	if rec.Task.Model != "second" || rec.Task.Effort != "low" || rec.RoutedBy == nil || !rec.RoutedBy.Fallback || rec.RoutedBy.Eval != "e2" {
+		t.Errorf("carry-on ran model %q, effort %q, routed by %+v", rec.Task.Model, rec.Task.Effort, rec.RoutedBy)
+	}
+}
+
 func TestATaskStopsWhenBothAreLimited(t *testing.T) {
 	dir := initRepo(t)
 	standIn(t)

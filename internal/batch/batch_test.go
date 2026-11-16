@@ -2693,6 +2693,58 @@ func TestBatchRetryOnAnotherBackendDropsTheRoutedModelAndEffort(t *testing.T) {
 	}
 }
 
+func TestBatchRetryOnAnotherBackendUsesThePurposesFallbackRow(t *testing.T) {
+	const routes = `{"implement":{"backend":"wb-bad","model":"routed","effort":"medium","eval":"e1","set":"2026-10-12",
+		"fallbacks":[{"backend":"wb-ok","model":"second","effort":"low","eval":"e2","set":"2026-10-13"}]}}`
+	for _, choice := range []string{"routed", "backend", "model", "effort"} {
+		t.Run(choice, func(t *testing.T) {
+			dir := initRepo(t)
+			name := agent.DefaultBackendName()
+			old, err := agent.Get(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			agent.Register(stub{name, func(context.Context, agent.Task) agent.Result {
+				return agent.Result{Backend: name, Status: agent.StatusError, Error: "model exploded", Turns: 1}
+			}})
+			defer agent.Register(old)
+			if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(routes), 0600); err != nil {
+				t.Fatal(err)
+			}
+			task := Task{ID: "retry", Prompt: "Implement a widget", Retry: []string{"wb-ok"}}
+			switch choice {
+			case "backend":
+				task.Backend = "wb-bad"
+			case "model":
+				task.Model = "mine"
+			case "effort":
+				task.Effort = "high"
+			}
+			res, _ := run(t, Spec{Dir: dir, Worktrees: "fresh", Options: agent.Options{NoSwitch: true}, Tasks: []Task{task}})
+			tr := res.Tasks[0]
+			if len(tr.Attempts) != 2 || tr.Status != StatusPass {
+				t.Fatalf("attempts: %+v", tr)
+			}
+			second := firstRun(t, TaskResult{ID: tr.ID, Attempts: tr.Attempts[1:]})
+			if choice != "routed" {
+				if second.Backend != "wb-ok" || second.Task.Model != "" || second.Task.Effort != "" || second.RoutedBy != nil {
+					t.Fatalf("a task that named its %s was routed on the retry: model %q, effort %q, %+v", choice, second.Task.Model, second.Task.Effort, second.RoutedBy)
+				}
+				return
+			}
+			if second.Backend != "wb-ok" || second.Task.Model != "second" || second.Task.Effort != "low" {
+				t.Fatalf("retry ran %s with model %q, effort %q", second.Backend, second.Task.Model, second.Task.Effort)
+			}
+			if by := second.RoutedBy; by == nil || !by.Fallback || by.Category != "implement" || by.Eval != "e2" || by.Set != "2026-10-13" {
+				t.Fatalf("retry's routed_by: %+v", by)
+			}
+			if by := firstRun(t, tr).RoutedBy; by == nil || by.Fallback || by.Eval != "e1" {
+				t.Fatalf("first attempt's routed_by: %+v", by)
+			}
+		})
+	}
+}
+
 func TestBatchRoutesByTheTasksDeclaredPurpose(t *testing.T) {
 	dir := initRepo(t)
 	if err := os.WriteFile(filepath.Join(runlog.Home(), "route.json"), []byte(`{"implement":{"backend":"wb-ok"},"review":{"backend":"wb-noop","model":"routed"}}`), 0600); err != nil {

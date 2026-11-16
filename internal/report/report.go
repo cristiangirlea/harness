@@ -270,6 +270,9 @@ func keyFunc(by string) (func(runlog.Record) string, error) {
 			if eval == "" {
 				eval = "hand"
 			}
+			if r.RoutedBy.Fallback {
+				eval += " (fallback)"
+			}
 			return r.RoutedBy.Category + " via " + eval
 		}, nil
 	case ByDay:
