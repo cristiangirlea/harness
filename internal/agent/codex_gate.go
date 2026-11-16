@@ -118,10 +118,8 @@ func codexGateArgsAt(args []string) int {
 
 func newCodexGateParse(_, _ string) func(line []byte, emit func(Event), res *Result) bool {
 	return func(line []byte, emit func(Event), res *Result) bool {
-		parsed := parseCodexStream(line, emit, res)
-		if parsed {
-			seeCodexGateItem(line, emit, res)
-		}
+		parsed := parseCodexLine(line, emit, res, true)
+		seeCodexGateItem(line, res)
 		return parsed
 	}
 }
@@ -142,33 +140,53 @@ type codexMCPItem struct {
 	} `json:"error"`
 }
 
-// seeCodexGateItem records the gate's tool as a shell call and stops a run whose command got past it.
-func seeCodexGateItem(line []byte, emit func(Event), res *Result) {
+// codexToolItem is a stream item for a tool hrn counts besides the shell.
+type codexToolItem struct {
+	codexMCPItem
+	Changes []struct {
+		Path string `json:"path"`
+		Kind string `json:"kind"`
+	} `json:"changes"`
+}
+
+func readCodexToolItem(line []byte) codexToolItem {
 	var l struct {
-		Type string       `json:"type"`
-		Item codexMCPItem `json:"item"`
+		Item codexToolItem `json:"item"`
 	}
-	if json.Unmarshal(line, &l) != nil {
+	// A field of an unexpected shape stays empty; the others are still read.
+	_ = json.Unmarshal(line, &l)
+	return l.Item
+}
+
+// seeCodexGateItem stops a run whose command got past the gate's tool, reading only the item's type.
+func seeCodexGateItem(line []byte, res *Result) {
+	var l struct {
+		Type string          `json:"type"`
+		Item json.RawMessage `json:"item"`
+	}
+	if json.Unmarshal(line, &l) != nil || !strings.HasPrefix(l.Type, "item.") {
 		return
 	}
-	if l.Item.Type == "command_execution" {
+	var item struct {
+		Type string `json:"type"`
+	}
+	// An item whose type cannot be read is as unknown as a new one.
+	_ = json.Unmarshal(l.Item, &item)
+	if item.Type == "command_execution" {
 		res.Error = gateUnrouted + "codex ran a command through its own shell tool, outside the gate"
 		return
 	}
-	if strings.HasPrefix(l.Type, "item.") && !slices.Contains(codexKnownItems, l.Item.Type) {
-		res.Error = gateUnrouted + fmt.Sprintf("codex used a tool hrn does not know (item %q), which may run outside the gate", l.Item.Type)
-		return
+	if !slices.Contains(codexKnownItems, item.Type) {
+		res.Error = gateUnrouted + fmt.Sprintf("codex used a tool hrn does not know (item %q), which may run outside the gate", item.Type)
 	}
-	if l.Item.Type != "mcp_tool_call" || l.Item.Server != codexGateServer {
-		return
+}
+
+// codexMCPToolName names MCP tools as Claude Code does; the gate's own tools keep their short names.
+func codexMCPToolName(item codexMCPItem, gated bool) string {
+	if gated && item.Server == codexGateServer {
+		return codexGateToolName(item.Tool)
 	}
-	switch l.Type {
-	case "item.started":
-		emit(Event{Kind: EventToolCall, Tool: codexGateToolName(l.Item.Tool), Text: codexGateCallText(l.Item)})
-	case "item.completed":
-		emit(Event{Kind: EventToolResult, Tool: codexGateToolName(l.Item.Tool), Text: codexGateResultText(l.Item),
-			IsError: l.Item.Error != nil || l.Item.Status == "failed"})
-	}
+	return "mcp__" + item.Server + "__" + item.Tool
 }
 
 func codexGateToolName(tool string) string {

@@ -31,6 +31,15 @@ var codexGateStreams = map[string][]string{
 		`{"type":"thread.started","thread_id":"019a0000-0000-7000-8000-000000000003"}`,
 		`{"type":"item.started","item":{"id":"i1","type":"script_runner_call","script":"run()","status":"in_progress"}}`,
 	},
+	// An unknown item whose fields have shapes no known item uses.
+	"odd": {
+		`{"type":"thread.started","thread_id":"019a0000-0000-7000-8000-000000000003"}`,
+		`{"type":"item.started","item":{"id":"i1","type":"code_run","changes":"x","result":"y","error":1,"status":2}}`,
+	},
+	"untyped": {
+		`{"type":"thread.started","thread_id":"019a0000-0000-7000-8000-000000000003"}`,
+		`{"type":"item.started","item":{"id":"i1","type":5}}`,
+	},
 }
 
 // TestHelperCLICodexGate is not a test: the test binary acts as the codex CLI and records its arguments.
@@ -41,10 +50,18 @@ func TestHelperCLICodexGate(t *testing.T) {
 	}
 	line, _ := json.Marshal(os.Args[slices.Index(os.Args, "--")+1:])
 	_ = os.WriteFile(os.Getenv("HRN_CODEX_GATE_LOG"), line, 0o644)
-	for _, l := range codexGateStreams[stream] {
+	lines, ok := codexGateStreams[stream]
+	if !ok {
+		data, err := os.ReadFile(stream)
+		if err != nil {
+			os.Exit(2)
+		}
+		lines = strings.Split(strings.TrimSpace(string(data)), "\n")
+	}
+	for _, l := range lines {
 		fmt.Println(l)
 	}
-	if stream == "unrouted" || stream == "unknown" {
+	if stream == "unrouted" || stream == "unknown" || stream == "odd" || stream == "untyped" {
 		time.Sleep(30 * time.Second)
 	}
 	os.Exit(0)
@@ -145,7 +162,7 @@ func TestGatedCodexPassesTheRunsOptionsToTheTool(t *testing.T) {
 	}
 }
 
-func TestGatedCodexRecordsTheGatesToolAsShellCalls(t *testing.T) {
+func TestGatedCodexRecordsTheGatesToolAsShellCallsAndOtherServersByName(t *testing.T) {
 	installFakeGate(t)
 	_, events, _ := runGatedCodex(t, "routed", Task{Options: Options{Mode: ModeYolo, Gate: true}})
 	var got []string
@@ -159,6 +176,7 @@ func TestGatedCodexRecordsTheGatesToolAsShellCalls(t *testing.T) {
 		fmt.Sprintf("%s shell %q false", EventToolResult, "hi\n[exit code 0]"),
 		fmt.Sprintf("%s shell %q false", EventToolCall, "git push"),
 		fmt.Sprintf("%s shell %q true", EventToolResult, "refused"),
+		fmt.Sprintf("%s mcp__other__run_command %q false", EventToolCall, "not the gate"),
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("events:\n%q\nwant:\n%q", got, want)
@@ -179,13 +197,17 @@ func TestGatedCodexStopsARunWhoseCommandSkippedTheTool(t *testing.T) {
 
 func TestGatedCodexStopsARunThatUsesAToolHrnDoesNotKnow(t *testing.T) {
 	installFakeGate(t)
-	started := time.Now()
-	res, _, _ := runGatedCodex(t, "unknown", Task{Options: Options{Mode: ModeYolo, Gate: true}})
-	if res.Status != StatusError || !strings.HasPrefix(res.Error, gateUnrouted) || !strings.Contains(res.Error, "script_runner_call") {
-		t.Fatalf("result = %s %q", res.Status, res.Error)
-	}
-	if time.Since(started) > 20*time.Second {
-		t.Fatal("the run was not stopped")
+	for stream, item := range map[string]string{"unknown": "script_runner_call", "odd": "code_run", "untyped": `item ""`} {
+		t.Run(stream, func(t *testing.T) {
+			started := time.Now()
+			res, _, _ := runGatedCodex(t, stream, Task{Options: Options{Mode: ModeYolo, Gate: true}})
+			if res.Status != StatusError || !strings.HasPrefix(res.Error, gateUnrouted) || !strings.Contains(res.Error, item) {
+				t.Fatalf("result = %s %q", res.Status, res.Error)
+			}
+			if time.Since(started) > 20*time.Second {
+				t.Fatal("the run was not stopped")
+			}
+		})
 	}
 }
 
