@@ -39,6 +39,8 @@ type attemptPlan struct {
 	// Model and effort are backend-scoped.
 	chosenFor string
 	reason    string
+	// Another backend's attempt looks up its fallback row by the first choice's purpose.
+	firstRoute *runlog.RoutedBy
 }
 
 const (
@@ -273,7 +275,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 	var carry *Attempt    // the limited attempt the next one carries on
 	for i := 0; i < len(backends); i++ {
 		name := backends[i]
-		plan := attemptPlan{number: len(s.tr.Attempts) + 1, prompt: s.t.Prompt, gateTimeout: gateTimeout, gate: through, chosenFor: backends[0], base: s.base, branch: s.tr.Branch}
+		plan := attemptPlan{number: len(s.tr.Attempts) + 1, prompt: s.t.Prompt, gateTimeout: gateTimeout, gate: through, chosenFor: backends[0], base: s.base, branch: s.tr.Branch, firstRoute: routedBy}
 		if i == 0 {
 			plan.routedBy = routedBy
 		}
@@ -714,7 +716,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		task.Model = "" // the model named for the other backend means nothing here
 	}
 	if b.Name() != plan.chosenFor {
-		task.Model, task.Effort, plan.routedBy = "", "", nil
+		task.Model, task.Effort, plan.routedBy = resolve.Fallback(plan.firstRoute, b.Name(), runlog.Home())
 	}
 
 	turnDefault := !noTurnDefault && resolve.ApplyTurnDefault(&task, b.Name())

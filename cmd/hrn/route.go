@@ -22,6 +22,7 @@ import (
 
 const routeUsage = `usage: hrn route show
        hrn route set <purpose> [-b NAME] [-m MODEL] [--effort LEVEL]
+       hrn route set <purpose> --fallback -b NAME [-m MODEL] [--effort LEVEL]
        hrn route from-eval <id> [--margin 0.05]`
 
 func cmdRoute(args []string) (int, error) {
@@ -52,10 +53,11 @@ func cmdRoute(args []string) (int, error) {
 			fs.StringVar(&row.Model, n, "", "")
 		}
 		fs.StringVar(&row.Effort, "effort", "", "")
+		fallback := fs.Bool("fallback", false, "")
 		if err := fs.Parse(args[2:]); err != nil {
 			return 2, err
 		}
-		if fs.NArg() != 0 || row.Backend == "" && row.Model == "" && row.Effort == "" {
+		if fs.NArg() != 0 || row.Backend == "" && (*fallback || row.Model == "" && row.Effort == "") {
 			return 2, errors.New(routeUsage)
 		}
 		if row.Backend != "" {
@@ -74,6 +76,26 @@ func cmdRoute(args []string) (int, error) {
 			return 1, err
 		}
 		row.Set = time.Now().Format("2006-01-02")
+		old, exists := t[args[1]]
+		if *fallback {
+			if !exists {
+				return 2, fmt.Errorf("purpose %s has no row to add a fallback to; set its first choice first", args[1])
+			}
+			if row.Backend == old.Backend {
+				return 2, fmt.Errorf("backend %s is the first choice for %s; a fallback names another backend", row.Backend, args[1])
+			}
+			if row.Model == "" && row.Effort == "" {
+				row = old.WithoutFallback(row.Backend)
+			} else {
+				row = old.WithFallback(row)
+			}
+		} else {
+			for _, f := range old.Fallbacks {
+				if f.Backend != row.Backend {
+					row = row.WithFallback(f)
+				}
+			}
+		}
 		t[args[1]] = row
 		if err := route.Save(t); err != nil {
 			return 1, err
@@ -139,6 +161,13 @@ func printRoutes(out io.Writer, t route.Table) error {
 			source = "hand"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", k, r.Backend, r.Model, r.Effort, source, r.Set)
+		for _, f := range r.Fallbacks {
+			source := f.Eval
+			if source == "" {
+				source = "hand"
+			}
+			fmt.Fprintf(w, "%s (fallback)\t%s\t%s\t%s\t%s\t%s\n", k, f.Backend, f.Model, f.Effort, source, f.Set)
+		}
 	}
 	return w.Flush()
 }

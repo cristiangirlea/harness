@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -75,7 +76,7 @@ func TestRouteWithNote(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
-			if tc.row != (table.Row{}) {
+			if !reflect.DeepEqual(tc.row, table.Row{}) {
 				if err := table.Save(home, table.Table{tc.declared: tc.row}); err != nil {
 					t.Fatal(err)
 				}

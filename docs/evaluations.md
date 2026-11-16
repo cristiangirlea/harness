@@ -14,6 +14,7 @@ approved hrn-evals run.
 ```sh
 hrn route show
 hrn route set implement -b codex -m sol --effort medium
+hrn route set implement --fallback -b claude -m sonnet --effort medium
 hrn route from-eval <eval-id> --margin 0.05
 ```
 
@@ -23,6 +24,17 @@ nonempty value. Backend names and effort levels use the usual run validation.
 Purposes are review, debug, implement, refactor, test, research, plan, ops and unknown.
 `from-eval` prints the proposed rows, then saves them, preserving existing rows
 for purposes the eval did not measure. It reads saved results and calls no model.
+
+A row may carry fallbacks, one per other backend, in an additive `fallbacks` list of
+the same fields; a table without it loads unchanged. `set --fallback -b NAME` adds or
+replaces the entry for that backend and needs an existing row whose first choice is
+another backend; with neither model nor effort it removes the entry. A plain `set`
+keeps the fallbacks, except one for the backend it now names first. `show` lists
+each as `<purpose> (fallback)` under its row. `from-eval` writes, for every other
+backend with a qualifying variant, that backend's cheapest one by the same rules as
+the first choice, and replaces the fallbacks of the rows it saves. A variant that named
+only its backend is saved as a backend-only fallback: the attempt runs that backend's
+defaults and is still credited to the row.
 
 For each purpose, task prompts are classified with the same rules as
 `report --by purpose`. Pass rates sum that purpose's task results across repeats.
@@ -51,14 +63,21 @@ rules still apply. When a plan limit moves a routed run to the partner backend,
 the routed model and effort are dropped and the run records no `routed_by`, so the
 partner's results are not credited to the row. A batch attempt on any backend other
 than the one its model and effort were chosen for (a limit switch or a retry) drops
-them and `routed_by` the same way, whether they were routed or named.
+them and `routed_by` the same way, whether they were routed or named. When the first
+attempt was routed and its purpose's row has a fallback for the backend the attempt
+lands on, the attempt runs the fallback's model and effort instead of that backend's
+defaults, and records `routed_by` with `fallback` set. A task that named its backend,
+model or effort gets no fallback, and a fallback with an unknown effort is skipped
+with a warning. Fallbacks apply to batch attempts only.
 
 The additive `routed_by` record field contains `category`, `declared` (true when
 the purpose was declared rather than classified; omitted otherwise), `eval`
-(absent for a manual row), and `set`. It is omitted for unrouted runs; older
-records still load.
+(absent for a manual row), `set`, and `fallback` (true when a fallback row chose the
+model; omitted otherwise, with `eval` and `set` then the fallback's own). It is
+omitted for unrouted runs; older records still load.
 `hrn report --by routed` groups them as `<category> via <eval id>` or
-`<category> via hand`, with unrouted runs under `-`, using the usual runs, ok,
+`<category> via hand`, with ` (fallback)` appended for runs a fallback row routed and
+unrouted runs under `-`, using the usual runs, ok,
 and cost columns.
 
 ## Reports

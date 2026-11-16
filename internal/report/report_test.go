@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,26 @@ func TestReportByRoutedGroupsRunsByCategoryAndEval(t *testing.T) {
 	}
 	if rows[1].Key != "-" || rows[1].OK != 0 || rows[2].Key != "review via hand" {
 		t.Fatalf("other rows: %+v", rows)
+	}
+}
+
+func TestReportByRoutedKeepsAFallbackRowApartFromTheFirstChoice(t *testing.T) {
+	runs := sample()
+	runs[0].RoutedBy = &runlog.RoutedBy{Category: "implement", Eval: "e1"}
+	runs[1].RoutedBy = &runlog.RoutedBy{Category: "implement", Eval: "e1", Fallback: true}
+	runs[2].RoutedBy = &runlog.RoutedBy{Category: "review", Fallback: true}
+	rows, _, err := (Data{Runs: runs}).RunRows("routed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, r := range rows {
+		keys = append(keys, r.Key)
+	}
+	for _, want := range []string{"implement via e1", "implement via e1 (fallback)", "review via hand (fallback)"} {
+		if !slices.Contains(keys, want) {
+			t.Errorf("keys %q lack %q", keys, want)
+		}
 	}
 }
 

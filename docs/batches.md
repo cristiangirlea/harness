@@ -192,8 +192,10 @@ A failed attempt is retried on each backend named in `retry`, in order. The same
 may repeat, and `"retry": ["claude"]` after `"backend": "claude"` is the common case: a
 second try with the same model, told what went wrong. A retry on a backend other than
 the first attempt's drops the model and effort named or routed for that first backend,
-and its record carries no `routed_by`. How the retry starts depends on how the attempt
-failed.
+and its record carries no `routed_by`, unless the first attempt was routed and its
+purpose has a fallback for the retry's backend (see
+[Routing by evidence](evaluations.md#routing-by-evidence)): the retry then runs the
+fallback's model and effort. How the retry starts depends on how the attempt failed.
 
 With retrieval enabled, a same-scope retry after a failed gate searches again using
 bounded failure evidence and the first attempt's pinned knowledge version. A change

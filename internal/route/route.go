@@ -27,6 +27,7 @@ type Skipped struct {
 
 // FromEval picks qualifying family efforts by eval-wide median cost, then purpose winners.
 // Ties prefer plan CLIs, lower effort, then name for determinism.
+// Every other backend with a qualifying variant becomes a fallback, chosen the same way.
 func FromEval(rec eval.Record, margin float64) (Table, []Skipped) {
 	var skipped []Skipped
 	out := Table{}
@@ -191,7 +192,18 @@ func FromEval(rec eval.Record, margin float64) (Table, []Skipped) {
 			}
 		}
 		if found {
-			out[cat] = Row{Backend: winner.v.Backend, Model: winner.v.Model, Effort: winner.v.Effort, Eval: rec.ID, Set: rec.Started.Format("2006-01-02")}
+			row := Row{Backend: winner.v.Backend, Model: winner.v.Model, Effort: winner.v.Effort, Eval: rec.ID, Set: rec.Started.Format("2006-01-02")}
+			// A retry lands on another backend, so each one gets its own cheapest qualifying choice.
+			others := map[string]candidate{}
+			for _, c := range families {
+				if prev, ok := others[c.v.Backend]; c.v.Backend != winner.v.Backend && (!ok || less(c, prev)) {
+					others[c.v.Backend] = c
+				}
+			}
+			for _, c := range others {
+				row = row.WithFallback(Row{Backend: c.v.Backend, Model: c.v.Model, Effort: c.v.Effort, Eval: row.Eval, Set: row.Set})
+			}
+			out[cat] = row
 		}
 	}
 	return out, skipped

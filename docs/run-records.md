@@ -97,7 +97,7 @@ computed from the fraction met after downgrades. Variant rows' optional `criteri
 `scored` verdict counts and `disagreed` cell counts for repeats that differed. Zero
 counts may be omitted. Old judgements and summaries without criteria still load.
 
-Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, source `eval` when present, and `set` date) in `task.json` and `result.json`; runs without an applied route may include `route_note` explaining the choice, and old records still load.
+Routed runs include `routed_by` (`category`, `declared` when the purpose was declared, `fallback` when a fallback row chose the model, source `eval` when present, and `set` date) in `task.json` and `result.json`; runs without an applied route may include `route_note` explaining the choice, and old records still load.
 
 Every run records `setup`, the agent setup it started with, read when the record is
 created (an edit the agent makes later does not change it). It holds hashes and names,

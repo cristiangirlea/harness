@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +66,68 @@ func TestRouteShowAndSet(t *testing.T) {
 	tab, _ = route.Load()
 	if tab["review"].Backend != "" || tab["review"].Model != "" || tab["review"].Effort != "low" {
 		t.Fatalf("replacement: %+v", tab["review"])
+	}
+}
+
+func TestRouteSetFallbackAddsReplacesAndRemovesAnEntryAndShowListsIt(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, args := range [][]string{
+		{"set", "implement", "-b", "codex", "-m", "luna", "--effort", "low"},
+		{"set", "implement", "--fallback", "-b", "claude", "-m", "opus"},
+		{"set", "implement", "--fallback", "-b", "claude", "-m", "sonnet", "--effort", "medium"},
+		{"set", "implement", "--fallback", "-b", "agy", "--effort", "low"},
+	} {
+		if _, code, err := routeOutput(t, args...); code != 0 || err != nil {
+			t.Fatalf("set: %v %d %v", args, code, err)
+		}
+	}
+	tab, _ := route.Load()
+	today := time.Now().Format("2006-01-02")
+	want := []route.Row{{Backend: "agy", Effort: "low", Set: today}, {Backend: "claude", Model: "sonnet", Effort: "medium", Set: today}}
+	if got := tab["implement"]; got.Backend != "codex" || got.Model != "luna" || !reflect.DeepEqual(got.Fallbacks, want) {
+		t.Fatalf("fallbacks: %+v", got)
+	}
+	out, _, _ := routeOutput(t, "show")
+	if !strings.Contains(out, "implement (fallback)") || !strings.Contains(out, "sonnet") || strings.Count(out, "(fallback)") != 2 {
+		t.Fatalf("show: %s", out)
+	}
+	if _, code, err := routeOutput(t, "set", "implement", "-b", "claude", "-m", "fable"); code != 0 || err != nil {
+		t.Fatal(code, err)
+	}
+	tab, _ = route.Load()
+	if got := tab["implement"]; got.Model != "fable" || len(got.Fallbacks) != 1 || got.Fallbacks[0].Backend != "agy" {
+		t.Fatalf("a new first choice kept a fallback for its own backend or lost the other: %+v", got)
+	}
+	if _, code, err := routeOutput(t, "set", "implement", "--fallback", "-b", "agy"); code != 0 || err != nil {
+		t.Fatal(code, err)
+	}
+	tab, _ = route.Load()
+	if got := tab["implement"]; got.Fallbacks != nil {
+		t.Fatalf("a fallback set with no model and no effort was not removed: %+v", got)
+	}
+}
+
+func TestRouteSetFallbackRefusesWhatCouldNeverApply(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if _, code, err := routeOutput(t, "set", "review", "--fallback", "-b", "claude", "-m", "opus"); code != 2 || err == nil || !strings.Contains(err.Error(), "no row") {
+		t.Fatalf("a fallback with no first choice: %d %v", code, err)
+	}
+	if _, code, err := routeOutput(t, "set", "review", "-b", "codex", "-m", "sol"); code != 0 || err != nil {
+		t.Fatal(code, err)
+	}
+	for _, args := range [][]string{
+		{"set", "review", "--fallback", "-m", "opus"},
+		{"set", "review", "--fallback", "-b", "codex", "-m", "luna"},
+		{"set", "review", "--fallback", "-b", "nope", "-m", "x"},
+		{"set", "review", "--fallback", "-b", "claude", "--effort", "bogus"},
+	} {
+		if _, code, err := routeOutput(t, args...); code != 2 || err == nil {
+			t.Errorf("%v: code %d, err %v, want a refusal", args, code, err)
+		}
+	}
+	tab, _ := route.Load()
+	if got := tab["review"]; got.Model != "sol" || got.Fallbacks != nil {
+		t.Fatalf("a refused fallback changed the row: %+v", got)
 	}
 }
 

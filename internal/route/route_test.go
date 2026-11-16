@@ -30,7 +30,7 @@ func TestRouteTableRoundTripsAndNamesTheFileWhenBroken(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(tab, want) {
 		t.Fatalf("round trip: %v %v", tab, err)
 	}
-	if row, ok := tab.Pick("implement"); !ok || row != want["implement"] {
+	if row, ok := tab.Pick("implement"); !ok || !reflect.DeepEqual(row, want["implement"]) {
 		t.Fatalf("pick: %v %v", row, ok)
 	}
 	if _, ok := tab.Pick("debug"); ok {
@@ -41,6 +41,132 @@ func TestRouteTableRoundTripsAndNamesTheFileWhenBroken(t *testing.T) {
 	}
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), filepath.Join(home, "route.json")) {
 		t.Fatalf("broken: %v", err)
+	}
+}
+
+func TestARowsFallbackIsFoundByBackendAndAnOldTableStillLoads(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "route.json"), []byte(`{"implement":{"backend":"codex","model":"sol","set":"2026-10-14"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tab, err := Load()
+	if err != nil || tab["implement"].Fallbacks != nil {
+		t.Fatalf("old table: %+v %v", tab, err)
+	}
+	row := tab["implement"].WithFallback(Row{Backend: "claude", Model: "sonnet", Effort: "medium", Set: "2026-10-15"})
+	row = row.WithFallback(Row{Backend: "agy", Effort: "low"}).WithFallback(Row{Backend: "claude", Model: "opus"})
+	row = row.WithFallback(Row{Backend: "codex", Model: "never"})
+	if err := Save(Table{"implement": row}); err != nil {
+		t.Fatal(err)
+	}
+	if tab, err = Load(); err != nil || len(tab["implement"].Fallbacks) != 3 || tab["implement"].Fallbacks[0].Backend != "agy" || !reflect.DeepEqual(tab["implement"], row) {
+		t.Fatalf("saved fallbacks: %+v %v", tab, err)
+	}
+	if f, ok := tab["implement"].FallbackFor("claude"); !ok || f.Model != "opus" || f.Effort != "" {
+		t.Fatalf("a second fallback for claude did not replace the first: %+v %v", f, ok)
+	}
+	if f, ok := tab["implement"].FallbackFor("codex"); ok {
+		t.Fatalf("the first choice's own backend has a fallback: %+v", f)
+	}
+	if _, ok := tab["implement"].FallbackFor("gemini"); ok {
+		t.Fatal("a backend with no entry has a fallback")
+	}
+	if got := row.WithoutFallback("agy"); len(got.Fallbacks) != 2 || len(row.Fallbacks) != 3 {
+		t.Fatalf("removing a fallback: %+v, and the row it was removed from: %+v", got.Fallbacks, row.Fallbacks)
+	}
+}
+
+func TestFromEvalAddsTheCheapestQualifyingVariantOfEveryOtherBackendAsAFallback(t *testing.T) {
+	r := evidence()
+	if got := routesFromEval(r, .05)["implement"]; got.Backend != "codex" || got.Fallbacks != nil {
+		t.Fatalf("api does not qualify at this margin, so there is nothing to fall back to: %+v", got)
+	}
+	got := routesFromEval(r, .1)["implement"]
+	want := []Row{{Backend: "codex", Model: "sol", Effort: "low", Eval: "e1", Set: "2026-10-12"}}
+	if got.Backend != "api" || !reflect.DeepEqual(got.Fallbacks, want) {
+		t.Fatalf("fallbacks: %+v, want %+v", got, want)
+	}
+}
+
+func TestFallbackRoutesALaterAttemptOnAnotherBackendAndSkipsABadRow(t *testing.T) {
+	home := t.TempDir()
+	first := &RoutedBy{Category: "implement", Declared: true, Eval: "e1", Set: "2026-10-12"}
+	row := Row{Backend: "codex", Model: "luna", Effort: "low", Eval: "e1", Set: "2026-10-12", Fallbacks: []Row{
+		{Backend: "claude", Model: "sonnet", Effort: "medium", Eval: "e2", Set: "2026-10-13"}, {Backend: "agy", Effort: "bogus"}, {Backend: "gemini"}}}
+	t.Setenv("HRN_HOME", home)
+	if err := Save(Table{"implement": row}); err != nil {
+		t.Fatal(err)
+	}
+	model, effort, by := resolve.Fallback(first, "claude", home)
+	if model != "sonnet" || effort != "medium" || by == nil || *by != (RoutedBy{Category: "implement", Declared: true, Fallback: true, Eval: "e2", Set: "2026-10-13"}) {
+		t.Fatalf("fallback: %q %q %+v", model, effort, by)
+	}
+	if model, effort, by := resolve.Fallback(first, "gemini", home); model != "" || effort != "" || by == nil || !by.Fallback {
+		t.Errorf("a backend-only fallback is that backend's defaults, credited to the row: %q %q %+v", model, effort, by)
+	}
+	stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stderr.Close()
+	prev := os.Stderr
+	os.Stderr = stderr
+	defer func() { os.Stderr = prev }()
+	warned := func() string {
+		data, _ := os.ReadFile(stderr.Name())
+		return string(data)
+	}
+	for _, backend := range []string{"agy", "opencode", "codex"} {
+		if model, effort, by := resolve.Fallback(first, backend, home); model != "" || effort != "" || by != nil {
+			t.Errorf("%s: %q %q %+v, want no fallback", backend, model, effort, by)
+		}
+	}
+	if got := warned(); !strings.Contains(got, "warning: ignoring the fallback route for implement on agy") || !strings.Contains(got, "bogus") || strings.Count(got, "warning") != 1 {
+		t.Errorf("only the fallback with an unknown effort warns: %q", got)
+	}
+	if model, _, by := resolve.Fallback(nil, "claude", home); model != "" || by != nil {
+		t.Errorf("an unrouted first attempt got a fallback: %q %+v", model, by)
+	}
+	if err := os.WriteFile(filepath.Join(home, "route.json"), []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if model, _, by := resolve.Fallback(first, "claude", home); model != "" || by != nil {
+		t.Errorf("a broken table gave a fallback: %q %+v", model, by)
+	}
+	if got := warned(); !strings.Contains(got, "warning: ignoring the fallback route for implement: ") || !strings.Contains(got, "route.json") {
+		t.Errorf("a broken table does not warn: %q", got)
+	}
+}
+
+func TestFromEvalKeepsOneFallbackPerOtherBackendIncludingOneThatMeasuredItsDefaults(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	rows := func(names ...string) (out []eval.TaskRow) {
+		for _, n := range names {
+			out = append(out, eval.TaskRow{Task: "build", Variant: n, Passed: 10, Total: 10})
+		}
+		return out
+	}
+	r := eval.Record{ID: "e3", Started: time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC), Spec: eval.Spec{
+		Spec: batch.Spec{Tasks: []batch.Task{{ID: "build", Prompt: "Implement a widget"}}},
+		Matrix: []eval.Variant{{Name: "luna", Backend: "codex", Model: "luna", Effort: "low"}, {Name: "plain", Backend: "claude"},
+			{Name: "opus", Backend: "claude", Model: "opus", Effort: "high"}, {Name: "small", Backend: "api", Model: "small", Effort: "low"},
+			{Name: "big", Backend: "api", Model: "big", Effort: "low"}},
+	}, Table: eval.Table{
+		Variants: []eval.VariantRow{{Name: "luna", MedianCostUSD: 1}, {Name: "plain", MedianCostUSD: 2}, {Name: "opus", MedianCostUSD: 5}, {Name: "small", MedianCostUSD: 3}, {Name: "big", MedianCostUSD: 4}},
+		Tasks:    rows("luna", "plain", "opus", "small", "big"),
+	}}
+	got := routesFromEval(r, .05)["implement"]
+	want := Row{Backend: "codex", Model: "luna", Effort: "low", Eval: "e3", Set: "2026-10-12", Fallbacks: []Row{
+		{Backend: "api", Model: "small", Effort: "low", Eval: "e3", Set: "2026-10-12"}, {Backend: "claude", Eval: "e3", Set: "2026-10-12"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("row: %+v\nwant %+v", got, want)
+	}
+	if err := Save(Table{"implement": got}); err != nil {
+		t.Fatal(err)
+	}
+	if tab, err := Load(); err != nil || !reflect.DeepEqual(tab["implement"], want) {
+		t.Fatalf("saved and loaded: %+v %v", tab, err)
 	}
 }
 

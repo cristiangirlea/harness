@@ -67,6 +67,28 @@ func RouteWithNote(o *agent.Options, declared, prompt string, backend *string, h
 	return &table.RoutedBy{Category: category, Declared: resolved.Rule == "declared", Eval: r.Eval, Set: r.Set}, "", nil
 }
 
+// Fallback is the routed purpose's choice for a later attempt on another backend; a bad row warns and is skipped.
+func Fallback(first *table.RoutedBy, backend, home string) (model, effort string, by *table.RoutedBy) {
+	if first == nil {
+		return "", "", nil
+	}
+	t, err := table.Load(home)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hrn: warning: ignoring the fallback route for %s: %v\n", first.Category, err)
+		return "", "", nil
+	}
+	row, _ := t.Pick(first.Category)
+	f, ok := row.FallbackFor(backend)
+	if !ok {
+		return "", "", nil
+	}
+	if err := agent.ValidateOptions(agent.Options{Effort: f.Effort}); err != nil {
+		fmt.Fprintf(os.Stderr, "hrn: warning: ignoring the fallback route for %s on %s: %v\n", first.Category, backend, err)
+		return "", "", nil
+	}
+	return f.Model, f.Effort, &table.RoutedBy{Category: first.Category, Declared: first.Declared, Fallback: true, Eval: f.Eval, Set: f.Set}
+}
+
 // ApplyTurnDefault sets the Claude review and test limit when no limit was supplied.
 func ApplyTurnDefault(t *agent.Task, backend string) bool {
 	prompt := t.Prompt
