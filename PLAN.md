@@ -287,6 +287,19 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-16: a routing row may carry fallback rows, and a batch attempt on another backend uses
+  them (#908, PR #915). A retry on another backend, or a plan-limit switch, used to run that
+  backend's default model, since the table held one row per purpose: in three routed batches of
+  twenty tasks the eight retries cost $2.01, $0.42 and $0.41 against $0.79 to $0.90 for the twenty
+  first attempts. `fallbacks` is additive in `route.json`, one entry per other backend; the attempt
+  records `routed_by` with `fallback`, and `hrn report --by routed` appends ` (fallback)`. Only a
+  routed first attempt gets one: a task that named its backend, model or effort is never routed
+  later either. `hrn route set --fallback -b NAME` adds, replaces or (with neither model nor
+  effort) removes an entry; `from-eval` writes each other backend's cheapest qualifying variant,
+  the rule the first choice uses, where the issue had left cheapest or strongest open. A variant
+  that named only its backend is kept as a backend-only fallback, after the review found it was
+  dropped. Batch attempts only: `hrn run` and the MCP run tool still drop the routed choice on a
+  limit switch.
 - 2026-11-13: with `--gate` and `--shape-tools`, claude's Bash and PowerShell commands are shaped
   by the gate's hook (#435 slice 6, PR #913), the last slice of #435. hrn passes the hook the run's
   `originals` directory, the runs directory as the root the caps count over, hrn's caps and its
