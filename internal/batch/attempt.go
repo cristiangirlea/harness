@@ -39,6 +39,8 @@ type attemptPlan struct {
 	// Model and effort are backend-scoped.
 	chosenFor string
 	reason    string
+	// Globs for the files the agent must not see.
+	hide []string
 	// Another backend's attempt looks up its fallback row by the first choice's purpose.
 	firstRoute *runlog.RoutedBy
 }
@@ -275,7 +277,8 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 	var carry *Attempt    // the limited attempt the next one carries on
 	for i := 0; i < len(backends); i++ {
 		name := backends[i]
-		plan := attemptPlan{number: len(s.tr.Attempts) + 1, prompt: s.t.Prompt, gateTimeout: gateTimeout, gate: through, chosenFor: backends[0], base: s.base, branch: s.tr.Branch, firstRoute: routedBy}
+		plan := attemptPlan{number: len(s.tr.Attempts) + 1, prompt: s.t.Prompt, gateTimeout: gateTimeout, gate: through, chosenFor: backends[0], base: s.base, branch: s.tr.Branch, firstRoute: routedBy,
+			hide: firstList(s.t.Hide, s.spec.Hide)}
 		if i == 0 {
 			plan.routedBy = routedBy
 		}
@@ -734,13 +737,26 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		notify(Event{Task: id, Kind: "info", Text: resolve.TurnDefaultInfo})
 	}
 	report(att)
+	hidden, hideErr := hideFiles(ctx, task.Dir, plan.base, plan.hide)
+	att.Hidden = hidden.count()
+	if len(plan.hide) > 0 && hideErr == nil {
+		notify(Event{Task: id, Kind: "info", Text: fmt.Sprintf("hid %d files from the agent", hidden.count())})
+	}
 	before, beforeErr := gitTips(task.Dir, plan.branch)
-	att.Result = agent.Run(ctx, b, task, func(e agent.Event) {
-		rec.Event(e)
-		if e.Kind == agent.EventToolCall {
-			notify(Event{Task: id, Kind: "tool", Text: strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120))})
-		}
-	})
+	if hideErr != nil {
+		// Running with some of them still readable would score an agent that saw its checks.
+		att.Result = agent.Result{Backend: b.Name(), Status: agent.StatusError, Error: "the files to hide could not be removed"}
+	} else {
+		att.Result = agent.Run(ctx, b, task, func(e agent.Event) {
+			rec.Event(e)
+			if e.Kind == agent.EventToolCall {
+				notify(Event{Task: id, Kind: "tool", Text: strings.TrimSpace("→ " + e.Tool + " " + tools.OneLine(e.Text, 120))})
+			}
+		})
+	}
+	if err := hidden.restore(); err != nil {
+		hideErr = errors.Join(hideErr, fmt.Errorf("putting the hidden files back: %w", err))
+	}
 	att.DidNotStart = startFailure(att)
 	if after, err := gitTips(task.Dir, plan.branch); beforeErr == nil && err == nil && before != "" && after != before {
 		att.AgentCommitted = true
@@ -757,6 +773,14 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	}
 	report(att)
 	notify(Event{Task: id, Kind: "run", Text: text})
+
+	if hideErr != nil {
+		// No commit, gate or retry may run on a tree whose hidden files are missing or were readable.
+		att.Error = strings.TrimSpace(att.Error + "\nhide: " + hideErr.Error())
+		report(att)
+		fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: flow.StatusFailed, Reason: attemptEndReason(att), Text: firstLineOf(att.Error)})
+		return attemptOutcome{att: att, keepWorktree: true}, fmt.Errorf("hide: %w (%s)", hideErr, task.Dir)
+	}
 
 	pass := att.Result.Status == agent.StatusOK
 	if pass && expect != nil {

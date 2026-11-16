@@ -25,17 +25,21 @@ func checkProtect(globs []string, mode string) error {
 	if mode != "" && mode != ProtectReport && mode != ProtectFail {
 		return fmt.Errorf("protect_mode %q: %s or %s", mode, ProtectReport, ProtectFail)
 	}
+	return checkGlobs("protect", globs)
+}
+
+func checkGlobs(field string, globs []string) error {
 	for _, g := range globs {
 		if strings.TrimSpace(g) == "" || path.IsAbs(g) || strings.Contains(g, `\`) || strings.Contains(g, ":") {
-			return fmt.Errorf("protect %q: a glob relative to the repository, with / between folders", g)
+			return fmt.Errorf("%s %q: a glob relative to the repository, with / between folders", field, g)
 		}
 		for seg := range strings.SplitSeq(g, "/") {
 			// Git paths cannot match empty, dot or parent segments.
 			if seg == "" || seg == "." || seg == ".." {
-				return fmt.Errorf("protect %q: a glob relative to the repository, with / between folders", g)
+				return fmt.Errorf("%s %q: a glob relative to the repository, with / between folders", field, g)
 			}
 			if _, err := path.Match(seg, ""); err != nil {
-				return fmt.Errorf("protect %q: %v", g, err)
+				return fmt.Errorf("%s %q: %v", field, g, err)
 			}
 		}
 	}

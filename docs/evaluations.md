@@ -279,7 +279,7 @@ collide. Retries are off for every cell on purpose: an eval measures what one at
 does, and a retried attempt would score the harness rather than the backend. Everything
 else, gates and mode and the budgets, `lean` and `compact_window`, carries through from the
 spec; cells on claude and codex are lean unless the spec or task says `"lean": false` (see
-[What a run loads](backends.md#what-a-run-loads)). `protect` carries through too,
+[What a run loads](backends.md#what-a-run-loads)). `protect` and `hide` carry through too,
 but `protect_mode` defaults to `fail` in an eval: a cell that changed a file its gates rely
 on did not earn its pass (see [Batches](batches.md#batches)).
 

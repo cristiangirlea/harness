@@ -175,6 +175,24 @@ gates run, as a gate named `protect ...` whose output lists the files, so a retr
 which ones to restore. A task's `protect` and `protect_mode` replace the spec's. Evals
 default to `fail`.
 
+`protect` catches an agent that changes those files; `hide` keeps it from reading them.
+It takes the same globs: `"hide": ["fixtures/*/checks/**", "suites/**"]`. Before an
+attempt's agent starts, hrn removes from the worktree every file tracked at the batch's
+base that matches, keeping the bytes git checked out, and the batch shows
+`hid N files from the agent`. When the run ends, however it ends, hrn writes those bytes
+back before the `protect` check and the gates, so a gate sees the files unchanged and
+anything the agent put at a hidden path (a file, a folder, a link) is replaced. A retry
+or a carry-on hides them again. The attempt's record counts them under `hidden`; a
+matching file that is missing or is not a regular file is left alone and not counted.
+The hidden files are held in memory, 64 MiB at most per attempt; past that nothing is
+removed and the task fails as below.
+If the files cannot be removed the agent is not started, and if they cannot be put back
+nothing is committed and no gate or retry runs: either way the task fails with an error
+that starts `hide:` and its worktree is kept. A task's `hide` replaces the spec's.
+Hiding is not a sandbox: the files stay in git's object store, so an agent that may run
+git can still read them with `git show`. Tell the agent not to run git, or use a mode
+that does not allow it.
+
 Set `"retry_k": 3` on the spec or a task to try different brief additions after a
 failed task. Values from 2 to 5 are accepted; a task value overrides the spec.
 After the ordinary attempts fail, the task backend proposes additions, and each

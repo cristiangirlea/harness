@@ -417,6 +417,28 @@ func TestAnEvalNeverSwitchesBackends(t *testing.T) {
 	}
 }
 
+func TestAnEvalCarriesItsHideListsToEveryCell(t *testing.T) {
+	spec := testSpec("somewhere")
+	spec.Hide = []string{"fixtures/*/checks/**"}
+	spec.Tasks[0].Hide = []string{"suites/**"}
+	bs, err := Expand(spec, "abc12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bs.Hide) != 1 || bs.Hide[0] != "fixtures/*/checks/**" {
+		t.Errorf("spec hide = %q", bs.Hide)
+	}
+	own := 0
+	for _, cell := range bs.Tasks {
+		if len(cell.Hide) == 1 && cell.Hide[0] == "suites/**" {
+			own++
+		}
+	}
+	if want := len(spec.Matrix) * max(spec.Repeats, 1); own != want {
+		t.Errorf("%d cells carry the first task's own hide list, want %d", own, want)
+	}
+}
+
 func TestAnEvalFailsACellThatChangedAProtectedFileUnlessItSaysOtherwise(t *testing.T) {
 	bs, err := Expand(testSpec("somewhere"), "abc12")
 	if err != nil {
