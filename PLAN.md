@@ -287,6 +287,18 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-16: a `hide` list keeps named files out of a task's worktree while its agent runs (#917,
+  PR #918). `protect` caught an agent that changed the files its gates rely on; nothing stopped it
+  reading them, and in hrn-evals 5 to 8 of twenty first attempts opened a hidden check file. Same
+  globs as `protect`, on the spec or a task; evals carry it. The matching regular files tracked at
+  the base are read (64 MiB at most, all before any is removed), removed, and written back when the
+  run ends, before the `protect` check and the gates; the attempt records a `hidden` count.
+  Deviation from the issue: the files go back from the bytes taken out, through a handle opened on
+  the worktree before the agent ran, not from the base with git. The review showed a restore
+  through git follows what the agent wrote into the worktree (attributes, sparse patterns) and a
+  path it swapped for a link. A failure to hide or to restore stops the task with an error that
+  starts `hide:` and keeps its worktree; nothing is committed, gated or retried. Known limit: the
+  files stay in git's object store, so an agent that may run git can read them with `git show`.
 - 2026-11-16: a routing row may carry fallback rows, and a batch attempt on another backend uses
   them (#908, PR #915). A retry on another backend, or a plan-limit switch, used to run that
   backend's default model, since the table held one row per purpose: in three routed batches of
