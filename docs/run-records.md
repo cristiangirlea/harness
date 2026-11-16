@@ -61,6 +61,10 @@ Under `protect_mode: fail` the attempt also has a failed gate named `protect ...
 `guard: true` so a user gate with a similar command is never taken for it.
 Records without the field still load. See [Batches](batches.md#batches).
 
+A batch attempt with `hide` globs carries an optional `hidden` count: the files kept out
+of the worktree while its agent ran. An attempt whose files could not be removed or put
+back has an `error` that starts `hide:`. Records without the field still load.
+
 A batch attempt whose agent moved its branch or `HEAD` with git (a commit, reset or rename) carries
 `agent_committed: true`, and an eval's variant row counts those cells in
 `agent_committed`. Records without either field still load.

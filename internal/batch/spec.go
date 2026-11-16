@@ -33,6 +33,8 @@ type Spec struct {
 	// Protect uses slash globs relative to the repository.
 	Protect     []string `json:"protect,omitempty"`
 	ProtectMode string   `json:"protect_mode,omitempty"`
+	// Hide uses the same globs: files removed from the worktree while the agent runs.
+	Hide []string `json:"hide,omitempty"`
 	// Worktrees selects reusable slots or fresh task worktrees.
 	Worktrees string `json:"worktrees,omitempty"`
 	Tasks     []Task `json:"tasks"`
@@ -65,6 +67,7 @@ type Task struct {
 	RetryK      int            `json:"retry_k,omitempty"`
 	Protect     []string       `json:"protect,omitempty"`
 	ProtectMode string         `json:"protect_mode,omitempty"`
+	Hide        []string       `json:"hide,omitempty"`
 	// Expect is a regexp the agent's final answer must match, checked as a gate before the others.
 	Expect string `json:"expect,omitempty"`
 }
@@ -157,6 +160,8 @@ type Attempt struct {
 	SwitchedFrom string `json:"switched_from,omitempty"`
 	// Protected lists changed or removed protected files against the base.
 	Protected []string `json:"protected,omitempty"`
+	// Hidden counts the files kept out of the worktree while the agent ran.
+	Hidden int `json:"hidden,omitempty"`
 	// AgentCommitted says the agent moved its branch or HEAD with git itself (a commit, reset or rename).
 	AgentCommitted bool `json:"agent_committed,omitempty"`
 }
@@ -279,6 +284,9 @@ func (s *Spec) normalize() error {
 	if err := checkProtect(s.Protect, s.ProtectMode); err != nil {
 		return err
 	}
+	if err := checkGlobs("hide", s.Hide); err != nil {
+		return err
+	}
 	if len(s.Tasks) == 0 {
 		return errors.New("no tasks")
 	}
@@ -330,6 +338,9 @@ func (s *Spec) normalize() error {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if err := checkProtect(t.Protect, t.ProtectMode); err != nil {
+			return fmt.Errorf("task %s: %w", t.ID, err)
+		}
+		if err := checkGlobs("hide", t.Hide); err != nil {
 			return fmt.Errorf("task %s: %w", t.ID, err)
 		}
 		if _, err := compileExpect(t.Expect); err != nil {
