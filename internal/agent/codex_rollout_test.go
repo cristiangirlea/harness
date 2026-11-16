@@ -211,7 +211,7 @@ func TestCodexRolloutSearchCoversEveryDateOfTheRunAndOneEitherSide(t *testing.T)
 	} {
 		home := t.TempDir()
 		placeRollout(t, home, tc.day, same)
-		model, _ := codexRollout(home, recordedCodexThread, started, now)
+		model := codexRollout(home, recordedCodexThread, started, now).model
 		if (model != "") != tc.found {
 			t.Fatalf("rollout dated %s: model %q, want found = %v", tc.day.Format("2006-01-02"), model, tc.found)
 		}

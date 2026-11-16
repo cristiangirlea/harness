@@ -10,6 +10,12 @@ Calls exclude partial call events; errors count error results, and result bytes 
 the UTF-8 byte lengths of result event text before masking. Empty tool names use
 the `""` key for both calls and results. Zero counters and absent stats are omitted;
 older records still load unchanged, and negative counters are rejected.
+On the codex backend, `shell` counts commands, `apply_patch` file edits and
+`mcp__<server>__<tool>` MCP calls; with `--gate`, the gate's `run_command` is `shell` and its
+other tools keep their names. Calls the stream never shows, such as a code-mode `exec` script
+that only lists tools, are read from codex's session rollout after the run and counted under
+their own name. Each tool item belongs to the call running when it started; nothing is added
+unless the rollout's tool items match the stream's and each one started inside a call.
 
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
 Only non-durable api runs carry flags, using the api loop's guard/permission texts

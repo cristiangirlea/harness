@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -79,22 +80,40 @@ func NewCodexBackend() *CLIBackend {
 }
 
 // codexReportModel takes the model from the session's rollout file: exec --json names none.
-func codexReportModel(t Task, started time.Time, res *Result) {
-	model, version := codexRollout(codexHomeDir(t.Dir), res.Session, started, time.Now())
-	res.CLIVersion = version
-	if model == "" {
+// It also adds the tool calls the stream never showed, when the rollout's tool items match the stream's.
+func codexReportModel(t Task, started time.Time, res *Result, emit func(Event), streamed int) {
+	r := codexRollout(codexHomeDir(t.Dir), res.Session, started, time.Now())
+	res.CLIVersion = r.version
+	if r.counted == streamed {
+		for _, e := range r.calls {
+			emit(e)
+		}
+	}
+	if r.model == "" {
 		return
 	}
-	res.Model, res.ModelReported = model, true
+	res.Model, res.ModelReported = r.model, true
 	if res.Usage != nil {
 		estimateCodexCost(res)
 	}
 }
 
-// codexRollout reads the last turn's model and the CLI version codex recorded for session.
-func codexRollout(home, session string, started, now time.Time) (model, version string) {
+// codexRolloutRead is what a session's rollout file adds to the stream.
+type codexRolloutRead struct {
+	model, version string
+	// counted is how many of this run's items the stream also reports as tool calls.
+	counted int
+	// calls are this run's tool calls that ran none of those items.
+	calls []Event
+}
+
+// The rollout items whose stream counterparts parseCodexStream counts as tool calls.
+var codexStreamedTools = []string{"CommandExecution", "McpToolCall", "FileChange"}
+
+// codexRollout reads what codex recorded for session: the last turn's model, the CLI version and the unstreamed calls.
+func codexRollout(home, session string, started, now time.Time) codexRolloutRead {
 	if home == "" || !sessionID.MatchString(session) {
-		return "", ""
+		return codexRolloutRead{}
 	}
 	// Folders are named by the session's local start date; a day either side covers time zones.
 	first := started.AddDate(0, 0, -1)
@@ -108,59 +127,155 @@ func codexRollout(home, session string, started, now time.Time) (model, version 
 			if e.IsDir() || !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, "-"+session+".jsonl") {
 				continue
 			}
-			if model, version, ok := readCodexRollout(filepath.Join(dir, name), session); ok {
-				return model, version
+			if r, ok := readCodexRollout(filepath.Join(dir, name), session, started); ok {
+				return r
 			}
 		}
 	}
-	return "", ""
+	return codexRolloutRead{}
 }
 
-func readCodexRollout(path, session string) (model, version string, ok bool) {
+// readCodexRollout counts only lines stamped since the run started, so an earlier run's calls stay out.
+func readCodexRollout(path, session string, since time.Time) (r codexRolloutRead, ok bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", "", false
+		return r, false
 	}
 	defer f.Close()
-	r := bufio.NewReader(f)
+	type call struct {
+		name, input, output string
+		start, end          time.Time
+		done, ranTool       bool
+	}
+	var calls []*call
+	byID := map[string]*call{}
+	var itemStarts []time.Time
+	placeable := true
+	rd := bufio.NewReader(f)
 	for {
-		raw, err := r.ReadBytes('\n')
+		raw, err := rd.ReadBytes('\n')
 		if len(raw) == 0 && err != nil {
 			break
 		}
 		var line struct {
-			Type    string          `json:"type"`
-			Payload json.RawMessage `json:"payload"`
+			Timestamp string          `json:"timestamp"`
+			Type      string          `json:"type"`
+			Payload   json.RawMessage `json:"payload"`
 		}
 		// A line codex cut short when it was killed is skipped, not fatal.
 		if json.Unmarshal(raw, &line) != nil {
 			continue
 		}
-		var p struct {
-			ID         string `json:"id"`
-			Model      string `json:"model"`
-			CLIVersion string `json:"cli_version"`
-		}
-		if (line.Type != "session_meta" || ok) && line.Type != "turn_context" || json.Unmarshal(line.Payload, &p) != nil {
-			continue
-		}
 		switch line.Type {
-		case "session_meta":
+		case "session_meta", "turn_context":
+			var p struct {
+				ID         string `json:"id"`
+				Model      string `json:"model"`
+				CLIVersion string `json:"cli_version"`
+			}
+			if line.Type == "session_meta" && ok || json.Unmarshal(line.Payload, &p) != nil {
+				continue
+			}
+			if line.Type == "turn_context" {
+				if ValidModel(p.Model) {
+					r.model = p.Model
+				}
+				continue
+			}
 			// The first session_meta names the file's own session; later ones are ignored.
 			if p.ID != session {
-				return "", "", false
+				return codexRolloutRead{}, false
 			}
 			ok = true
 			if ValidModel(p.CLIVersion) {
-				version = p.CLIVersion
+				r.version = p.CLIVersion
 			}
-		case "turn_context":
-			if ValidModel(p.Model) {
-				model = p.Model
+		case "response_item", "event_msg":
+			at, err := time.Parse(time.RFC3339Nano, line.Timestamp)
+			if !ok || err != nil || at.Before(since) {
+				continue
+			}
+			var p struct {
+				Type        string          `json:"type"`
+				CallID      string          `json:"call_id"`
+				Name        string          `json:"name"`
+				Input       string          `json:"input"`
+				Arguments   string          `json:"arguments"`
+				Output      json.RawMessage `json:"output"`
+				StartedAtMS int64           `json:"started_at_ms"`
+				Item        struct {
+					Type string `json:"type"`
+				} `json:"item"`
+			}
+			if json.Unmarshal(line.Payload, &p) != nil {
+				continue
+			}
+			switch p.Type {
+			case "custom_tool_call", "function_call":
+				if byID[p.CallID] == nil {
+					c := &call{name: p.Name, input: cmp.Or(p.Input, p.Arguments), start: at}
+					calls = append(calls, c)
+					byID[p.CallID] = c
+				}
+			case "item_completed":
+				if !slices.Contains(codexStreamedTools, p.Item.Type) {
+					continue
+				}
+				r.counted++
+				if p.StartedAtMS <= 0 {
+					placeable = false
+				}
+				itemStarts = append(itemStarts, time.UnixMilli(p.StartedAtMS))
+			case "custom_tool_call_output", "function_call_output":
+				if c := byID[p.CallID]; c != nil && !c.done {
+					c.done, c.end, c.output = true, at, codexOutputText(p.Output)
+				}
 			}
 		}
 	}
-	return model, version, ok
+	// An item belongs to the call running when it started; its completion may come after the call returned.
+	for _, started := range itemStarts {
+		placed := false
+		for _, c := range calls {
+			if !started.Before(c.start) && (!c.done || !started.After(c.end)) {
+				c.ranTool, placed = true, true
+			}
+		}
+		placeable = placeable && placed
+	}
+	if !placeable {
+		return r, ok
+	}
+	for _, c := range calls {
+		if c.ranTool {
+			continue
+		}
+		r.calls = append(r.calls, Event{Time: c.start, Kind: EventToolCall, Tool: c.name, Text: c.input})
+		if c.done {
+			r.calls = append(r.calls, Event{Time: c.end, Kind: EventToolResult, Tool: c.name, Text: c.output,
+				IsError: strings.HasPrefix(c.output, "Script failed")})
+		}
+	}
+	return r, ok
+}
+
+// codexOutputText reads a call's output, which codex stores as a string or as text parts.
+func codexOutputText(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var parts []struct {
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &parts) == nil {
+		var b strings.Builder
+		for _, part := range parts {
+			b.WriteString(part.Text)
+		}
+		return b.String()
+	}
+	return string(raw)
 }
 
 // Hashed build names require ordering by modification time.
@@ -192,6 +307,11 @@ func newestFile(root, name string) []string {
 }
 
 func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
+	return parseCodexLine(line, emit, res, false)
+}
+
+// parseCodexLine names the gate's tools as the gate's only when gated: elsewhere a server may share its name.
+func parseCodexLine(line []byte, emit func(Event), res *Result, gated bool) bool {
 	var l struct {
 		Type     string `json:"type"`
 		ThreadID string `json:"thread_id"`
@@ -221,11 +341,27 @@ func parseCodexStream(line []byte, emit func(Event), res *Result) bool {
 	case "thread.started":
 		res.Session = l.ThreadID
 	case "item.started":
-		if l.Item.Type == "command_execution" {
+		switch l.Item.Type {
+		case "command_execution":
 			emit(Event{Time: now, Kind: EventToolCall, Tool: "shell", Text: l.Item.Command})
+		case "file_change":
+			var changes []string
+			for _, c := range readCodexToolItem(line).Changes {
+				changes = append(changes, c.Kind+" "+c.Path)
+			}
+			emit(Event{Time: now, Kind: EventToolCall, Tool: "apply_patch", Text: strings.Join(changes, "\n")})
+		case "mcp_tool_call":
+			item := readCodexToolItem(line).codexMCPItem
+			emit(Event{Time: now, Kind: EventToolCall, Tool: codexMCPToolName(item, gated), Text: codexGateCallText(item)})
 		}
 	case "item.completed":
 		switch l.Item.Type {
+		case "file_change":
+			emit(Event{Time: now, Kind: EventToolResult, Tool: "apply_patch", IsError: readCodexToolItem(line).Status == "failed"})
+		case "mcp_tool_call":
+			item := readCodexToolItem(line).codexMCPItem
+			emit(Event{Time: now, Kind: EventToolResult, Tool: codexMCPToolName(item, gated), Text: codexGateResultText(item),
+				IsError: item.Error != nil || item.Status == "failed"})
 		case "agent_message":
 			emit(Event{Time: now, Kind: EventText, Text: l.Item.Text})
 			res.Final = l.Item.Text
