@@ -111,9 +111,10 @@ query (including an empty `?`), or fragment. The CA path must name a regular
 file; symlinks to regular files are accepted. `remote_submit` accepts only
 read-only `api` jobs on registered projects, with a full commit, positive cost
 ceiling, and idempotency key. When `HRN_REMOTE_MAX_COST_USD` is set on the MCP
-server, a `max_cost_usd` above it is refused before any request; a fresh
-idempotency key queues a new job, and tenant budgets are not reserved yet, so
-set this cap for hosts you do not fully trust.
+server, a `max_cost_usd` above it is refused before any request, so set this
+cap for hosts you do not fully trust. A fresh idempotency key queues a new job,
+and the control service reserves against the [tenant budget](../server/README.md)
+when one is set.
 Unknown and unsupported input fields are refused.
 
 Requests are served concurrently, so parallel tool calls from the host become parallel
