@@ -13,10 +13,12 @@ WHERE state IN ('succeeded','failed','canceled')
   AND NOT EXISTS (SELECT 1 FROM attempts WHERE job_id = jobs.id);
 
 UPDATE jobs
-SET spent_usd = LEAST(GREATEST((result->>'cost_usd')::numeric, 0), reserved_usd)
+SET spent_usd = LEAST(GREATEST(COALESCE((result->>'cost_usd')::numeric, 0), 0), reserved_usd)
 WHERE state IN ('succeeded','failed','canceled')
   AND EXISTS (SELECT 1 FROM attempts WHERE job_id = jobs.id)
   AND CASE WHEN jsonb_typeof(result->'cost_usd') = 'number'
-           THEN (result->>'cost_usd')::numeric <> 0 OR result->'cost_is_estimate' = 'true'::jsonb END;
+           THEN (result->>'cost_usd')::numeric <> 0 OR result->'cost_is_estimate' = 'true'::jsonb
+           WHEN result->'cost_usd' IS NULL
+           THEN result->'cost_is_estimate' = 'true'::jsonb END;
 
 CREATE INDEX jobs_tenant_exposure ON jobs (tenant_id) INCLUDE (state, reserved_usd, spent_usd);

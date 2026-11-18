@@ -545,6 +545,7 @@ func TestTenantBudgetMigrationBackfillsVersionSixJobs(t *testing.T) {
 		{name: "below ceiling", state: Succeeded, result: `{"cost_usd":0.25,"cost_is_estimate":true}`, reserved: 2.75, spent: new(0.25)},
 		{name: "above ceiling", state: Succeeded, result: `{"cost_usd":4}`, reserved: 2.75, spent: new(2.75)},
 		{name: "estimated zero", state: Failed, result: `{"cost_usd":0,"cost_is_estimate":true}`, reserved: 2.75, spent: new(0.0)},
+		{name: "estimated zero as stored", state: Failed, result: `{"cost_is_estimate":true}`, reserved: 2.75, spent: new(0.0)},
 		{name: "missing cost", state: Failed, result: `{"status":"error"}`, reserved: 2.75},
 		{name: "malformed cost", state: Failed, result: `{"cost_usd":"unknown","cost_is_estimate":true}`, reserved: 2.75},
 		{name: "malformed ceiling", state: Queued},
