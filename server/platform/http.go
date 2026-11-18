@@ -24,6 +24,7 @@ type HTTPServer struct {
 	OperatorToken        string
 	ScalerToken          string
 	MaxCostUSDPerJob     float64
+	RequireTenantBudget  bool
 	submissionAuthorized func(context.Context, string, string) (bool, error)
 	workerAuthorized     func(context.Context, string, string) (bool, error)
 	eventStreams         eventStreams
@@ -68,6 +69,8 @@ func (h *HTTPServer) Handler() http.Handler {
 	h.knowledgeRoutes(mux)
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("POST /v1/tenants", h.tenants)
+	mux.HandleFunc("PUT /v1/tenants/{tenant}/budget", h.setTenantBudget)
+	mux.HandleFunc("GET /v1/tenants/{tenant}/budget", h.tenantBudget)
 	mux.HandleFunc("POST /v1/projects", h.projects)
 	mux.HandleFunc("POST /v1/projects/{project}/jobs", h.submit)
 	mux.HandleFunc("GET /v1/jobs/{job}", h.show)
@@ -159,6 +162,10 @@ func invalid(w http.ResponseWriter, err error) {
 		failure(w, 409, "stale_owner", "execution owner is not current")
 	case errors.Is(err, ErrUnsupported):
 		failure(w, 422, "unsupported", err.Error())
+	case errors.Is(err, ErrCostLimit):
+		failure(w, 422, "cost_limit", err.Error())
+	case errors.Is(err, ErrTenantBudget):
+		failure(w, 422, "tenant_budget", err.Error())
 	default:
 		failure(w, 500, "storage_error", "request could not be completed")
 	}
@@ -250,6 +257,46 @@ func (h *HTTPServer) projects(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, map[string]any{"project": created, "worker_token": issued})
 }
 
+func (h *HTTPServer) setTenantBudget(w http.ResponseWriter, r *http.Request) {
+	if !h.operator(w, r) {
+		return
+	}
+	var input struct {
+		BudgetUSD json.RawMessage `json:"budget_usd"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	var budget *float64
+	if err := json.Unmarshal(input.BudgetUSD, &budget); err != nil || !validBudget(budget) {
+		failure(w, 400, "invalid_request", "budget_usd must be a positive finite number or null")
+		return
+	}
+	tenantID := r.PathValue("tenant")
+	if err := h.Store.SetTenantBudget(r.Context(), tenantID, budget); err != nil {
+		invalid(w, err)
+		return
+	}
+	h.respondTenantBudget(w, r, tenantID)
+}
+
+func (h *HTTPServer) tenantBudget(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenant")
+	if !sameToken(token(r), h.OperatorToken) && !h.tenant(w, r, tenantID) {
+		return
+	}
+	h.respondTenantBudget(w, r, tenantID)
+}
+
+func (h *HTTPServer) respondTenantBudget(w http.ResponseWriter, r *http.Request, tenantID string) {
+	budget, err := h.Store.TenantBudget(r.Context(), tenantID)
+	if err != nil {
+		invalid(w, err)
+		return
+	}
+	respond(w, 200, budget)
+}
+
 func (h *HTTPServer) submit(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("project")
 	check := h.submissionAuthorized
@@ -305,11 +352,11 @@ func (h *HTTPServer) submit(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !existing {
-			failure(w, 422, "cost_limit", err.Error())
+			invalid(w, err)
 			return
 		}
 	}
-	job, reused, err := h.Store.Submit(r.Context(), input)
+	job, reused, err := h.Store.submit(r.Context(), input, h.RequireTenantBudget)
 	if err != nil {
 		invalid(w, err)
 		return

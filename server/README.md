@@ -74,12 +74,30 @@ startup, with a 10-second timeout. Set
 The default is `hrn` on PATH. The container image supplies the binary and sets
 `HRN_WORKER_HRN` to its absolute path.
 
-Tenant budgets and spending reservation are not enforced yet (still open in
-the durable workers spec): any tenant can queue any number of jobs, each up to
-its own `max_cost_usd`. Set `HRN_MAX_COST_USD_PER_JOB` (a positive number of
-USD) to cap that ceiling: a submission above it is refused with 422
-`cost_limit` naming the limit, and an invalid value stops startup. Unset means
-no server cap. Clients can add their own with `HRN_REMOTE_MAX_COST_USD`.
+A tenant budget caps total committed spending. The committed total sums every
+job the tenant has ever submitted. It has no reset period. The operator can
+raise it as needed. Each new job commits its `max_cost_usd`. A terminal job
+with known spend counts at that amount, and a
+terminal job that never started an attempt counts at zero. All other jobs
+keep their reservation. Jobs that finished before the upgrade are counted by
+the same rule using their stored results. Worker-reported spend is an estimate
+for budget accounting, clamped between zero and the job's reservation.
+Invoices are separate.
+
+Use `PUT /v1/tenants/{tenant}/budget` with the operator token and a
+`budget_usd` number, or use JSON `null` to remove the cap. Lowering the
+budget can block new jobs and leaves accepted jobs in place. The operator
+and the tenant can use `GET /v1/tenants/{tenant}/budget` to see the budget
+and its committed, reserved, and spent amounts. A new submission that would
+exceed the budget returns 422 `tenant_budget`. Set
+`HRN_REQUIRE_TENANT_BUDGET=1` to also refuse new submissions from tenants
+without a budget. Empty or unset disables this requirement. Other values
+stop startup.
+
+`HRN_MAX_COST_USD_PER_JOB` still caps each job's ceiling. Set it to a
+positive number of USD. A submission above it returns 422 `cost_limit`, and
+an invalid value stops startup. Unset means no server per-job cap. Clients can
+add their own with `HRN_REMOTE_MAX_COST_USD`.
 
 ## Job events
 
@@ -110,6 +128,8 @@ repository URL when a job is accepted. It refuses to upgrade a schema 1
 database that contains jobs, because their accepted URLs cannot be recovered
 safely. Migration 003 adds scoped, immutable project knowledge and retrieval
 records. The integration tests cover both refusal and the empty schema upgrade.
+Migration 007 adds tenant budgets and backfills existing job reservations from
+their stored `max_cost_usd`.
 Opening an older schema requests the explicit `migrate` command; startup never
 migrates it automatically.
 The worker uses version 2 workspace manifests and refuses older or mismatched

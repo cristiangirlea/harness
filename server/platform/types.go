@@ -40,12 +40,13 @@ const (
 )
 
 var (
-	ErrNotFound    = errors.New("not found")
-	ErrConflict    = errors.New("conflicting idempotency key")
-	ErrNotOwner    = errors.New("stale or expired execution owner")
-	ErrUnsupported = errors.New("unsupported remote execution mode")
-	ErrCostLimit   = errors.New("cost ceiling above the per-job limit")
-	refPattern     = regexp.MustCompile("^[0-9a-f]{40}([0-9a-f]{24})?$")
+	ErrNotFound     = errors.New("not found")
+	ErrConflict     = errors.New("conflicting idempotency key")
+	ErrNotOwner     = errors.New("stale or expired execution owner")
+	ErrUnsupported  = errors.New("unsupported remote execution mode")
+	ErrCostLimit    = errors.New("cost ceiling above the per-job limit")
+	ErrTenantBudget = errors.New("tenant budget")
+	refPattern      = regexp.MustCompile("^[0-9a-f]{40}([0-9a-f]{24})?$")
 )
 
 type Project struct {
@@ -55,6 +56,14 @@ type Project struct {
 	RepositoryURL string `json:"repository_url"`
 	BaseRef       string `json:"base_ref"`
 	Backend       string `json:"backend"`
+}
+
+type TenantBudget struct {
+	TenantID     string   `json:"tenant_id"`
+	BudgetUSD    *float64 `json:"budget_usd"`
+	CommittedUSD float64  `json:"committed_usd"`
+	ReservedUSD  float64  `json:"reserved_usd"`
+	SpentUSD     float64  `json:"spent_usd"`
 }
 
 type Job struct {
@@ -163,8 +172,7 @@ func validateSubmission(s Submission) error {
 	return nil
 }
 
-// checkCostLimit refuses a ceiling above the service's per-job limit; zero
-// means no limit. Tenant budgets are not reserved yet, so this is the control.
+// checkCostLimit caps individual jobs even when the tenant has room in its budget.
 func checkCostLimit(s Submission, limit float64) error {
 	if limit > 0 && s.Options.MaxCostUSD > limit {
 		return fmt.Errorf("%w: max_cost_usd %g exceeds this service's per-job limit of %g USD (HRN_MAX_COST_USD_PER_JOB)", ErrCostLimit, s.Options.MaxCostUSD, limit)

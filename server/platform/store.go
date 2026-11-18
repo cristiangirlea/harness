@@ -9,9 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,10 +28,10 @@ type Store struct {
 }
 
 func checkSchemaVersion(version int) error {
-	if version < 6 {
+	if version < 7 {
 		return fmt.Errorf("unsupported schema version %d: run the explicit migrate command", version)
 	}
-	if version != 6 {
+	if version != 7 {
 		return fmt.Errorf("unsupported schema version %d", version)
 	}
 	return nil
@@ -96,7 +99,7 @@ func Migrate(ctx context.Context, dsn string) error {
 	if err := tx.QueryRow(ctx, "SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&version); err != nil {
 		return err
 	}
-	if version > 6 {
+	if version > 7 {
 		return fmt.Errorf("database schema version %d is newer than this binary", version)
 	}
 	if version == 0 {
@@ -172,6 +175,18 @@ func Migrate(ctx context.Context, dsn string) error {
 			return err
 		}
 	}
+	if version <= 6 {
+		script, err := migrationFiles.ReadFile("migrations/007_tenant_budgets.sql")
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, string(script)); err != nil {
+			return fmt.Errorf("migration 7: %w", err)
+		}
+		if _, err = tx.Exec(ctx, "INSERT INTO schema_migrations(version) VALUES (7)"); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 
@@ -208,6 +223,70 @@ func (s *Store) TenantAuthorized(ctx context.Context, tenantID, token string) (b
 	}
 	digest := sha256.Sum256([]byte(token))
 	return subtle.ConstantTimeCompare(wanted, digest[:]) == 1, nil
+}
+
+const tenantBudgetTotals = `
+    SELECT COALESCE(sum(COALESCE(known_spend,reserved_usd)), 0) AS committed,
+           COALESCE(sum(reserved_usd) FILTER (WHERE known_spend IS NULL), 0) AS reserved,
+           COALESCE(sum(known_spend), 0) AS spent
+    FROM (
+        SELECT reserved_usd,
+               CASE WHEN state IN ('succeeded','failed','canceled') THEN spent_usd END AS known_spend
+        FROM jobs WHERE tenant_id=$1
+    ) AS exposure`
+
+func validBudget(budget *float64) bool {
+	return budget == nil || (*budget > 0 && !math.IsInf(*budget, 0))
+}
+
+func (s *Store) SetTenantBudget(ctx context.Context, tenantID string, budget *float64) error {
+	if !validBudget(budget) {
+		return errors.New("budget_usd must be a positive finite number or null")
+	}
+	var amount any
+	if budget != nil {
+		amount = strconv.FormatFloat(*budget, 'g', -1, 64)
+	}
+	tag, err := s.db.Exec(ctx, "UPDATE tenants SET budget_usd=$2::text::numeric WHERE id=$1", tenantID, amount)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+func (s *Store) TenantBudget(ctx context.Context, tenantID string) (TenantBudget, error) {
+	var budget TenantBudget
+	err := s.db.QueryRow(ctx, `SELECT id,budget_usd,committed,reserved,spent
+        FROM tenants CROSS JOIN (`+tenantBudgetTotals+`) AS totals WHERE id=$1`, tenantID).
+		Scan(&budget.TenantID, &budget.BudgetUSD, &budget.CommittedUSD, &budget.ReservedUSD, &budget.SpentUSD)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return TenantBudget{}, ErrNotFound
+	}
+	return budget, err
+}
+
+func checkTenantBudget(ctx context.Context, tx pgx.Tx, tenantID string, budget pgtype.Numeric, maxCost float64, reservation string, required bool) error {
+	if !budget.Valid {
+		if required {
+			return fmt.Errorf("%w: this tenant has no budget and the service requires one (HRN_REQUIRE_TENANT_BUDGET)", ErrTenantBudget)
+		}
+		return nil
+	}
+	var committed float64
+	var exceeded bool
+	err := tx.QueryRow(ctx, `SELECT committed, committed+$2::text::numeric > $3::numeric
+        FROM (`+tenantBudgetTotals+`) AS totals`, tenantID, reservation, budget).Scan(&committed, &exceeded)
+	if err != nil {
+		return err
+	}
+	if exceeded {
+		limit, err := budget.Float64Value()
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: max_cost_usd %g would pass the budget of %g USD (%g committed)", ErrTenantBudget, maxCost, limit.Float64, committed)
+	}
+	return nil
 }
 
 // CreateProject returns a worker token once. Only its digest is stored.
@@ -256,6 +335,10 @@ func (s *Store) IdempotentJobExists(ctx context.Context, tenantID, projectID, ke
 }
 
 func (s *Store) Submit(ctx context.Context, input Submission) (Job, bool, error) {
+	return s.submit(ctx, input, false)
+}
+
+func (s *Store) submit(ctx context.Context, input Submission, budgetRequired bool) (Job, bool, error) {
 	if err := validateSubmission(input); err != nil {
 		return Job{}, false, err
 	}
@@ -272,6 +355,15 @@ func (s *Store) Submit(ctx context.Context, input Submission) (Job, bool, error)
 		return Job{}, false, err
 	}
 	defer tx.Rollback(ctx)
+	var budget pgtype.Numeric
+	// Serialize reservations and budget updates before looking up the project or job.
+	err = tx.QueryRow(ctx, "SELECT budget_usd FROM tenants WHERE id=$1 FOR UPDATE", input.TenantID).Scan(&budget)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Job{}, false, ErrNotFound
+	}
+	if err != nil {
+		return Job{}, false, err
+	}
 	var profile, base, repositoryURL string
 	err = tx.QueryRow(ctx, "SELECT backend,base_ref,repository_url FROM projects WHERE id=$1 AND tenant_id=$2", input.ProjectID, input.TenantID).Scan(&profile, &base, &repositoryURL)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -283,46 +375,48 @@ func (s *Store) Submit(ctx context.Context, input Submission) (Job, bool, error)
 	if input.Backend != profile || input.BaseRef != base {
 		return Job{}, false, ErrUnsupported
 	}
+	key := any(nil)
+	if input.IdempotencyKey != "" {
+		key = input.IdempotencyKey
+		var id string
+		var originalHash []byte
+		err = tx.QueryRow(ctx, "SELECT id,request_hash FROM jobs WHERE tenant_id=$1 AND project_id=$2 AND idempotency_key=$3", input.TenantID, input.ProjectID, key).Scan(&id, &originalHash)
+		if err == nil {
+			if !bytes.Equal(hash, originalHash) {
+				return Job{}, false, ErrConflict
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return Job{}, false, err
+			}
+			job, err := s.GetJob(ctx, input.TenantID, input.ProjectID, id)
+			return job, true, err
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return Job{}, false, err
+		}
+	}
+	maxCost := input.Options.MaxCostUSD
+	reservation := strconv.FormatFloat(maxCost, 'g', -1, 64)
+	if err := checkTenantBudget(ctx, tx, input.TenantID, budget, maxCost, reservation, budgetRequired); err != nil {
+		return Job{}, false, err
+	}
 	id, err := newID("j_")
 	if err != nil {
 		return Job{}, false, err
 	}
-	var inserted string
-	key := any(nil)
-	if input.IdempotencyKey != "" {
-		key = input.IdempotencyKey
-	}
-	err = tx.QueryRow(ctx, `INSERT INTO jobs(id,tenant_id,project_id,prompt,options,backend,base_ref,repository_url,request_hash,idempotency_key)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-        ON CONFLICT (tenant_id,project_id,idempotency_key) WHERE idempotency_key IS NOT NULL
-        DO NOTHING RETURNING id`, id, input.TenantID, input.ProjectID, input.Prompt, options, input.Backend, input.BaseRef, repositoryURL, hash, key).Scan(&inserted)
-	reused := false
-	if errors.Is(err, pgx.ErrNoRows) {
-		if key == nil {
-			return Job{}, false, errors.New("unexpected job insertion conflict")
-		}
-		var originalHash []byte
-		err = tx.QueryRow(ctx, "SELECT id,request_hash FROM jobs WHERE tenant_id=$1 AND project_id=$2 AND idempotency_key=$3", input.TenantID, input.ProjectID, input.IdempotencyKey).Scan(&inserted, &originalHash)
-		if err != nil {
-			return Job{}, false, err
-		}
-		if !bytes.Equal(hash, originalHash) {
-			return Job{}, false, ErrConflict
-		}
-		reused = true
-	} else if err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO jobs(id,tenant_id,project_id,prompt,options,backend,base_ref,repository_url,request_hash,idempotency_key,reserved_usd)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::text::numeric)`,
+		id, input.TenantID, input.ProjectID, input.Prompt, options, input.Backend, input.BaseRef, repositoryURL, hash, key, reservation); err != nil {
 		return Job{}, false, err
 	}
-	if !reused {
-		if err := appendEvent(ctx, tx, input.TenantID, input.ProjectID, inserted, "queued", nil); err != nil {
-			return Job{}, false, err
-		}
+	if err := appendEvent(ctx, tx, input.TenantID, input.ProjectID, id, "queued", nil); err != nil {
+		return Job{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Job{}, false, err
 	}
-	job, err := s.GetJob(ctx, input.TenantID, input.ProjectID, inserted)
-	return job, reused, err
+	job, err := s.GetJob(ctx, input.TenantID, input.ProjectID, id)
+	return job, false, err
 }
 
 func (s *Store) GetJob(ctx context.Context, tenantID, projectID, jobID string) (Job, error) {
