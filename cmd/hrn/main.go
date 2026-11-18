@@ -47,7 +47,7 @@ Usage:
                                  process JSONL items as parallel read-only runs
   hrn exec --protocol v1          run one recorded task over the supervisor JSONL protocol
   hrn backends                    show enabled backends, default, availability and limits
-  hrn backends set --only NAMES [--default NAME] [--local-api URL] [--billing plan|metered] [--max-cost USD]
+  hrn backends set --only NAMES [--default NAME] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET]
                                   replace the backend preference (comma-separated names)
   hrn backends reset              remove the backend preference
   hrn remote submit|show|events|cancel [flags]
@@ -564,14 +564,18 @@ func cmdBackends(args []string) error {
 			localAPI := fs.String("local-api", "", "loopback or private-network api URL, the last carry-on partner; needs api in --only")
 			billing := fs.String("billing", "", "automatic carry-on billing policy: plan or metered")
 			maxCost := fs.Float64("max-cost", 0, "cost ceiling in USD for api runs; needs --billing metered")
+			provider := fs.String("provider", "", "claude provider: claude=plan|bedrock|vertex|foundry|gateway")
 			if err := fs.Parse(args[1:]); err != nil {
 				return err
 			}
 			if *only == "" || fs.NArg() != 0 {
-				return errors.New("usage: hrn backends set --only claude,codex [--default claude] [--local-api URL] [--billing plan|metered] [--max-cost USD]")
+				return errors.New("usage: hrn backends set --only claude,codex [--default claude] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET]")
 			}
-			maxCostSet := false
-			fs.Visit(func(f *flag.Flag) { maxCostSet = maxCostSet || f.Name == "max-cost" })
+			var maxCostSet, providerSet bool
+			fs.Visit(func(f *flag.Flag) {
+				maxCostSet = maxCostSet || f.Name == "max-cost"
+				providerSet = providerSet || f.Name == "provider"
+			})
 			if maxCostSet && (*maxCost <= 0 || math.IsNaN(*maxCost) || math.IsInf(*maxCost, 0)) {
 				return errors.New("backends set: --max-cost wants a positive amount")
 			}
@@ -583,6 +587,14 @@ func cmdBackends(args []string) error {
 			p.DefaultName = *def
 			p.LocalAPI = *localAPI
 			p.Billing, p.BillingMaxCostUSD = *billing, *maxCost
+			p.Providers = nil
+			if providerSet {
+				name, target, ok := strings.Cut(*provider, "=")
+				if !ok || name == "" {
+					return errors.New("backends set: --provider wants NAME=TARGET")
+				}
+				p.Providers = map[string]prefs.Provider{name: {Target: target}}
+			}
 			for _, name := range strings.Split(*only, ",") {
 				name = strings.TrimSpace(name)
 				if _, err := agent.Get(name); err != nil {
@@ -615,12 +627,13 @@ func cmdBackends(args []string) error {
 				p.DefaultName = ""
 				p.LocalAPI = ""
 				p.Billing, p.BillingMaxCostUSD = "", 0
+				p.Providers = nil
 				if err := prefs.Save(runlog.Home(), p); err != nil {
 					return err
 				}
 			}
 		default:
-			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] [--local-api URL] [--billing plan|metered] [--max-cost USD] | reset]")
+			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET] | reset]")
 		}
 	}
 	p, err := resolve.BackendPreferences(runlog.Home())
@@ -643,11 +656,15 @@ func cmdBackends(args []string) error {
 		if name == def {
 			state += " (default)"
 		}
+		provider := ""
+		if target := p.ProviderTarget(name); target != "" {
+			provider = " (provider: " + target + ")"
+		}
 		src, err := followup.Detect(name)
 		if err != nil {
-			fmt.Printf("  ✗ %-9s %s: %s\n", name, state, err)
+			fmt.Printf("  ✗ %-9s %s: %s%s\n", name, state, err, provider)
 		} else {
-			fmt.Printf("  ✓ %-9s %s: %s\n", name, state, src)
+			fmt.Printf("  ✓ %-9s %s: %s%s\n", name, state, src, provider)
 			if q := quota.For(name, now).String(now); q != "" {
 				fmt.Printf("    %-9s %s\n", "", q)
 			}

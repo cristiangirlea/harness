@@ -23,7 +23,8 @@ import (
 
 // CLIBackend runs an installed CLI using its own login.
 type CLIBackend struct {
-	name string
+	name           string
+	ProviderTarget string
 	// PATH takes precedence over bundled installations.
 	candidates func() []string
 	// promptFile replaces stdin for attachment-based CLIs.
@@ -174,6 +175,13 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	ctx, cancel := withTimeout(ctx, task)
 	defer cancel()
 	res := Result{Backend: c.name, Model: task.Model}
+	provider, declared := claudeProviders[c.ProviderTarget]
+	declared = declared && c.name == "claude"
+	loginEnv := c.loginEnv
+	if declared {
+		res.Provider = c.ProviderTarget
+		loginEnv = nil
+	}
 	fail := func(status Status, err error) Result {
 		res.Status = status
 		res.Error = err.Error()
@@ -269,7 +277,12 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	var withheld []string
 	if !task.InheritEnv {
 		var dropped int
-		cmd.Env, dropped, withheld = sanitizedEnv(cmd.Env, runtime.GOOS, slices.Concat(c.loginEnv, c.ownEnv)...)
+		keep := slices.Concat(loginEnv, c.ownEnv)
+		if declared {
+			keep = append(keep, provider.names...)
+			keep = append(keep, claudeProviderModels...)
+		}
+		cmd.Env, dropped, withheld = sanitizedEnv(cmd.Env, runtime.GOOS, keep...)
 		envLine = fmt.Sprintf("environment: sanitized, %d variables dropped (--inherit-env keeps them)", dropped)
 	}
 	// Variables hrn sets for the CLI itself go on after the allowlist; the
@@ -284,6 +297,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	cmd.Env = append(cmd.Env, task.ChildEnv...)
 	cmd.Env, _ = withoutEnvNames(cmd.Env, c.meteredEnv)
+	if declared {
+		cmd.Env = provider.apply(cmd.Env)
+	}
 	guarded := !task.AllowDangerous
 	if guarded {
 		guardDir, err := os.MkdirTemp("", "hrn-guard-*")
@@ -292,7 +308,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		defer os.RemoveAll(guardDir)
 		var guardWithheld []string
-		cmd.Env, guardWithheld = tools.GuardEnv(cmd.Env, guardDir, c.loginEnv...)
+		cmd.Env, guardWithheld = tools.GuardEnv(cmd.Env, guardDir, loginEnv...)
 		withheld = slices.Compact(slices.Sorted(slices.Values(append(withheld, guardWithheld...))))
 	}
 	if c.promptStdin {
@@ -323,6 +339,13 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: gateLine})
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: envLine})
+	if declared {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "provider: " + res.Provider + ", declared in backends.json"})
+		if guarded && (res.Provider == "bedrock" || res.Provider == "foundry") {
+			emit(Event{Time: time.Now(), Kind: EventInfo,
+				Text: "provider: " + res.Provider + " under the guard cannot read the cloud CLI's login files; it signs in only through an instance or managed role, or with --allow-dangerous"})
+		}
+	}
 	if len(metered) > 0 {
 		emit(Event{Time: time.Now(), Kind: EventInfo,
 			Text: fmt.Sprintf("environment: %s withheld so %s bills its plan login, not per token", strings.Join(metered, ", "), c.name)})
@@ -392,6 +415,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		emit(e)
 	}
+	var stop bool
 	for sc.Scan() {
 		line := sc.Bytes()
 		if c.finalize != nil {
@@ -401,11 +425,8 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		if parse != nil {
 			parsed := parse(line, parseEmit, &res)
 			if c.stopWhen != nil && c.stopWhen(&res) {
-				cancel()
-				stopErr := stopCLITree(tree, errors.New(res.Error))
-				_ = stdout.Close()
-				_ = cmd.Wait()
-				return fail(StatusError, stopErr)
+				stop = true
+				break
 			}
 			if res.Session != "" && res.Session != session {
 				session = res.Session
@@ -419,8 +440,15 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		plain.WriteString(text)
 		emit(Event{Kind: EventText, Text: text, Partial: true})
 	}
-	if c.newParse != nil && c.finalize == nil {
+	if !stop && c.newParse != nil && c.finalize == nil {
 		parse(nil, parseEmit, &res) // a parser holding a line back lets it go
+	}
+	if stop {
+		cancel()
+		stopErr := stopCLITree(tree, errors.New(res.Error))
+		_ = stdout.Close()
+		_ = cmd.Wait()
+		return fail(StatusError, stopErr)
 	}
 	_, _ = io.Copy(io.Discard, stdout)
 	waitErr := cmd.Wait()
@@ -459,6 +487,10 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		}
 		return fail(status, errors.New(msg))
 	default:
+		// A refusal set at end of stream yields to a timeout or the CLI's own error above.
+		if c.stopWhen != nil && c.stopWhen(&res) {
+			return fail(StatusError, errors.New(res.Error))
+		}
 		if c.end != nil {
 			c.end(emit, &res, errored)
 		}

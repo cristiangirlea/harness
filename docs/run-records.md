@@ -17,6 +17,8 @@ that only lists tools, are read from codex's session rollout after the run and c
 their own name. Each tool item belongs to the call running when it started; nothing is added
 unless the rollout's tool items match the stream's and each one started inside a call.
 
+A claude result with a declared metered target records its name in `provider`.
+
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
 Only non-durable api runs carry flags, using the api loop's guard/permission texts
 and `run_command`/`write_file`/`edit_file` names; other backends and durable runs carry none.

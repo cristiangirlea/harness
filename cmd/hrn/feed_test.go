@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -157,6 +158,30 @@ func TestFeedRejectsBackendsWithTools(t *testing.T) {
 		if _, err := feedBackend(name); err == nil || !strings.Contains(err.Error(), "cannot run without tools yet") {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+func TestFeedAppliesDeclaredClaudeProviderToACopy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := prefs.Save(home, prefs.Prefs{
+		Billing: "metered", Providers: map[string]prefs.Provider{"claude": {Target: "bedrock"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	registered, err := agent.Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := registered.(*agent.CLIBackend)
+	before := original.ProviderTarget
+	b, err := feedBackend("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := b.(*agent.CLIBackend)
+	if got == original || got.ProviderTarget != "bedrock" || original.ProviderTarget != before {
+		t.Fatalf("feed provider %q, registered provider %q, same backend %v", got.ProviderTarget, original.ProviderTarget, got == original)
 	}
 }
 

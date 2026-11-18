@@ -149,6 +149,13 @@ func feedBackend(name string) (agent.Backend, error) {
 		return nil, err
 	}
 	if name != "api" {
+		if cli, ok := b.(*agent.CLIBackend); ok {
+			if target := p.ProviderTarget(name); target != "" {
+				configured := *cli
+				configured.ProviderTarget = target
+				return &configured, nil
+			}
+		}
 		return b, nil
 	}
 	base := os.Getenv("ANTHROPIC_BASE_URL")

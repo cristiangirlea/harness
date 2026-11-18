@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -873,4 +874,26 @@ func TestExecRefusesToDropAPinOnBackendSwitch(t *testing.T) {
 		t.Fatalf("rejection: %+v", e)
 	}
 	h.exit(t, 2)
+}
+
+func TestNonWorkerBackendUsesDeclaredClaudeProviderOnACopy(t *testing.T) {
+	original, err := agent.Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered := agent.NewClaudeBackend()
+	agent.Register(registered)
+	t.Cleanup(func() { agent.Register(original) })
+	for _, target := range []string{"vertex", "plan", ""} {
+		p := prefs.Prefs{Billing: "metered"}
+		if target != "" {
+			p.Providers = map[string]prefs.Provider{"claude": {Target: target}}
+		}
+		got := nonWorkerBackend(registered, p)
+		want := p.ProviderTarget("claude")
+		if (got == registered) != (want == "") || got.(*agent.CLIBackend).ProviderTarget != want ||
+			registered.ProviderTarget != "" {
+			t.Fatalf("target %q: configured %p, registered %p", target, got, registered)
+		}
+	}
 }

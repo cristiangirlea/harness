@@ -27,6 +27,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -197,10 +198,8 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 		b = &agent.APIBackend{BaseURL: workerURL, MaxRetries: 3, HTTPClient: &http.Client{
 			Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}}
-	} else if api, ok := b.(*agent.APIBackend); ok && t.Backend == "api" && preferences.Metered() && preferences.BillingMaxCostUSD > 0 {
-		capped := *api
-		capped.CostCeilingUSD = preferences.BillingMaxCostUSD
-		b = &capped
+	} else {
+		b = nonWorkerBackend(b, preferences)
 	}
 	if !preferences.Enabled(t.Backend) {
 		return w.reject(req.AttemptID, "unsupported", "backend disabled by worker preference")
@@ -749,4 +748,22 @@ func hello() map[string]any {
 		"hrn":    map[string]string{"version": agent.Version, "revision": revision, "go": runtime.Version()},
 		"limits": map[string]int{"max_input_line": MaxInputLine, "max_event_text": MaxEventText},
 	}
+}
+
+func nonWorkerBackend(b agent.Backend, p prefs.Prefs) agent.Backend {
+	switch backend := b.(type) {
+	case *agent.APIBackend:
+		if p.Metered() && p.BillingMaxCostUSD > 0 {
+			capped := *backend
+			capped.CostCeilingUSD = p.BillingMaxCostUSD
+			return &capped
+		}
+	case *agent.CLIBackend:
+		if target := p.ProviderTarget(backend.Name()); target != "" {
+			configured := *backend
+			configured.ProviderTarget = target
+			return &configured
+		}
+	}
+	return b
 }
