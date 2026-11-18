@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -54,6 +55,7 @@ func (s *Store) AdmitOne(ctx context.Context) (string, error) {
 
 func expireAdmissions(ctx context.Context, tx pgx.Tx) error {
 	rows, err := tx.Query(ctx, "UPDATE jobs SET state=CASE WHEN admission_attempts>=3 THEN 'failed' ELSE 'queued' END, "+
+		"spent_usd=CASE WHEN admission_attempts>=3 AND NOT EXISTS (SELECT 1 FROM attempts WHERE job_id=jobs.id) THEN 0 ELSE spent_usd END,"+
 		"available_at=now()+LEAST(admission_attempts*interval '30 seconds',interval '5 minutes'),"+
 		"admission_deadline=NULL,updated_at=now() "+
 		"WHERE state='admitted' AND admission_deadline<now() RETURNING id,tenant_id,project_id,state")
@@ -249,7 +251,13 @@ func (s *Store) Finish(ctx context.Context, projectID, jobID, workerID string, g
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, "UPDATE jobs SET state=$2,result=$3,owner_id=NULL,lease_until=NULL,updated_at=now() WHERE id=$1", jobID, next, payload); err != nil {
+	var cost any
+	if next.terminal() && (result.CostUSD != 0 || result.CostEstimate) {
+		cost = strconv.FormatFloat(result.CostUSD, 'g', -1, 64)
+	}
+	if _, err = tx.Exec(ctx, `UPDATE jobs SET state=$2,result=$3,owner_id=NULL,lease_until=NULL,updated_at=now(),
+        spent_usd=CASE WHEN $4::text IS NOT NULL THEN LEAST(GREATEST($4::text::numeric,0),reserved_usd) END
+        WHERE id=$1`, jobID, next, payload, cost); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, "UPDATE attempts SET ended_at=now() WHERE job_id=$1 AND generation=$2", jobID, generation); err != nil {
@@ -314,7 +322,9 @@ func (s *Store) Cancel(ctx context.Context, tenantID, projectID, jobID string) (
 	}
 	switch current {
 	case Queued, Admitted, WaitingApproval:
-		_, err = tx.Exec(ctx, "UPDATE jobs SET state='canceled',updated_at=now() WHERE id=$1", jobID)
+		_, err = tx.Exec(ctx, `UPDATE jobs SET state='canceled',updated_at=now(),
+            spent_usd=CASE WHEN NOT EXISTS (SELECT 1 FROM attempts WHERE job_id=jobs.id) THEN 0 ELSE spent_usd END
+            WHERE id=$1`, jobID)
 		if err == nil {
 			err = appendEvent(ctx, tx, tenantID, projectID, jobID, "canceled", nil)
 		}

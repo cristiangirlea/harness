@@ -525,6 +525,102 @@ func TestHTTPRetryAfterTheCostLimitIsLoweredReturnsTheExistingJob(t *testing.T) 
 	}
 }
 
+func TestHTTPTenantBudgetRoutesAndSubmission(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	tenant, ownToken, err := store.CreateTenant(ctx, "budget tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, otherToken, err := store.CreateTenant(ctx, "other tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := store.CreateProject(ctx, Project{
+		TenantID: tenant, Name: "project", RepositoryURL: "https://example.invalid/example.git",
+		BaseRef: fixtureRef, Backend: "api",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const operator = "operator-token-abcdefghijklmnopqrstuvwxyz"
+	server := httptest.NewServer((&HTTPServer{Store: store, OperatorToken: operator}).Handler())
+	defer server.Close()
+	budgetURL := server.URL + "/v1/tenants/" + tenant + "/budget"
+	budgetInput := func(value any) map[string]any { return map[string]any{"budget_usd": value} }
+	for _, tc := range []struct {
+		name, token string
+		get, put    int
+	}{
+		{"operator", operator, 200, 200},
+		{"own tenant", ownToken, 200, 401},
+		{"other tenant", otherToken, 404, 401},
+		{"no token", "", 404, 401},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if status, raw := sendJSON(t, server.Client(), http.MethodGet, budgetURL, tc.token, nil); status != tc.get ||
+				(tc.get == 404 && !strings.Contains(string(raw), "tenant or resource not found")) {
+				t.Fatalf("GET: status %d: %s", status, raw)
+			}
+			if status, raw := sendJSON(t, server.Client(), http.MethodPut, budgetURL, tc.token, budgetInput(2)); status != tc.put {
+				t.Fatalf("PUT: status %d: %s", status, raw)
+			}
+		})
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPut} {
+		if status, raw := sendJSON(t, server.Client(), method, server.URL+"/v1/tenants/missing/budget", operator, budgetInput(2)); status != 404 {
+			t.Fatalf("%s unknown tenant: status %d: %s", method, status, raw)
+		}
+	}
+	jobsURL := server.URL + "/v1/projects/" + project.ID + "/jobs"
+	first := testSubmission(project, "first", "inspect")
+	second := testSubmission(project, "second", "inspect")
+	if status, raw := sendJSON(t, server.Client(), http.MethodPost, jobsURL, ownToken, first); status != 201 {
+		t.Fatalf("first submit: status %d: %s", status, raw)
+	}
+	assertBudgetResponse := func(status int, raw []byte, limitJSON string, committed float64) {
+		t.Helper()
+		var got TenantBudget
+		if err := json.Unmarshal(raw, &got); status != 200 || err != nil || got.TenantID != tenant ||
+			got.CommittedUSD != committed || got.ReservedUSD != committed || got.SpentUSD != 0 ||
+			!strings.Contains(string(raw), `"budget_usd":`+limitJSON) {
+			t.Fatalf("budget status %d: %s", status, raw)
+		}
+	}
+	status, raw := sendJSON(t, server.Client(), http.MethodPut, budgetURL, operator, budgetInput(0.5))
+	assertBudgetResponse(status, raw, "0.5", 1)
+	status, raw = sendJSON(t, server.Client(), http.MethodGet, budgetURL, ownToken, nil)
+	assertBudgetResponse(status, raw, "0.5", 1)
+	if status, raw := sendJSON(t, server.Client(), http.MethodPost, jobsURL, ownToken, second); status != 422 || !strings.Contains(string(raw), `"code":"tenant_budget"`) {
+		t.Fatalf("submit after lowering: status %d: %s", status, raw)
+	}
+	if status, raw := sendJSON(t, server.Client(), http.MethodPost, jobsURL, ownToken, first); status != 200 {
+		t.Fatalf("retry after lowering: status %d: %s", status, raw)
+	}
+	status, raw = sendJSON(t, server.Client(), http.MethodPut, budgetURL, operator, budgetInput(nil))
+	assertBudgetResponse(status, raw, "null", 1)
+	if status, raw := sendJSON(t, server.Client(), http.MethodPost, jobsURL, ownToken, second); status != 201 {
+		t.Fatalf("submit after removing: status %d: %s", status, raw)
+	}
+
+	required := httptest.NewServer((&HTTPServer{Store: store, RequireTenantBudget: true}).Handler())
+	defer required.Close()
+	requiredURL := required.URL + "/v1/projects/" + project.ID + "/jobs"
+	third := testSubmission(project, "third", "inspect")
+	if status, raw := sendJSON(t, required.Client(), http.MethodPost, requiredURL, ownToken, third); status != 422 ||
+		!strings.Contains(string(raw), `"code":"tenant_budget"`) || !strings.Contains(string(raw), "HRN_REQUIRE_TENANT_BUDGET") {
+		t.Fatalf("submit without required budget: status %d: %s", status, raw)
+	}
+	if status, raw := sendJSON(t, required.Client(), http.MethodPost, requiredURL, ownToken, second); status != 200 {
+		t.Fatalf("retry without required budget: status %d: %s", status, raw)
+	}
+	status, raw = sendJSON(t, server.Client(), http.MethodPut, budgetURL, operator, budgetInput(3))
+	assertBudgetResponse(status, raw, "3", 2)
+	if status, raw := sendJSON(t, required.Client(), http.MethodPost, requiredURL, ownToken, third); status != 201 {
+		t.Fatalf("submit with required budget: status %d: %s", status, raw)
+	}
+}
+
 func TestHTTPCheckpointRejectsSkippedAndReplayedSequences(t *testing.T) {
 	store := testStore(t)
 	project, workerToken := testProject(t, store)

@@ -324,9 +324,10 @@ Windows so are `\\.\`, `\\?\` and `\??\` paths and reserved device names such as
 `NUL` or `COM1`.
 Submission requires a stable idempotency key and a positive USD cost ceiling.
 When `HRN_REMOTE_MAX_COST_USD` is set, a `--max-cost` above it is refused before
-any request; unset means no client cap. The control service does not reserve
-tenant budgets yet, so this and the server's `HRN_MAX_COST_USD_PER_JOB` (see
-[server/README.md](../server/README.md)) are the spending control.
+any request. Unset means no client cap. The control service reserves each new
+job's ceiling against the tenant's budget when configured. The server's
+`HRN_MAX_COST_USD_PER_JOB` can also cap each job's ceiling.
+See [server/README.md](../server/README.md).
 The prompt can be supplied as arguments or on stdin. Remote jobs currently
 support only the read-only `api` backend. See [MCP](mcp.md#hrn-as-an-mcp-server)
 for the corresponding tools.

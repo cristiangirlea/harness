@@ -3,12 +3,45 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestHTTPBudgetPutValidation(t *testing.T) {
+	const operator = "operator-token-abcdefghijklmnopqrstuvwxyz"
+	handler := (&HTTPServer{OperatorToken: operator}).Handler()
+	for _, body := range []string{
+		"", "null", "[]", "true", "{}", `{"unknown":1}`, `{"budget_usd":1,"unknown":2}`,
+		`{"budget_usd":0}`, `{"budget_usd":-1}`, `{"budget_usd":NaN}`, `{"budget_usd":Inf}`,
+		`{"budget_usd":1e999}`, `{"budget_usd":"1"}`, `{"budget_usd":1} {}`,
+	} {
+		r := httptest.NewRequest(http.MethodPut, "/v1/tenants/tenant/budget", strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+operator)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %q: status %d, want 400: %s", body, w.Code, w.Body)
+		}
+	}
+	r := httptest.NewRequest(http.MethodPut, "/v1/tenants/tenant/budget", strings.NewReader("invalid"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated put: status %d, want 401", w.Code)
+	}
+}
+
+func TestHTTPBudgetErrorIs422(t *testing.T) {
+	w := httptest.NewRecorder()
+	invalid(w, fmt.Errorf("%w: limit reached", ErrTenantBudget))
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), `"code":"tenant_budget"`) {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+}
 
 type countedBody struct {
 	reader io.Reader

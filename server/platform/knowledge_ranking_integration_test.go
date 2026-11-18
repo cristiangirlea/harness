@@ -167,7 +167,7 @@ func TestPostgresKnowledgeRankingMigration(t *testing.T) {
 	if err := s.RecordAdmission(ctx, KnowledgeAdmission{KnowledgeScope: in.KnowledgeScope, VersionID: id, BaselineVersionID: baseline, Verdict: "admitted"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec(ctx, `ALTER TABLE knowledge_versions DROP COLUMN ranking; ALTER TABLE knowledge_admissions DROP COLUMN ranking; DELETE FROM schema_migrations WHERE version=6`); err != nil {
+	if _, err := s.db.Exec(ctx, `ALTER TABLE knowledge_versions DROP COLUMN ranking; ALTER TABLE knowledge_admissions DROP COLUMN ranking; ALTER TABLE tenants DROP COLUMN budget_usd; ALTER TABLE jobs DROP COLUMN reserved_usd, DROP COLUMN spent_usd; DELETE FROM schema_migrations WHERE version>=6`); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

@@ -99,6 +99,39 @@ func TestServeRefusesAnInvalidCostLimitBeforeOpeningDatabase(t *testing.T) {
 	}
 }
 
+func TestRequireTenantBudget(t *testing.T) {
+	for _, raw := range []string{"", "1", "0", "true", " 1"} {
+		got, err := requireTenantBudget(raw)
+		if raw == "" || raw == "1" {
+			if got != (raw == "1") || err != nil {
+				t.Errorf("%q: %t, %v", raw, got, err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), "HRN_REQUIRE_TENANT_BUDGET") {
+			t.Errorf("%q: want an error naming the variable, got %v", raw, err)
+		}
+	}
+}
+
+func TestServeRefusesInvalidTenantBudgetSettingBeforeOpeningDatabase(t *testing.T) {
+	args := os.Args
+	os.Args = []string{"hrn-server", "serve"}
+	t.Cleanup(func() { os.Args = args })
+	t.Setenv("HRN_DATABASE_URL", "invalid-database-url")
+	t.Setenv("HRN_DATABASE_URL_FILE", "")
+	t.Setenv("HRN_OPERATOR_TOKEN", strings.Repeat("o", 32))
+	t.Setenv("HRN_OPERATOR_TOKEN_FILE", "")
+	t.Setenv("HRN_SCALER_TOKEN", strings.Repeat("s", 32))
+	t.Setenv("HRN_SCALER_TOKEN_FILE", "")
+	t.Setenv("HRN_LISTEN", "127.0.0.1:8088")
+	t.Setenv("HRN_TLS_CERT_FILE", "")
+	t.Setenv("HRN_TLS_KEY_FILE", "")
+	t.Setenv("HRN_MAX_COST_USD_PER_JOB", "")
+	t.Setenv("HRN_REQUIRE_TENANT_BUDGET", "0")
+	if err := run(); err == nil || !strings.Contains(err.Error(), "HRN_REQUIRE_TENANT_BUDGET") {
+		t.Fatalf("run() = %v, want tenant budget setting error before database access", err)
+	}
+}
+
 func TestServeChecksOperatorTokenFromFileBeforeOpeningDatabase(t *testing.T) {
 	args := os.Args
 	os.Args = []string{"hrn-server", "serve"}

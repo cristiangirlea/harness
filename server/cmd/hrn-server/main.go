@@ -66,12 +66,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	budgetRequired, err := requireTenantBudget(os.Getenv("HRN_REQUIRE_TENANT_BUDGET"))
+	if err != nil {
+		return err
+	}
 	store, err := platform.Open(ctx, dsn)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	server := &http.Server{Addr: address, Handler: (&platform.HTTPServer{Store: store, OperatorToken: operator, ScalerToken: scaler, MaxCostUSDPerJob: maxCost}).Handler(),
+	server := &http.Server{Addr: address, Handler: (&platform.HTTPServer{
+		Store: store, OperatorToken: operator, ScalerToken: scaler, MaxCostUSDPerJob: maxCost, RequireTenantBudget: budgetRequired,
+	}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 16 * 1024}
 	go func() {
 		ticker := time.NewTicker(time.Second)
@@ -117,6 +123,17 @@ func maxCostPerJob(raw string) (float64, error) {
 		return 0, fmt.Errorf("HRN_MAX_COST_USD_PER_JOB must be a positive number of USD, got %q", raw)
 	}
 	return limit, nil
+}
+
+func requireTenantBudget(raw string) (bool, error) {
+	switch raw {
+	case "":
+		return false, nil
+	case "1":
+		return true, nil
+	default:
+		return false, fmt.Errorf("HRN_REQUIRE_TENANT_BUDGET must be empty or 1, got %q", raw)
+	}
 }
 
 func validateListen(address, certFile, keyFile string) error {
