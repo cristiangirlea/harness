@@ -99,6 +99,57 @@ positive number of USD. A submission above it returns 422 `cost_limit`, and
 an invalid value stops startup. Unset means no server per-job cap. Clients can
 add their own with `HRN_REMOTE_MAX_COST_USD`.
 
+## Signing in with OpenID Connect
+
+Leave all five variables unset to keep static-token authentication only.
+Set `HRN_OIDC_ISSUER` to the issuer URL and `HRN_OIDC_AUDIENCE` to the
+expected audience. Configure at least one role mapping:
+
+- Set both `HRN_OIDC_OPERATOR_CLAIM` and `HRN_OIDC_OPERATOR_VALUE` to grant
+  operator access when the claim matches that value or contains it in an
+  array of strings.
+- Set `HRN_OIDC_TENANT_CLAIM` to grant access to the exact tenant IDs in
+  that claim. It can contain one string or an array. Empty strings and
+  non-string entries are ignored, and at most 256 strings are used.
+
+Claim names must be 1 to 128 characters and name top-level claims. Empty
+settings and incomplete configurations stop startup. The issuer URL must
+use HTTPS, or HTTP with a loopback IP literal (127.0.0.0/8 or ::1), and
+cannot include a query, fragment, or user information. The service compares
+`iss` and the discovery document's issuer exactly with the configured
+string, including any trailing slash.
+
+Send a signed token as an HTTP bearer credential. Tokens are at most 8192
+bytes and contain three non-empty, unpadded base64url segments. A token
+must identify a key with a 1-to-256-character `kid`. The service fetches
+keys through the issuer's discovery document and ignores keys intended for
+other uses or algorithms. The JWKS URL follows the same transport and
+user-information restrictions as the issuer. It can include a query.
+Discovery and key-set requests refuse redirects, have a 10-second timeout
+each, and limit responses to 1 MiB. At most 100 keys are considered. Keys
+are cached and a missing key can trigger a refresh at most once a minute.
+Failed loads can be retried after one minute.
+
+The service verifies RS256 signatures with RSA keys of at least 2048 bits
+and ES256 signatures with P-256 keys and a 64-byte signature. Tokens with
+`crit` or header fields that specify keys or certificates are refused.
+The audience must match a string in `aud`, which can be a string or an
+array of strings. A token must have a numeric expiry and a non-empty `sub`
+of at most 256 characters, excluding ASCII control characters. The service
+allows 60 seconds of clock skew for expiry and for the optional numeric
+`nbf` and `iat` claims.
+The service imposes no separate token type check beyond issuer, audience,
+and the claims above, so use an audience issued exclusively for this service.
+
+Every operator route, including the knowledge routes, accepts an operator's
+signed token. Existing static tokens remain valid. Worker and scaler routes
+accept only their static tokens. A job event produced by a signed-in person's
+submission, cancellation, or recovery resolution includes the token's
+subject as `actor` and its issuer as `actor_issuer`. Worker and timer
+events have no actor. Revoke a person's access at the identity provider.
+Previously issued tokens remain usable through expiry and the clock-skew
+allowance, so keep token lifetimes short.
+
 ## Job events
 
 `GET /v1/jobs/{job}/events?tenant_id=...&project_id=...` requires the tenant's

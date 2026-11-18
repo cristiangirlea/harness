@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ type HTTPServer struct {
 	Store                *Store
 	OperatorToken        string
 	ScalerToken          string
+	OIDC                 *OIDCVerifier
 	MaxCostUSDPerJob     float64
 	RequireTenantBudget  bool
 	submissionAuthorized func(context.Context, string, string) (bool, error)
@@ -104,24 +106,68 @@ func sameToken(a, b string) bool {
 }
 
 func (h *HTTPServer) operator(w http.ResponseWriter, r *http.Request) bool {
+	_, ok := h.operatorIdentity(w, r)
+	return ok
+}
+
+func (h *HTTPServer) operatorIdentity(w http.ResponseWriter, r *http.Request) (Identity, bool) {
 	if sameToken(token(r), h.OperatorToken) {
-		return true
+		return Identity{}, true
+	}
+	if id := h.signedIdentity(r); id.Operator {
+		return id, true
 	}
 	failure(w, http.StatusUnauthorized, "unauthorized", "operator token required")
-	return false
+	return Identity{}, false
 }
 
 func (h *HTTPServer) tenant(w http.ResponseWriter, r *http.Request, id string) bool {
+	_, ok := h.tenantIdentity(w, r, id, false)
+	return ok
+}
+
+func (h *HTTPServer) tenantIdentity(w http.ResponseWriter, r *http.Request, id string, allowOperator bool) (Identity, bool) {
+	if allowOperator && sameToken(token(r), h.OperatorToken) {
+		return Identity{}, true
+	}
 	allowed, err := h.Store.TenantAuthorized(r.Context(), id, token(r))
 	if err != nil {
 		failure(w, 500, "storage_error", "authorization storage unavailable")
-		return false
+		return Identity{}, false
 	}
 	if allowed {
-		return true
+		return Identity{}, true
 	}
-	failure(w, 404, "not_found", "tenant or resource not found")
-	return false
+	identity := h.signedIdentity(r)
+	if (allowOperator && identity.Operator) || slices.Contains(identity.Tenants, id) {
+		return identity, true
+	}
+	tenantNotFound(w)
+	return Identity{}, false
+}
+
+func tenantNotFound(w http.ResponseWriter) {
+	failure(w, http.StatusNotFound, "not_found", "tenant or resource not found")
+}
+
+func (h *HTTPServer) signedToken(candidate string) bool {
+	return h.OIDC != nil && strings.Count(candidate, ".") == 2
+}
+
+func (h *HTTPServer) signedIdentity(r *http.Request) Identity {
+	if candidate := token(r); h.signedToken(candidate) {
+		if identity, err := h.OIDC.Verify(r.Context(), candidate); err == nil {
+			return identity
+		}
+	}
+	return Identity{}
+}
+
+func withRequestActor(r *http.Request, identity Identity) *http.Request {
+	if identity.Subject == "" {
+		return r
+	}
+	return r.WithContext(WithActor(r.Context(), identity.Subject, identity.Issuer))
 }
 
 func (h *HTTPServer) project(w http.ResponseWriter, r *http.Request, id string) bool {
@@ -258,9 +304,11 @@ func (h *HTTPServer) projects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPServer) setTenantBudget(w http.ResponseWriter, r *http.Request) {
-	if !h.operator(w, r) {
+	identity, ok := h.operatorIdentity(w, r)
+	if !ok {
 		return
 	}
+	r = withRequestActor(r, identity)
 	var input struct {
 		BudgetUSD json.RawMessage `json:"budget_usd"`
 	}
@@ -282,7 +330,7 @@ func (h *HTTPServer) setTenantBudget(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPServer) tenantBudget(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenant")
-	if !sameToken(token(r), h.OperatorToken) && !h.tenant(w, r, tenantID) {
+	if _, ok := h.tenantIdentity(w, r, tenantID, true); !ok {
 		return
 	}
 	h.respondTenantBudget(w, r, tenantID)
@@ -297,28 +345,48 @@ func (h *HTTPServer) respondTenantBudget(w http.ResponseWriter, r *http.Request,
 	respond(w, 200, budget)
 }
 
+func (h *HTTPServer) staticSubmissionAuthorized(ctx context.Context, projectID, candidate string) (bool, error) {
+	if h.submissionAuthorized != nil {
+		return h.submissionAuthorized(ctx, projectID, candidate)
+	}
+	tenantID, err := h.Store.ProjectTenant(ctx, projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return h.Store.TenantAuthorized(ctx, tenantID, candidate)
+}
+
 func (h *HTTPServer) submit(w http.ResponseWriter, r *http.Request) {
 	projectID := r.PathValue("project")
-	check := h.submissionAuthorized
-	if check == nil {
-		check = func(ctx context.Context, projectID, candidate string) (bool, error) {
-			tenantID, err := h.Store.ProjectTenant(ctx, projectID)
+	candidate := token(r)
+	var identity Identity
+	var signedTenant string
+	var allowed bool
+	var err error
+	signed := h.signedToken(candidate)
+	if !signed || len(candidate) == 64 {
+		allowed, err = h.staticSubmissionAuthorized(r.Context(), projectID, candidate)
+	}
+	if signed && !allowed && err == nil {
+		identity = h.signedIdentity(r)
+		if len(identity.Tenants) > 0 {
+			signedTenant, err = h.Store.ProjectTenant(r.Context(), projectID)
 			if errors.Is(err, pgx.ErrNoRows) {
-				return false, nil
+				err = nil
+			} else if err == nil {
+				allowed = slices.Contains(identity.Tenants, signedTenant)
 			}
-			if err != nil {
-				return false, err
-			}
-			return h.Store.TenantAuthorized(ctx, tenantID, candidate)
 		}
 	}
-	allowed, err := check(r.Context(), projectID, token(r))
 	if err != nil {
 		failure(w, 500, "storage_error", "authorization storage unavailable")
 		return
 	}
 	if !allowed {
-		failure(w, 404, "not_found", "tenant or resource not found")
+		tenantNotFound(w)
 		return
 	}
 	var input Submission
@@ -329,7 +397,13 @@ func (h *HTTPServer) submit(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, "invalid_request", "project ID mismatch")
 		return
 	}
-	if !h.tenant(w, r, input.TenantID) {
+	if identity.Subject != "" {
+		if input.TenantID != signedTenant {
+			tenantNotFound(w)
+			return
+		}
+		r = withRequestActor(r, identity)
+	} else if !h.tenant(w, r, input.TenantID) {
 		return
 	}
 	if err := validateSubmission(input); err != nil {
@@ -387,9 +461,11 @@ func (h *HTTPServer) show(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPServer) cancel(w http.ResponseWriter, r *http.Request) {
 	tenantID, projectID := scope(r)
-	if !h.tenant(w, r, tenantID) {
+	identity, ok := h.tenantIdentity(w, r, tenantID, false)
+	if !ok {
 		return
 	}
+	r = withRequestActor(r, identity)
 	state, err := h.Store.Cancel(r.Context(), tenantID, projectID, r.PathValue("job"))
 	if err != nil {
 		invalid(w, err)
@@ -695,9 +771,11 @@ type recoveryRequest struct {
 }
 
 func (h *HTTPServer) resume(w http.ResponseWriter, r *http.Request) {
-	if !h.operator(w, r) {
+	identity, ok := h.operatorIdentity(w, r)
+	if !ok {
 		return
 	}
+	r = withRequestActor(r, identity)
 	var input recoveryRequest
 	if !decode(w, r, &input) {
 		return

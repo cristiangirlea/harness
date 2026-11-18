@@ -208,3 +208,89 @@ func TestMaxCostPerJobParsesThePerJobLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestOIDCEnvironment(t *testing.T) {
+	const (
+		issuer   = "HRN_OIDC_ISSUER"
+		audience = "HRN_OIDC_AUDIENCE"
+		claim    = "HRN_OIDC_OPERATOR_CLAIM"
+		value    = "HRN_OIDC_OPERATOR_VALUE"
+		tenant   = "HRN_OIDC_TENANT_CLAIM"
+		url      = "https://issuer.example/"
+	)
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"off", nil, ""},
+		{"operator only", map[string]string{issuer: url, audience: "api", claim: "role", value: "operator"}, ""},
+		{"tenant only", map[string]string{issuer: "http://127.1.2.3:8080/path", audience: "api", tenant: "tenant_ids"}, ""},
+		{"both", map[string]string{issuer: "http://[::1]:8080", audience: "api", tenant: "tenant-ids", claim: "role", value: "operator"}, ""},
+		{"audience alone", map[string]string{audience: "api"}, audience},
+		{"operator claim alone", map[string]string{claim: "role"}, claim},
+		{"operator value alone", map[string]string{value: "operator"}, value},
+		{"tenant claim alone", map[string]string{tenant: "tenants"}, tenant},
+		{"missing audience", map[string]string{issuer: url, tenant: "tenants"}, audience},
+		{"missing operator value", map[string]string{issuer: url, audience: "api", claim: "role", tenant: "tenants"}, value},
+		{"missing operator claim", map[string]string{issuer: url, audience: "api", value: "operator", tenant: "tenants"}, claim},
+		{"no role mapping", map[string]string{issuer: url, audience: "api"}, tenant},
+		{"nested operator claim", map[string]string{issuer: url, audience: "api", claim: "role.name", value: "operator"}, claim},
+		{"nested tenant claim", map[string]string{issuer: url, audience: "api", tenant: "roles[0]"}, tenant},
+		{"long tenant claim", map[string]string{issuer: url, audience: "api", tenant: strings.Repeat("x", 129)}, tenant},
+	}
+	for _, raw := range []string{"", "/issuer", "ftp://issuer.example", "https:///issuer", "http://localhost", "http://192.0.2.1", "http://[::ffff:127.0.0.1]", "https://user@issuer.example", url + "with space", url + "?x=1", url + "?", url + "#x", url + "#"} {
+		tests = append(tests, struct {
+			name string
+			env  map[string]string
+			want string
+		}{"invalid issuer " + raw, map[string]string{issuer: raw, audience: "api", tenant: "tenants"}, issuer})
+	}
+	for _, key := range []string{audience, claim, value, tenant} {
+		tests = append(tests, struct {
+			name string
+			env  map[string]string
+			want string
+		}{"empty " + key, map[string]string{issuer: url, key: ""}, key})
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			v, err := oidcFromEnv(func(key string) (string, bool) {
+				raw, ok := tc.env[key]
+				return raw, ok
+			})
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) || v != nil {
+					t.Fatalf("want error naming %s, got %v", tc.want, err)
+				}
+			} else if err != nil || (v != nil) != (tc.env != nil) {
+				t.Fatalf("configured = %t, error = %v", v != nil, err)
+			}
+		})
+	}
+}
+
+func TestServeChecksOIDCBeforeOpeningDatabase(t *testing.T) {
+	args := os.Args
+	os.Args = []string{"hrn-server", "serve"}
+	t.Cleanup(func() { os.Args = args })
+	t.Setenv("HRN_DATABASE_URL", "://invalid")
+	t.Setenv("HRN_DATABASE_URL_FILE", "")
+	t.Setenv("HRN_OPERATOR_TOKEN", strings.Repeat("o", 32))
+	t.Setenv("HRN_OPERATOR_TOKEN_FILE", "")
+	t.Setenv("HRN_SCALER_TOKEN", strings.Repeat("s", 32))
+	t.Setenv("HRN_SCALER_TOKEN_FILE", "")
+	t.Setenv("HRN_LISTEN", "127.0.0.1:8088")
+	t.Setenv("HRN_TLS_CERT_FILE", "")
+	t.Setenv("HRN_TLS_KEY_FILE", "")
+	t.Setenv("HRN_MAX_COST_USD_PER_JOB", "")
+	t.Setenv("HRN_REQUIRE_TENANT_BUDGET", "")
+	t.Setenv("HRN_OIDC_ISSUER", "http://localhost")
+	t.Setenv("HRN_OIDC_AUDIENCE", "api")
+	t.Setenv("HRN_OIDC_OPERATOR_CLAIM", "role")
+	t.Setenv("HRN_OIDC_OPERATOR_VALUE", "operator")
+	t.Setenv("HRN_OIDC_TENANT_CLAIM", "tenants")
+	if err := run(); err == nil || !strings.Contains(err.Error(), "HRN_OIDC_ISSUER") || strings.Contains(err.Error(), "localhost") {
+		t.Fatalf("run() = %v, want issuer configuration error before database access", err)
+	}
+}
