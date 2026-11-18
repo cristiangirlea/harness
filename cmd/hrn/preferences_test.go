@@ -51,6 +51,61 @@ func TestBackendsShowsSetsAndResetsPreferences(t *testing.T) {
 	}
 }
 
+func TestBackendsSetsListsAndClearsBillingPolicy(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	off := false
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{WorkMapGitHub: &off}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		args    []string
+		billing string
+		ceiling float64
+		line    string
+	}{
+		{[]string{"set", "--only", "claude,api", "--billing", "metered", "--max-cost", "2.5"}, "metered", 2.5, "billing: metered, api runs capped at $2.50"},
+		{[]string{"set", "--only", "claude,api"}, "", 0, ""},
+		{[]string{"set", "--only", "claude,api", "--billing", "metered"}, "metered", 0, "billing: metered, no api ceiling (api is not an automatic partner)"},
+		{[]string{"set", "--only", "claude,api", "--billing", "plan"}, "plan", 0, ""},
+		{[]string{"set", "--only", "claude,api", "--billing", "metered", "--max-cost", "2.5"}, "metered", 2.5, "billing: metered, api runs capped at $2.50"},
+		{[]string{"reset"}, "", 0, ""},
+	} {
+		out, err := captureStdout(t, func() error { return cmdBackends(tc.args) })
+		if err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		p, err := prefs.Load(runlog.Home())
+		if err != nil || p.Billing != tc.billing || p.BillingMaxCostUSD != tc.ceiling || p.WorkMapGitHub == nil || *p.WorkMapGitHub {
+			t.Fatalf("%v: preferences %+v, %v", tc.args, p, err)
+		}
+		first, _, _ := strings.Cut(string(out), "\n")
+		if tc.line != "" && first != tc.line || tc.line == "" && strings.Contains(string(out), "billing:") {
+			t.Errorf("%v: listing %q", tc.args, out)
+		}
+	}
+	for _, args := range [][]string{
+		{"set", "--only", "claude,api", "--max-cost", "2.5"},
+		{"set", "--only", "claude,api", "--billing", "plan", "--max-cost", "0"},
+	} {
+		if err := cmdBackends(args); err == nil {
+			t.Errorf("accepted %v", args)
+		}
+	}
+}
+
+func TestBackendsRejectsZeroBillingCeilingWithoutWriting(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	_, err := captureStdout(t, func() error {
+		return cmdBackends([]string{"set", "--only", "claude", "--billing", "metered", "--max-cost", "0"})
+	})
+	if err == nil || err.Error() != "backends set: --max-cost wants a positive amount" {
+		t.Errorf("got %v", err)
+	}
+	if _, err := prefs.Raw(runlog.Home()); !os.IsNotExist(err) {
+		t.Errorf("preferences should not have been written: %v", err)
+	}
+}
+
 func TestRunRefusesADisabledBackendBeforeRunning(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	orig, _ := agent.Get("codex")

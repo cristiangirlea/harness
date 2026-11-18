@@ -197,6 +197,10 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 		b = &agent.APIBackend{BaseURL: workerURL, MaxRetries: 3, HTTPClient: &http.Client{
 			Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}}
+	} else if api, ok := b.(*agent.APIBackend); ok && t.Backend == "api" && preferences.Metered() && preferences.BillingMaxCostUSD > 0 {
+		capped := *api
+		capped.CostCeilingUSD = preferences.BillingMaxCostUSD
+		b = &capped
 	}
 	if !preferences.Enabled(t.Backend) {
 		return w.reject(req.AttemptID, "unsupported", "backend disabled by worker preference")

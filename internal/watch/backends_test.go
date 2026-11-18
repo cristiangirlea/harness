@@ -535,6 +535,22 @@ func TestBackendsSavePreservesWorkMapRepos(t *testing.T) {
 	}
 }
 
+func TestBackendsSaveKeepsBillingPolicyAndCeiling(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := prefs.Save(home, prefs.Prefs{Billing: "metered", BillingMaxCostUSD: 2.5}); err != nil {
+		t.Fatal(err)
+	}
+	h := New(context.Background(), Options{Key: "test-key"})
+	for _, body := range []string{`{"enabled":["codex"]}`, `{"enabled":["codex"],"billing":"plan","billing_max_cost_usd":1}`} {
+		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", backendBodyForTest(t, body))
+		p, err := prefs.Load(home)
+		if w.Code != 204 || err != nil || !p.Metered() || p.BillingMaxCostUSD != 2.5 || !reflect.DeepEqual(p.EnabledNames, []string{"codex"}) {
+			t.Fatalf("save: %d %+v %v", w.Code, p, err)
+		}
+	}
+}
+
 func TestBackendsSaveKeepsTheWorkMapGitHubSetting(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)

@@ -752,6 +752,9 @@ func backendsTool() mcp.Tool {
 			if err != nil {
 				return text(err.Error(), nil, true), nil
 			}
+			if line := p.BillingSummary(); line != "" {
+				fmt.Fprintln(&b, line)
+			}
 			def := resolve.DefaultBackendNameIn(runlog.Home())
 			now := time.Now()
 			for _, name := range agent.Names() {

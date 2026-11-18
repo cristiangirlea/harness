@@ -3,6 +3,7 @@ package prefs
 import (
 	"errors"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +12,74 @@ import (
 	"testing"
 	"time"
 )
+
+func TestBillingPreferencesRoundTripAndLoadOldFiles(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "backends.json"), []byte(`{"enabled":["codex"],"default":"codex"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := Load(home); err != nil || p.Default() != "codex" || p.Billing != "" || p.Metered() || p.BillingMaxCostUSD != 0 {
+		t.Fatalf("old preferences: %+v, %v", p, err)
+	}
+	for _, want := range []Prefs{{Billing: "plan"}, {Billing: "metered"}, {Billing: "metered", BillingMaxCostUSD: 2.5}} {
+		if err := Save(home, want); err != nil {
+			t.Fatal(err)
+		}
+		if p, err := Load(home); err != nil || !reflect.DeepEqual(p, want) || p.Metered() != (want.Billing == "metered") {
+			t.Errorf("round trip: got %+v, %v; want %+v", p, err, want)
+		}
+	}
+}
+
+func TestBillingPreferencesRefuseInvalidPolicyAndCeiling(t *testing.T) {
+	home := t.TempDir()
+	for _, p := range []Prefs{
+		{Billing: "unknown"},
+		{BillingMaxCostUSD: 1},
+		{Billing: "plan", BillingMaxCostUSD: 1},
+		{Billing: "metered", BillingMaxCostUSD: -1},
+		{Billing: "metered", BillingMaxCostUSD: math.NaN()},
+		{Billing: "metered", BillingMaxCostUSD: math.Inf(1)},
+		{Billing: "metered", BillingMaxCostUSD: math.Inf(-1)},
+	} {
+		if err := p.validate(); err == nil {
+			t.Errorf("validated %+v", p)
+		}
+		if err := Save(home, p); err == nil {
+			t.Errorf("saved %+v", p)
+		}
+	}
+	for _, raw := range []string{
+		`{"billing":"unknown"}`,
+		`{"billing_max_cost_usd":1}`,
+		`{"billing":"plan","billing_max_cost_usd":1}`,
+		`{"billing":"metered","billing_max_cost_usd":-1}`,
+	} {
+		if err := os.WriteFile(filepath.Join(home, "backends.json"), []byte(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(home); err == nil {
+			t.Errorf("loaded %s", raw)
+		}
+	}
+}
+
+func TestLoadBillingCeilingDistinguishesZeroFromAbsent(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "backends.json")
+	if err := os.WriteFile(path, []byte(`{"billing":"metered","billing_max_cost_usd":0}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(home); err == nil || !strings.HasSuffix(err.Error(), "billing_max_cost_usd: want a finite positive amount") {
+		t.Errorf("zero ceiling: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"billing":"metered"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := Load(home); err != nil || !p.Metered() || p.BillingMaxCostUSD != 0 {
+		t.Errorf("absent ceiling: %+v, %v", p, err)
+	}
+}
 
 func TestRawPreservesBytesAndMissingFileError(t *testing.T) {
 	home := t.TempDir()

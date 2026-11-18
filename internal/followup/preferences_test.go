@@ -14,6 +14,123 @@ import (
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
+func TestMeteredPolicyUsesEnabledInstalledBackendsInOrder(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	t.Setenv("CODEX_API_KEY", "test")
+	for _, backend := range []stub{{"opencode", false}, {"gemini", true}} {
+		orig, _ := agent.Get(backend.name)
+		agent.Register(backend)
+		t.Cleanup(func() { agent.Register(orig) })
+	}
+	p := prefs.Prefs{Billing: "metered"}
+	if err := prefs.Save(runlog.Home(), p); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if ok, why := Ready("codex", now, nil); !ok || why != "" {
+		t.Errorf("metered codex: %v, %q", ok, why)
+	}
+	if got := Partner("claude", now, nil); got != "codex" {
+		t.Errorf("partner without enabled list = %q, want codex", got)
+	}
+	p.EnabledNames = []string{"claude", "opencode", "gemini", "codex"}
+	if err := prefs.Save(runlog.Home(), p); err != nil {
+		t.Fatal(err)
+	}
+	if got := planPair(p, "claude", now, nil); got != "gemini" {
+		t.Errorf("partner = %q, want gemini", got)
+	}
+	if got := planPair(p, "claude", now, Spent{"gemini": true}); got != "codex" {
+		t.Errorf("partner with gemini spent = %q, want codex", got)
+	}
+}
+
+func TestMeteredAPIReadinessAndPartnerOrder(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	orig, _ := agent.Get("api")
+	agent.Register(stub{"api", true})
+	t.Cleanup(func() { agent.Register(orig) })
+	now := time.Now()
+	for _, tc := range []struct {
+		name, local, key string
+		ceiling          float64
+		spent            Spent
+		want, partner    string
+	}{
+		{"no ceiling", "", "", 0, nil, "api would bill per token with no ceiling; set billing_max_cost_usd (hrn backends set --max-cost)", "codex"},
+		{"ceiling", "", "", 2.5, nil, "", "api"},
+		{"spent", "", "", 2.5, Spent{"api": true}, "api reached its usage limit earlier in this task", "codex"},
+		{"local comes last", "http://localhost:8081", "", 2.5, nil, "", "codex"},
+		{"local without a ceiling", "http://localhost:8081", "", 0, Spent{"codex": true}, "", "api"},
+		{"key refuses local", "http://localhost:8081", "test", 2.5, nil, "local api: not used while ANTHROPIC_AUTH_TOKEN is set, since api would bill per token; unset it, or drop --local-api", "codex"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ANTHROPIC_AUTH_TOKEN", tc.key)
+			p := prefs.Prefs{Billing: "metered", BillingMaxCostUSD: tc.ceiling, LocalAPI: tc.local, EnabledNames: []string{"claude", "api", "codex"}}
+			if err := prefs.Save(runlog.Home(), p); err != nil {
+				t.Fatal(err)
+			}
+			if ok, why := Ready("api", now, tc.spent); ok != (tc.want == "") || why != tc.want {
+				t.Errorf("Ready = %v, %q; want reason %q", ok, why, tc.want)
+			}
+			if got := Partner("claude", now, tc.spent); got != tc.partner {
+				t.Errorf("partner = %q, want %q", got, tc.partner)
+			}
+		})
+	}
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{Billing: "metered", EnabledNames: []string{"claude", "api"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := Partner("claude", now, nil); got != "" {
+		t.Errorf("partner without a ceiling = %q, want none", got)
+	}
+	agent.Register(stub{"api", false})
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{Billing: "metered", BillingMaxCostUSD: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, why := Ready("api", now, nil); ok || why != "api is not installed" {
+		t.Errorf("unavailable api: %v, %q", ok, why)
+	}
+	if got := Partner("claude", now, nil); got != "codex" {
+		t.Errorf("partner without enabled list = %q, want codex", got)
+	}
+}
+
+func TestBackendCopiesTheMeteredCeilingOnlyForNonlocalAPI(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, name := range apiKeys {
+		t.Setenv(name, "")
+	}
+	registered, _ := agent.Get("api")
+	api := registered.(*agent.APIBackend)
+	for _, tc := range []struct {
+		p    prefs.Prefs
+		want float64
+	}{
+		{prefs.Prefs{Billing: "plan"}, 0},
+		{prefs.Prefs{Billing: "metered"}, 0},
+		{prefs.Prefs{Billing: "metered", BillingMaxCostUSD: 2.5}, 2.5},
+		{prefs.Prefs{Billing: "metered", BillingMaxCostUSD: 2.5, LocalAPI: "http://localhost:8081"}, 0},
+	} {
+		if err := prefs.Save(runlog.Home(), tc.p); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Backend("api")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := got.(*agent.APIBackend)
+		if b.CostCeilingUSD != tc.want || api.CostCeilingUSD != 0 || (tc.want > 0 && b == api) {
+			t.Errorf("prefs %+v: ceiling = %g, registered = %g, same backend = %v; want ceiling %g", tc.p, b.CostCeilingUSD, api.CostCeilingUSD, b == api, tc.want)
+		}
+		if tc.p.LocalAPI != "" && b.BaseURL != tc.p.LocalAPI {
+			t.Errorf("local endpoint = %q, want %q", b.BaseURL, tc.p.LocalAPI)
+		}
+	}
+}
+
 func TestChooseAndAfterUseOnlyAnEnabledInstalledPartner(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
