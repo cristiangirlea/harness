@@ -663,6 +663,38 @@ func TestAPIStopsOnCostBudget(t *testing.T) {
 	}
 }
 
+func TestAPIAppliesBackendCostCeiling(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		ceiling, taskLimit float64
+		want               string
+	}{
+		{"task above ceiling", 0.0002, 1, "$0.0002"},
+		{"task below ceiling", 1, 0.0001, "$0.0001"},
+		{"task unset", 0.0002, 0, "$0.0002"},
+		{"ceiling unset", 0, 0.0001, "$0.0001"},
+		{"both unset", 0, 0, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeAPI{turns: [][]string{toolTurn("toolu_1", "list_files", `{}`), textTurn("finished")}}
+			srv := httptest.NewServer(fake)
+			t.Cleanup(srv.Close)
+			b := NewAPIBackend()
+			b.BaseURL, b.APIKey, b.CostCeilingUSD = srv.URL, "test", tc.ceiling
+			res := b.Run(t.Context(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, MaxCostUSD: tc.taskLimit}}, func(Event) {})
+			if tc.want == "" {
+				if res.Status != StatusOK || len(fake.requests) != 2 {
+					t.Fatalf("result: %+v, requests: %d", res, len(fake.requests))
+				}
+				return
+			}
+			if res.Status != StatusBudget || len(fake.requests) != 1 || !strings.Contains(res.Error, "reached the "+tc.want+" limit after turn 1") {
+				t.Errorf("result: %+v, requests: %d; want budget at %s after one turn", res, len(fake.requests), tc.want)
+			}
+		})
+	}
+}
+
 func TestAPISendsTaskBudgetWithEffort(t *testing.T) {
 	_, _, fake := runFake(t, [][]string{textTurn("ok")},
 		Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, Effort: "high", TaskBudget: 64000}})
@@ -719,26 +751,38 @@ func TestValidateLimits(t *testing.T) {
 }
 
 func TestAPISaysWhenCostCannotBeEnforced(t *testing.T) {
-	var infos []string
-	b := NewAPIBackend()
-	b.APIKey, b.MaxRetries = "test", 0
-	b.BaseURL = "http://127.0.0.1:1" // never reached: the notice comes first
-	collect := func(e Event) {
-		if e.Kind == EventInfo {
-			infos = append(infos, e.Text)
-		}
-	}
-	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, Model: "claude-not-in-the-price-table", MaxCostUSD: 1}}, collect)
-	if len(infos) != 1 || !strings.Contains(infos[0], "max_cost cannot be enforced") {
-		t.Fatalf("info events = %v", infos)
-	}
-
-	infos = nil
-	b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, Model: "claude-opus-5", MaxCostUSD: 1}}, collect)
-	for _, text := range infos {
-		if strings.Contains(text, "max_cost cannot be enforced") {
-			t.Errorf("a priced model should not warn: %q", text)
-		}
+	const unknown = "claude-not-in-the-price-table"
+	for _, tc := range []struct {
+		name, model string
+		ceiling     float64
+		status      Status
+		requests    int
+		wantError   string
+		wantInfo    string
+	}{
+		{"task limit", unknown, 0, StatusOK, 1, "", "max_cost cannot be enforced: no price known for " + unknown},
+		{"backend ceiling", unknown, 1, StatusError, 0, "cost ceiling cannot be enforced: no price known for " + unknown, ""},
+		{"priced model", "claude-opus-5", 0, StatusOK, 1, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeAPI{turns: [][]string{textTurn("finished")}}
+			srv := httptest.NewServer(fake)
+			t.Cleanup(srv.Close)
+			b := NewAPIBackend()
+			b.BaseURL, b.APIKey, b.CostCeilingUSD = srv.URL, "test", tc.ceiling
+			var infos []string
+			res := b.Run(t.Context(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, Model: tc.model, MaxCostUSD: 1}}, func(e Event) {
+				if e.Kind == EventInfo && strings.Contains(e.Text, "cannot be enforced") {
+					infos = append(infos, e.Text)
+				}
+			})
+			if res.Status != tc.status || res.Error != tc.wantError || len(fake.requests) != tc.requests {
+				t.Errorf("result: %+v, requests: %d", res, len(fake.requests))
+			}
+			if strings.Join(infos, "\n") != tc.wantInfo {
+				t.Errorf("info events = %v, want %q", infos, tc.wantInfo)
+			}
+		})
 	}
 }
 

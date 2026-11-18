@@ -39,6 +39,8 @@ type APIBackend struct {
 	APIKey     string
 	HTTPClient *http.Client
 	MaxRetries int
+
+	CostCeilingUSD float64
 }
 
 func NewAPIBackend() *APIBackend {
@@ -134,24 +136,15 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	started := time.Now()
 	ctx, cancel := withTimeout(ctx, task)
 	defer cancel()
+	maxCostUSD := task.MaxCostUSD
+	if b.CostCeilingUSD > 0 && !(maxCostUSD > 0 && maxCostUSD <= b.CostCeilingUSD) {
+		maxCostUSD = b.CostCeilingUSD
+	}
 	model := task.Model
 	if model == "" {
 		model = DefaultAPIModel
 	}
 	res := Result{Backend: b.Name(), Model: model, CostEstimate: true}
-	if _, priced := priceOf(model); !priced {
-		text := fmt.Sprintf("no price known for %s: its cost is not estimated", model)
-		if task.MaxCostUSD > 0 {
-			text = fmt.Sprintf("max_cost cannot be enforced: no price known for %s", model)
-		}
-		emit(Event{Time: time.Now(), Kind: EventInfo, Text: text})
-	}
-	if task.CompactWindow == "auto" {
-		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "compact_window: not enforced by the api backend"})
-	}
-	if task.NoSkills {
-		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "no_skills: not enforced by the api backend"})
-	}
 	var req apiRequest
 	saveConversation := func() {
 		if task.RunDir == "" || task.Durable != nil {
@@ -172,6 +165,22 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventError, Text: err.Error()})
 		saveConversation()
 		return finish(&res, started)
+	}
+	if _, priced := priceOf(model); !priced {
+		if b.CostCeilingUSD > 0 {
+			return fail(StatusError, fmt.Errorf("cost ceiling cannot be enforced: no price known for %s", model))
+		}
+		text := fmt.Sprintf("no price known for %s: its cost is not estimated", model)
+		if maxCostUSD > 0 {
+			text = fmt.Sprintf("max_cost cannot be enforced: no price known for %s", model)
+		}
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: text})
+	}
+	if task.CompactWindow == "auto" {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "compact_window: not enforced by the api backend"})
+	}
+	if task.NoSkills {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "no_skills: not enforced by the api backend"})
 	}
 	if err := CheckCompactWindow(b.Name(), task.CompactWindow); err != nil {
 		return fail(StatusError, err)
@@ -385,7 +394,7 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	compact := func(turn int) *Result {
 		if compactWindow == 0 || turn >= maxTurns || res.ContextTokens < compactWindow || ctx.Err() != nil ||
 			compaction.failedContext > 0 && res.ContextTokens-compaction.failedContext < compactionMaxTokens ||
-			task.MaxCostUSD > 0 && res.CostUSD >= task.MaxCostUSD || durable != nil && durable.checkpoint.Pending != nil {
+			maxCostUSD > 0 && res.CostUSD >= maxCostUSD || durable != nil && durable.checkpoint.Pending != nil {
 			return nil
 		}
 		summaryReq := outgoing(req)
@@ -600,8 +609,8 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		if turn > maxTurns {
 			return fail(StatusMaxTurns, fmt.Errorf("stopped after %d turns", maxTurns))
 		}
-		if task.MaxCostUSD > 0 && res.CostUSD >= task.MaxCostUSD && (durable == nil || len(durable.checkpoint.Response) == 0) {
-			return fail(StatusBudget, fmt.Errorf("cost estimate $%.4f reached the $%.4f limit after turn %d", res.CostUSD, task.MaxCostUSD, res.Turns))
+		if maxCostUSD > 0 && res.CostUSD >= maxCostUSD && (durable == nil || len(durable.checkpoint.Response) == 0) {
+			return fail(StatusBudget, fmt.Errorf("cost estimate $%.4f reached the $%.4f limit after turn %d", res.CostUSD, maxCostUSD, res.Turns))
 		}
 		res.Turns = turn
 		msg, restoredResponse, result := requestPhase(turn)

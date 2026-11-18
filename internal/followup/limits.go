@@ -28,11 +28,11 @@ func Partner(backend string, now time.Time, spent Spent) string {
 		return other
 	}
 	if other != "" {
-		if ok, _ := Ready(other, now, spent); ok {
+		if ok, _ := ready(p, other, now, spent); ok {
 			return other
 		}
 	}
-	if ok, _ := Ready("api", now, spent); ok || other == "" {
+	if ok, _ := ready(p, "api", now, spent); ok || other == "" {
 		return "api"
 	}
 	return other
@@ -42,15 +42,18 @@ func planPair(p prefs.Prefs, backend string, now time.Time, spent Spent) string 
 	if len(p.EnabledNames) > 0 {
 		first := ""
 		for _, name := range p.Filter(agent.Names()) {
-			// Automatic replacements must not bill per token.
-			if name == backend || !planPartner(name) {
+			if name == backend || (!p.Metered() && !planPartner(name)) {
+				continue
+			}
+			// Partner handles the local fallback after the other candidates.
+			if name == "api" && (p.LocalAPI != "" || p.BillingMaxCostUSD <= 0) {
 				continue
 			}
 			b, _ := agent.Get(name)
 			if _, err := b.Detect(); err != nil {
 				continue
 			}
-			if ok, _ := Ready(name, now, spent); ok {
+			if ok, _ := ready(p, name, now, spent); ok {
 				return name
 			}
 			if first == "" {
@@ -132,19 +135,31 @@ func localAPI(p prefs.Prefs) (string, error) {
 	return p.LocalAPI, nil
 }
 
-// Backend gets name's backend; with the local opt-in, api goes only to that endpoint or is refused.
+// Backend applies the opted-in local endpoint or metered ceiling to api.
 func Backend(name string) (agent.Backend, error) {
 	b, err := agent.Get(name)
 	if err != nil || name != "api" {
 		return b, err
 	}
+	p, err := resolve.BackendPreferences(runlog.Home())
+	if err != nil {
+		return nil, fmt.Errorf("local api: %w", err)
+	}
 	// Refused rather than run on the key: a continuation inherits api without asking.
-	url, err := LocalAPI()
+	url, err := localAPI(p)
 	if err != nil {
 		return nil, err
 	}
 	api, ok := b.(*agent.APIBackend)
-	if url == "" || !ok {
+	if !ok {
+		return b, nil
+	}
+	if url == "" {
+		if p.Metered() && p.BillingMaxCostUSD > 0 {
+			capped := *api
+			capped.CostCeilingUSD = p.BillingMaxCostUSD
+			return &capped, nil
+		}
 		return b, nil
 	}
 	local := *api
@@ -185,34 +200,47 @@ func meteredBy(backend string) string {
 	return ""
 }
 
-// Ready requires plan billing for unrequested replacements.
+// Ready checks whether a backend can take over under the billing policy.
 func Ready(backend string, now time.Time, spent Spent) (bool, string) {
+	p, err := resolve.BackendPreferences(runlog.Home())
+	if backend == "api" && err != nil {
+		return false, "local api: " + err.Error()
+	}
+	return ready(p, backend, now, spent)
+}
+
+func ready(p prefs.Prefs, backend string, now time.Time, spent Spent) (bool, string) {
 	if backend == "api" {
-		if url, err := LocalAPI(); url == "" {
-			if err != nil {
-				return false, err.Error()
+		url, err := localAPI(p)
+		if err != nil {
+			return false, err.Error()
+		}
+		if url == "" {
+			if !p.Metered() {
+				return false, "api would bill per token, not to a plan"
 			}
-			return false, "api would bill per token, not to a plan"
+			if p.BillingMaxCostUSD <= 0 {
+				return false, "api would bill per token with no ceiling; set billing_max_cost_usd (hrn backends set --max-cost)"
+			}
+			return planReady(p, backend, now, spent)
 		}
 		if why := spent.out(backend, now); why != "" {
 			return false, why
 		}
 		return true, ""
 	}
-	ok, why := planReady(backend, now, spent)
+	ok, why := planReady(p, backend, now, spent)
 	if !ok {
 		// An opted-in local api that is kept out explains why the chain ends here.
-		if p, err := resolve.BackendPreferences(runlog.Home()); err == nil {
-			if _, err := localAPI(p); err != nil {
-				why += "; " + err.Error()
-			}
+		if _, err := localAPI(p); err != nil {
+			why += "; " + err.Error()
 		}
 	}
 	return ok, why
 }
 
-func planReady(backend string, now time.Time, spent Spent) (bool, string) {
-	if !planPartner(backend) {
+func planReady(p prefs.Prefs, backend string, now time.Time, spent Spent) (bool, string) {
+	if !p.Metered() && !planPartner(backend) {
 		return false, backend + " can bill per token; automatic carry-on uses claude, codex or agy only"
 	}
 	b, err := agent.Get(backend)
@@ -222,8 +250,10 @@ func planReady(backend string, now time.Time, spent Spent) (bool, string) {
 	if _, err := b.Detect(); err != nil {
 		return false, backend + " is not installed"
 	}
-	if name := meteredBy(backend); name != "" {
-		return false, fmt.Sprintf("%s would bill per token, not to a plan, since %s is set", backend, name)
+	if !p.Metered() {
+		if name := meteredBy(backend); name != "" {
+			return false, fmt.Sprintf("%s would bill per token, not to a plan, since %s is set", backend, name)
+		}
 	}
 	if why := spent.out(backend, now); why != "" {
 		return false, why

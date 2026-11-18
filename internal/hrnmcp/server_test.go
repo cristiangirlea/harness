@@ -15,6 +15,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/mcp"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -113,6 +114,28 @@ func sameDir(a, b string) bool {
 		return false
 	}
 	return os.SameFile(ai, bi)
+}
+
+func TestBackendsListsMeteredBillingBeforeBackendRows(t *testing.T) {
+	s := connect(t, t.TempDir())
+	for _, tc := range []struct {
+		p    prefs.Prefs
+		line string
+	}{
+		{prefs.Prefs{}, ""},
+		{prefs.Prefs{Billing: "metered"}, "billing: metered, no api ceiling (api is not an automatic partner)"},
+		{prefs.Prefs{Billing: "metered", BillingMaxCostUSD: 2.5}, "billing: metered, api runs capped at $2.50"},
+	} {
+		if err := prefs.Save(runlog.Home(), tc.p); err != nil {
+			t.Fatal(err)
+		}
+		result := s.call(t, "backends", `{}`)
+		text := result.Text()
+		first, _, _ := strings.Cut(text, "\n")
+		if result.IsError || !strings.Contains(text, "✓ stub") || tc.line != "" && first != tc.line || tc.line == "" && strings.Contains(text, "billing:") {
+			t.Errorf("prefs %+v: listing %q", tc.p, text)
+		}
+	}
 }
 
 func TestShowOversizedResultUsesOwnHint(t *testing.T) {

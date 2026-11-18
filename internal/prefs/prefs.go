@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -21,14 +22,31 @@ type Prefs struct {
 	WorkMapRepos    []string `json:"work_map_repos,omitempty"`
 	EnabledNames    []string `json:"enabled,omitempty"`
 	DefaultName     string   `json:"default,omitempty"`
+
+	Billing           string  `json:"billing,omitempty"`
+	BillingMaxCostUSD float64 `json:"billing_max_cost_usd,omitempty"`
+
 	// LocalAPI opts an unmetered api endpoint in as the last carry-on partner.
 	LocalAPI string `json:"local_api,omitempty"`
 }
+
+var errBillingCeiling = errors.New("billing_max_cost_usd: want a finite positive amount")
 
 func (p Prefs) Enabled(name string) bool {
 	return len(p.EnabledNames) == 0 || slices.Contains(p.EnabledNames, name)
 }
 func (p Prefs) Default() string { return p.DefaultName }
+func (p Prefs) Metered() bool   { return p.Billing == "metered" }
+
+func (p Prefs) BillingSummary() string {
+	if !p.Metered() {
+		return ""
+	}
+	if p.BillingMaxCostUSD > 0 {
+		return fmt.Sprintf("billing: metered, api runs capped at $%.2f", p.BillingMaxCostUSD)
+	}
+	return "billing: metered, no api ceiling (api is not an automatic partner)"
+}
 
 // Filter intersects names with the preference, in preference order.
 func (p Prefs) Filter(names []string) []string {
@@ -55,6 +73,19 @@ func (p Prefs) Check(name string) error {
 func (p Prefs) validate() error {
 	if p.DefaultName != "" && !slices.Contains(p.EnabledNames, p.DefaultName) {
 		return fmt.Errorf("default backend %s is not in enabled", p.DefaultName)
+	}
+	switch p.Billing {
+	case "", "plan", "metered":
+	default:
+		return errors.New("billing: want plan or metered")
+	}
+	if n := p.BillingMaxCostUSD; n != 0 {
+		if !p.Metered() {
+			return errors.New("billing_max_cost_usd requires metered billing")
+		}
+		if n < 0 || math.IsNaN(n) || math.IsInf(n, 0) {
+			return errBillingCeiling
+		}
 	}
 	if p.LocalAPI != "" {
 		return checkLocalAPI(p.LocalAPI)
@@ -107,17 +138,26 @@ func Load(home string) (Prefs, error) {
 	if err != nil {
 		return Prefs{}, err
 	}
-	var p *Prefs
+	var p *struct {
+		Prefs
+		BillingMaxCostUSD *float64 `json:"billing_max_cost_usd"`
+	}
 	if err := json.Unmarshal(data, &p); err != nil {
 		return Prefs{}, fmt.Errorf("%s: %w", path, err)
 	}
 	if p == nil {
 		return Prefs{}, fmt.Errorf("%s: want a preferences object", path)
 	}
+	if p.BillingMaxCostUSD != nil {
+		if *p.BillingMaxCostUSD <= 0 {
+			return Prefs{}, fmt.Errorf("%s: %w", path, errBillingCeiling)
+		}
+		p.Prefs.BillingMaxCostUSD = *p.BillingMaxCostUSD
+	}
 	if err := p.validate(); err != nil {
 		return Prefs{}, fmt.Errorf("%s: %w", path, err)
 	}
-	return *p, nil
+	return p.Prefs, nil
 }
 
 func Save(home string, p Prefs) error {
