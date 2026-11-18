@@ -72,9 +72,10 @@ repetitions; a nonempty list with no enabled entries is refused.
 
 At a usage limit the carry-on partner is the first other installed enabled backend
 in preference order that passes the readiness and billing checks: one that is limited
-too, or would bill per token, is passed over for the next. With no preference, the
-claude/codex pairing is unchanged. With no ready enabled partner, the run stays limited.
-Automatic carry-on partners are limited to claude, codex and agy; gemini and opencode can still be run by name.
+too is passed over for the next. Under the plan policy, one that would bill per token
+is passed over for the next. With no preference, the claude/codex pairing is unchanged.
+With no ready enabled partner, the run stays limited.
+Under the plan policy, automatic carry-on partners are limited to claude, codex and agy; gemini and opencode can still be run by name.
 An opted-in local api endpoint comes after all of them (see
 [A local model as the last partner](#a-local-model-as-the-last-partner)).
 `--no-switch` still disables carry-on. A limited run with
@@ -524,7 +525,7 @@ again at Oct 16th, 2026 3:29 PM", or agy's `AGY_ERROR` object with status
 `limited`, not `error`, and its result keeps the time the limit lifts as `limit_resets` when
 the message gives one. Then:
 
-- The other CLI carries it on, once, as a follow-up run (see above): a new record that
+- The partner carries it on, once, as a follow-up run (see above): a new record that
   continues the limited one, with the transcript handed over, the same workspace and
   mode. A model is never carried from one backend to the other: the new backend runs the
   model chosen for it earlier in the same chain, as any follow-up does, or its default. `hrn run` and the MCP `run` tool answer
@@ -536,25 +537,46 @@ the message gives one. Then:
   says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
   tool) shows each limit it remembers, also for a backend with no partner (agy without
   preferences). A limit can lift early (codex sells credits); deleting the file forgets it.
-- Nothing moves automatically to `api`, which is billed per token, unless its endpoint is
-  opted in as local (below). Without preferences, gemini, opencode and agy are not partners either; with one, the enabled installed plan
-  backends stand in, in preference order, past any that is limited too. If no enabled
+- Under the plan policy, nothing moves automatically to `api`, which is billed per token, unless its endpoint is
+  opted in as local (below). Without preferences, gemini, opencode and agy are not partners either.
+  Under the plan policy, with a preference, the enabled installed plan backends stand in,
+  in preference order, past any that is limited too. If no enabled
   partner is installed, or every one is limited, the run stays `limited` and says so.
-- Nor to a CLI that would bill per token: with `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
+- Under the plan policy, nothing moves automatically to a CLI that would bill per token.
+  With `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
   or a `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switch set, claude prefers them to
   the plan. Codex uses `CODEX_API_KEY` in API-key mode; older releases or API-key mode
   can use `OPENAI_API_KEY`, which hrn treats as metered to be safe. Any non-empty key
   or token counts as set, including `0` and `false`; only the `CLAUDE_CODE_USE_*`
-  switches treat `0` or `false` (case-insensitive) as off. That CLI does not stand in,
+  switches treat `0` or `false` (case-insensitive) as off. Under the plan policy, that CLI does not stand in,
   and the run names the variable, never its value. When a remembered limit would
   otherwise move the run, this reason is recorded before it starts; a batch reports
   it before the attempt starts.
 
+#### Billing policy
+
+The default `plan` policy allows claude, codex and agy to take over from the enabled
+list when they can use plan billing. With `--billing metered`, any enabled, installed
+CLI can take over in preference order, including one configured to bill per token.
+Readiness still checks usage limits.
+
+An enabled `api` can take over in preference order when you set `--max-cost USD` under
+the metered policy. This saves `billing_max_cost_usd` as a per-run ceiling for metered
+`api` runs through `hrn run`, carry-on, batch attempts, eval cells and judges, the MCP
+`run` tool and `hrn exec` without a worker. The API loop refuses a model with no known
+price, checks estimated cost between turns and uses a lower positive task limit if
+one is set. `hrn feed` runs `api` only on a loopback endpoint. hrn cannot cap what an
+agent CLI spends. The provider's own budget applies.
+
+`hrn backends set` without `--billing` returns to the plan policy and clears the ceiling.
+The watch Backends card keeps both settings when it saves. The local API opt-in
+keeps its own rule under either policy.
+
 #### A local model as the last partner
 
 A local inference server that speaks the Messages API on loopback or the private network
-bills nothing, so it can carry a run on once every plan is limited. It is a weaker model,
-so it is opt-in and always last:
+bills nothing. Under the plan policy, it can carry a run on once every plan is limited.
+It is a weaker model, so it is opt-in and always last:
 
 ```bash
 hrn backends set --only claude,codex,agy,api --local-api http://127.0.0.1:8081
@@ -566,7 +588,7 @@ hrn backends set --only claude,codex,agy,api --local-api http://127.0.0.1:8081
   accepted, with no credentials, query or fragment; other host names are refused, since
   they could resolve anywhere. A hand-written file with another URL fails to load, as a
   malformed preference does.
-- The local api is the partner only when no enabled plan backend is ready: claude, codex
+- Under the plan policy, the local api is the partner only when no enabled plan backend is ready: claude, codex
   and agy come first in preference order, wherever `api` sits in the list. Without an
   enabled list the claude/codex pairing comes first.
 - It is never used while `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` is set: with a real
