@@ -287,6 +287,16 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-19: `hrn update` follows a redirected download only to the release's own hosts (#947,
+  PR #948). Each hop passes the rule that judges the first address, at most five redirects, and
+  the caller's own redirect check still runs. Found while reviewing the install scripts.
+- 2026-11-19: install scripts fetch, check and install a release binary without a Go toolchain
+  (#944, PR #946). `scripts/install.sh` and `scripts/install.ps1` read the newest release or a
+  pinned tag, take the asset `.github/release.sh` names for the machine, refuse a digest that
+  `SHA256SUMS` does not confirm, and follow redirects themselves with every target checked.
+  `scripts/verify.sh` now covers a top-level `.ps1`. Limits: no release exists yet, so nothing was
+  installed from the real endpoint, and tagging one is a maintainer's step; the sums file comes
+  from the same release, so it catches a swapped download and not a tampered release.
 - 2026-11-19: organisation and user layers for backend preferences (#938, PR #943). An
   organisation file on the system volume (`/etc/hrn/backends.json`, or `ProgramData\hrn` on
   Windows) sets preferences and can lock six groups; the merge runs where preferences are
