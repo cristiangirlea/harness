@@ -270,6 +270,51 @@ lines: hrn sends `hello` first, then accepts one `start`, streams complete event
 and ends with `result`. Closing stdin or interrupting hrn cancels the run. See
 [the v1 protocol](exec-protocol.md) for messages, capabilities, limits and exit codes.
 
+### Installing from a release
+
+Run this command on Linux or macOS.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cristiangirlea/harness/main/scripts/install.sh | sh
+```
+
+Run this command in PowerShell on Windows.
+
+```powershell
+irm https://raw.githubusercontent.com/cristiangirlea/harness/main/scripts/install.ps1 | iex
+```
+
+The installers fetch the newest release and check the download against its
+`SHA256SUMS` before installing. Set `HRN_INSTALL_VERSION` to a tag such as
+`v0.2.0` to pin a release.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cristiangirlea/harness/main/scripts/install.sh | HRN_INSTALL_VERSION=v0.2.0 sh
+```
+
+```powershell
+$env:HRN_INSTALL_VERSION = 'v0.2.0'
+irm https://raw.githubusercontent.com/cristiangirlea/harness/main/scripts/install.ps1 | iex
+```
+
+The script comes from the default branch and `HRN_INSTALL_VERSION` pins only
+the binary, so download and read the script before running it if you want to
+inspect what it will execute.
+The check catches a corrupted or swapped download; the sums file comes from the same release, so it does not protect against a release that was itself tampered with.
+If a release lists multiple assets with the same name, the installers use the
+last one, as `hrn update` does. The shell installer requires curl or GNU wget.
+
+Set `HRN_INSTALL_DIR` to choose another directory.
+The defaults are `$HOME/.local/bin/hrn` on Linux and macOS and
+`$env:LOCALAPPDATA\hrn\hrn.exe` on Windows. If the directory is outside
+`PATH`, the installer prints how to add it.
+
+`HRN_INSTALL_API` and `HRN_INSTALL_ARCH` are test overrides.
+`HRN_INSTALL_OS` is a test override for the shell installer.
+`HRN_INSTALL_API` accepts HTTPS or HTTP on a loopback IP literal.
+
+These need a published release; until one exists, install with `go install`.
+
 ### hrn update
 
 `hrn update` moves every hrn on this computer to another build in one step, the routine
@@ -278,6 +323,8 @@ that used to be done by hand after a merge.
 **Sources.** Without a flag it takes the newest GitHub release of `cristiangirlea/harness`:
 the asset for this platform (`hrn_<version>_<os>_<arch>[.exe]`, as `.github/release.sh`
 names them) and `SHA256SUMS`, and refuses to go on when the checksum does not match. A
+download that is redirected is followed only to the release's own hosts over https, at most
+five times. A
 `GITHUB_TOKEN` in the environment is sent to the API when present and never printed.
 `--ref REF` runs `go install github.com/cristiangirlea/harness/cmd/hrn@REF` into a temporary
 `GOBIN` (with `GOFLAGS` unset and `GOPROXY` as configured); `--main` is `--ref main`; both

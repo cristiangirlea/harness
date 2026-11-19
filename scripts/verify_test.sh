@@ -4,7 +4,7 @@
 # effects: read, exec
 # parameters: none
 # example: bash scripts/verify_test.sh
-# hash: 8b6e458257761791e4e66587f93a7d097201ab154abedba1776b1ed12846ed92
+# hash: 3f442e1616fe83c5db7c96c7c3b21040b2b069bd6aa53128e1972acda9445121
 set -euo pipefail
 runner=$(cd "$(dirname "$0")" && pwd)/verify.sh
 tmp=$(mktemp -d)
@@ -69,6 +69,28 @@ grep -q 'scripts/tool.go`: tool program.' "$clean/AGENTS.md" || fail go-header-i
 grep -Eq '^# hash: [0-9a-f]{64}$' "$clean/scripts/unstamped.sh" || fail hash-none-stamp
 grep -q 'scripts/prose.sh' "$clean/AGENTS.md" || fail prose-header
 [[ $(bash "$runner" --root "$clean" --check) == '{"verified":true}' ]] || fail clean-check
+powershell=$tmp/powershell
+mkdir -p "$powershell/scripts" "$powershell/bin"
+cp "$tmp/index" "$powershell/AGENTS.md"
+for tool in awk cat cmp dirname find mktemp rm sed sort; do
+  printf '#!/bin/bash\nexec %q "$@"\n' "$(command -v "$tool")" > "$powershell/bin/$tool"
+done
+hasher=$(command -v sha256sum || command -v shasum)
+printf '#!/bin/bash\nexec %q "$@"\n' "$hasher" > "$powershell/bin/${hasher##*/}"
+chmod +x "$powershell/bin/"*
+printf '# name: fixture\n# summary: PowerShell fixture.\n# effects: read\n# example: exit 99\n# hash: pending\n' > "$powershell/scripts/fixture.ps1"
+verify_without_powershell() {
+  PATH="$powershell/bin" "$BASH" "$runner" --root "$powershell" "$@"
+}
+if verify_without_powershell --check > "$tmp/out" 2>&1; then fail powershell-header-accepted; fi
+grep -q 'invalid header: scripts/fixture.ps1' "$tmp/out" || fail powershell-header-diagnostic
+sed -i '/^# example:/i # parameters: none' "$powershell/scripts/fixture.ps1"
+verify_without_powershell > "$tmp/out"
+grep -q 'scripts/fixture.ps1`: PowerShell fixture.' "$powershell/AGENTS.md" || fail powershell-index
+verify_without_powershell --check > "$tmp/out"
+printf '\n# changed\n' >> "$powershell/scripts/fixture.ps1"
+if verify_without_powershell --check > "$tmp/out" 2>&1; then fail powershell-stale-hash-accepted; fi
+grep -q 'stale hash: scripts/fixture.ps1' "$tmp/out" || fail powershell-hash-diagnostic
 sed -i 's/^# effects:/# name: again\n# effects:/' "$clean/scripts/prose.sh"
 check_fails 'invalid header: scripts/prose.sh' "$clean"
 rm "$clean/scripts/prose.sh"

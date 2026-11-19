@@ -64,6 +64,7 @@ in Settings > Rules and back on afterward.
 For a local release dry run, use `bash .github/release.sh`. It writes static binaries
 for Linux, macOS, and Windows (amd64 and arm64), plus `SHA256SUMS`, into `dist/`.
 Running that script does not publish a release. Use Git Bash on Windows.
+The install scripts depend on the asset names `.github/release.sh` produces.
 
 ## Layout
 

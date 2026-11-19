@@ -1,6 +1,7 @@
 package update
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -134,6 +136,114 @@ func TestFetchReleaseRefusesAChecksumMismatch(t *testing.T) {
 		if strings.HasPrefix(e.Name(), "hrn_") {
 			t.Errorf("%s left behind after the refusal", e.Name())
 		}
+	}
+}
+
+func TestFetchReleaseRefusesARedirectAwayFromTheReleaseHosts(t *testing.T) {
+	binary := []byte("MZ fake hrn for windows")
+	sum := sha256.Sum256(binary)
+	sums := fmt.Sprintf(sumsFixture, hex.EncodeToString(sum[:]))
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the redirect target was requested: %s", r.URL.Path)
+		w.Write(binary)
+	}))
+	t.Cleanup(elsewhere.Close)
+	for _, tc := range []struct {
+		name, target string
+		refused      bool
+	}{
+		{"another host", elsewhere.URL + "/dl/hrn_0.2.0_windows_amd64.exe", true},
+		{"the same origin", "/dl/hrn_0.2.0_windows_amd64.exe", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var srv *httptest.Server
+			srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/repos/cristiangirlea/harness/releases/latest":
+					json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.2.0", "assets": []map[string]any{
+						{"name": "hrn_0.2.0_windows_amd64.exe", "browser_download_url": srv.URL + "/moved"},
+						{"name": "SHA256SUMS", "browser_download_url": srv.URL + "/dl/SHA256SUMS"},
+					}})
+				case "/moved":
+					http.Redirect(w, r, tc.target, http.StatusFound)
+				case "/dl/hrn_0.2.0_windows_amd64.exe":
+					w.Write(binary)
+				case "/dl/SHA256SUMS":
+					w.Write([]byte(sums))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			dir := t.TempDir()
+			src := ReleaseSource{API: srv.URL + "/repos/cristiangirlea/harness/releases/latest", Client: srv.Client(), GOOS: "windows", GOARCH: "amd64"}
+			path, _, err := src.Fetch(context.Background(), dir)
+			if !tc.refused {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got, _ := os.ReadFile(path); !bytes.Equal(got, binary) {
+					t.Errorf("installed bytes differ")
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "is not a GitHub URL") {
+				t.Fatalf("err = %v; want the redirect refused", err)
+			}
+			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+				t.Errorf("%d files left after the refusal", len(entries))
+			}
+		})
+	}
+}
+
+func TestFetchReleaseStopsAfterFiveRedirectsAndKeepsTheCallersRedirectCheck(t *testing.T) {
+	binary := []byte("MZ fake hrn for windows")
+	sum := sha256.Sum256(binary)
+	sums := fmt.Sprintf(sumsFixture, hex.EncodeToString(sum[:]))
+	for _, hops := range []int{5, 6} {
+		t.Run(fmt.Sprintf("%d redirects", hops), func(t *testing.T) {
+			var srv *httptest.Server
+			srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/repos/cristiangirlea/harness/releases/latest":
+					json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.2.0", "assets": []map[string]any{
+						{"name": "hrn_0.2.0_windows_amd64.exe", "browser_download_url": srv.URL + "/hop/0"},
+						{"name": "SHA256SUMS", "browser_download_url": srv.URL + "/dl/SHA256SUMS"},
+					}})
+				case strings.HasPrefix(r.URL.Path, "/hop/"):
+					n, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/hop/"))
+					if n == hops {
+						w.Write(binary)
+						return
+					}
+					http.Redirect(w, r, fmt.Sprintf("/hop/%d", n+1), http.StatusFound)
+				case r.URL.Path == "/dl/SHA256SUMS":
+					w.Write([]byte(sums))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			seen := 0
+			client := srv.Client()
+			client.CheckRedirect = func(*http.Request, []*http.Request) error { seen++; return nil }
+			dir := t.TempDir()
+			src := ReleaseSource{API: srv.URL + "/repos/cristiangirlea/harness/releases/latest", Client: client, GOOS: "windows", GOARCH: "amd64"}
+			_, _, err := src.Fetch(context.Background(), dir)
+			if hops == 5 {
+				if err != nil || seen != 5 {
+					t.Fatalf("five redirects: err = %v, the caller's check ran %d times", err, seen)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "stopped after 5 redirects") {
+				t.Fatalf("err = %v; want the sixth redirect refused", err)
+			}
+			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+				t.Errorf("%d files left after the refusal", len(entries))
+			}
+		})
 	}
 }
 
