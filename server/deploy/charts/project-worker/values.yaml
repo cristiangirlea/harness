@@ -6,6 +6,12 @@ image:
   # Supply an immutable digest built from this checkout.
   ref: ""
   pullPolicy: IfNotPresent
+worker:
+  # Optional RuntimeClass provided by the cluster.
+  runtimeClassName: ""
+isolation:
+  # Require a RuntimeClass name for the worker pod.
+  requireRuntimeClass: false
 control:
   # TLS endpoint of a separately installed, always-on control service.
   url: "https://hrn-control.harness-system.svc.cluster.local:8443"

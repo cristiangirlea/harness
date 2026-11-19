@@ -70,6 +70,50 @@ class VerifierTests(unittest.TestCase):
                     with self.assertRaises(AssertionError):
                         verify.main()
 
+    def test_invalid_runtime_class_values_must_be_refused_with_expected_error(self):
+        cases = [
+            *(("worker.runtimeClassName", name) for name in ("Sandbox", "-sandbox", "sandbox-", "a" * 254, "true")),
+            ("isolation.requireRuntimeClass", "true"),
+            ("isolation.requireRuntimeClass", "yes"),
+        ]
+        for key, value in cases:
+            options = ["--namespace", verify.NAMESPACE, *verify.set_args({**verify.SETS, key: value})]
+            for exit_code in (0, 1):
+                with self.subTest(key=key, value=value, exit_code=exit_code):
+                    def run(args, **kwargs):
+                        if (args[1] == "template" and Path(args[3]).name == "project-worker"
+                                and args[4:] == options):
+                            return subprocess.CompletedProcess(args, exit_code, "", "unrelated error")
+                        return copy.deepcopy(helm_result(tuple(args)))
+
+                    with patch.object(verify.subprocess, "run", side_effect=run):
+                        with self.assertRaisesRegex(AssertionError, "unrelated error"):
+                            verify.main()
+
+    def test_default_worker_render_must_omit_runtime_class_everywhere(self):
+        def mutate(docs):
+            docs["Service"]["metadata"]["annotations"] = {"runtimeClassName": "unexpected"}
+
+        self.check_mutation("project-worker", mutate)
+
+    def test_configured_runtime_class_must_only_change_worker_pod_spec(self):
+        def pod(docs):
+            return docs["StatefulSet"]["spec"]["template"]["spec"]
+
+        cases = {
+            "missing name": lambda docs: pod(docs).pop("runtimeClassName"),
+            "wrong name": lambda docs: pod(docs).update(runtimeClassName="unexpected"),
+            "extra pod field": lambda docs: pod(docs)["containers"][0].update(runtimeClassName="unexpected"),
+            "changed service": lambda docs: docs["Service"]["spec"].update(clusterIP="unexpected"),
+        }
+        for name, edit in cases.items():
+            with self.subTest(case=name):
+                def mutate(docs):
+                    if "runtimeClassName" in pod(docs):
+                        edit(docs)
+
+                self.check_mutation("project-worker", mutate)
+
     def test_control_image_and_security_must_stay_restricted(self):
         cases = [
             (("image",), "hrn:latest"),

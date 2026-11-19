@@ -14,6 +14,21 @@
 {{- if not (regexMatch "@sha256:[0-9a-f]{64}$" $image) -}}
 {{- fail "image.ref must end in @sha256:<64 lowercase hex characters>" -}}
 {{- end -}}
+{{- $runtimeClass := .Values.worker.runtimeClassName -}}
+{{- $requireRuntimeClass := .Values.isolation.requireRuntimeClass -}}
+{{- if not (kindIs "bool" $requireRuntimeClass) -}}
+{{- fail "isolation.requireRuntimeClass must be a boolean" -}}
+{{- end -}}
+{{- if not (kindIs "string" $runtimeClass) -}}
+{{- fail "worker.runtimeClassName must be a string" -}}
+{{- end -}}
+{{- if and $requireRuntimeClass (eq $runtimeClass "") -}}
+{{- fail "isolation.requireRuntimeClass is set: worker.runtimeClassName is required" -}}
+{{- end -}}
+{{- $dnsSubdomain := "^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" -}}
+{{- if and $runtimeClass (or (gt (len $runtimeClass) 253) (not (regexMatch $dnsSubdomain $runtimeClass))) -}}
+{{- fail "worker.runtimeClassName must be a DNS subdomain of at most 253 characters" -}}
+{{- end -}}
 {{- $control := .Values.control.url -}}
 {{- if not (regexMatch "^https://[^/]+$" $control) -}}
 {{- fail "control.url must be an HTTPS origin without a path" -}}
@@ -67,6 +82,9 @@ spec:
         harness.dev/tenant-id: {{ $tenant | quote }}
         harness.dev/project-id: {{ $project | quote }}
     spec:
+      {{- if $runtimeClass }}
+      runtimeClassName: {{ $runtimeClass | quote }}
+      {{- end }}
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 120
       securityContext:
