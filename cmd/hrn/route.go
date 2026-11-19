@@ -14,6 +14,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/eval"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/route"
@@ -64,7 +65,11 @@ func cmdRoute(args []string) (int, error) {
 			if _, err := agent.Get(row.Backend); err != nil {
 				return 2, err
 			}
-			if p, err := resolve.BackendPreferences(runlog.Home()); err == nil && !p.Enabled(row.Backend) {
+			p, err := resolve.BackendPreferences(runlog.Home())
+			if errors.Is(err, prefs.ErrOrganisation) {
+				return 2, err
+			}
+			if err == nil && !p.Enabled(row.Backend) {
 				fmt.Fprintf(os.Stderr, "hrn: warning: backend %s is disabled; runs ignore this row until it is enabled (hrn backends set)\n", row.Backend)
 			}
 		}

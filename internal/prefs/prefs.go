@@ -2,10 +2,13 @@
 package prefs
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"maps"
 	"math"
 	"net"
 	"net/url"
@@ -35,6 +38,170 @@ type Prefs struct {
 	LocalAPI string `json:"local_api,omitempty"`
 }
 
+type Org struct {
+	Prefs
+	Locked []string `json:"locked,omitempty"`
+
+	present bool
+}
+
+func (o Org) Exists() bool { return o.present }
+
+func (o Org) Locks(field string) bool { return slices.Contains(o.Locked, field) }
+
+var (
+	orgPathOverride string
+	orgPathTrusted  bool
+)
+
+// ErrOrganisation identifies policy errors that can be shown without a path.
+var ErrOrganisation = errors.New("the organisation's backends.json")
+
+var (
+	errOrgOwner = fmt.Errorf("%w: not owned by an administrator account", ErrOrganisation)
+	errOrgRead  = fmt.Errorf("%w: could not be read", ErrOrganisation)
+)
+
+func orgOpenError(err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return fs.ErrNotExist
+	}
+	return errOrgRead
+}
+
+func OrgPath() (string, error) {
+	if orgPathOverride != "" {
+		return orgPathOverride, nil
+	}
+	return systemOrgPath()
+}
+
+func LoadOrg() (Org, error) {
+	const maxSize = 1 << 20
+	path, err := OrgPath()
+	if err != nil {
+		return Org{}, err
+	}
+	f, err := openTrustedOrg(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Org{}, nil
+	}
+	if err != nil {
+		return Org{}, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxSize+1))
+	if err != nil {
+		return Org{}, errOrgRead
+	}
+	if len(data) > maxSize {
+		return Org{}, fmt.Errorf("%w: exceeds 1 MiB", ErrOrganisation)
+	}
+	var p *struct {
+		Org
+		BillingMaxCostUSD *float64        `json:"billing_max_cost_usd"`
+		WorkMapSessions   json.RawMessage `json:"work_map_sessions"`
+		WorkMapGitHub     json.RawMessage `json:"work_map_github"`
+		WorkMapRepos      json.RawMessage `json:"work_map_repos"`
+	}
+	if !json.Valid(data) {
+		return Org{}, fmt.Errorf("%w: malformed JSON", ErrOrganisation)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&p); err != nil {
+		if strings.HasPrefix(err.Error(), "json: unknown field ") {
+			return Org{}, fmt.Errorf("%w: unknown field", ErrOrganisation)
+		}
+		return Org{}, fmt.Errorf("%w: invalid preferences object", ErrOrganisation)
+	}
+	if p == nil {
+		return Org{}, fmt.Errorf("%w: want a preferences object", ErrOrganisation)
+	}
+	if p.WorkMapSessions != nil || p.WorkMapGitHub != nil || p.WorkMapRepos != nil {
+		return Org{}, fmt.Errorf("%w: work-map fields are personal", ErrOrganisation)
+	}
+	if p.BillingMaxCostUSD != nil {
+		if *p.BillingMaxCostUSD <= 0 {
+			return Org{}, fmt.Errorf("%w: %w", ErrOrganisation, errBillingCeiling)
+		}
+		p.Prefs.BillingMaxCostUSD = *p.BillingMaxCostUSD
+	}
+	seen := map[string]bool{}
+	for _, field := range p.Locked {
+		switch field {
+		case "enabled", "default", "billing", "providers", "accounts", "local_api":
+		default:
+			return Org{}, fmt.Errorf("%w: unknown locked field", ErrOrganisation)
+		}
+		if seen[field] {
+			return Org{}, fmt.Errorf("%w: duplicate locked field", ErrOrganisation)
+		}
+		seen[field] = true
+	}
+	if err := p.validate(); err != nil {
+		return Org{}, fmt.Errorf("%w: %w", ErrOrganisation, withoutValues(err))
+	}
+	p.present = true
+	return p.Org, nil
+}
+
+func Merge(org Org, user Prefs) (Prefs, []string, error) {
+	p, _, ignored := combine(org, user)
+	slices.Sort(ignored)
+	if err := p.validate(); err != nil {
+		return Prefs{}, ignored, fmt.Errorf("backend preferences: %w (after the organisation's settings)", withoutValues(err))
+	}
+	return p, ignored, nil
+}
+
+func (o Org) Sets(user Prefs) []string {
+	_, sets, _ := combine(o, user)
+	return sets
+}
+
+func combine(org Org, user Prefs) (p Prefs, sets, ignored []string) {
+	p = user
+	useOrg := func(field string, userSet, equal, orgSet bool) bool {
+		locked := org.Locks(field)
+		if locked && userSet && !equal {
+			ignored = append(ignored, field)
+		}
+		if locked || !userSet && orgSet {
+			sets = append(sets, field)
+			return true
+		}
+		return false
+	}
+	if useOrg("enabled", len(user.EnabledNames) > 0, slices.Equal(user.EnabledNames, org.EnabledNames), len(org.EnabledNames) > 0) {
+		p.EnabledNames = org.EnabledNames
+	}
+	if useOrg("default", user.DefaultName != "", user.DefaultName == org.DefaultName, org.DefaultName != "") {
+		p.DefaultName = org.DefaultName
+	}
+	if useOrg("billing", user.Billing != "" || user.BillingMaxCostUSD != 0,
+		user.Billing == org.Billing && user.BillingMaxCostUSD == org.BillingMaxCostUSD,
+		org.Billing != "" || org.BillingMaxCostUSD != 0) {
+		p.Billing, p.BillingMaxCostUSD = org.Billing, org.BillingMaxCostUSD
+	}
+	if useOrg("providers", len(user.Providers) > 0, maps.Equal(user.Providers, org.Providers), len(org.Providers) > 0) {
+		p.Providers = org.Providers
+	}
+	if useOrg("accounts", len(user.Accounts) > 0 || user.AccountReservePercent != nil,
+		maps.EqualFunc(user.Accounts, org.Accounts, slices.Equal) && equalReserve(user.AccountReservePercent, org.AccountReservePercent),
+		len(org.Accounts) > 0 || org.AccountReservePercent != nil) {
+		p.Accounts, p.AccountReservePercent = org.Accounts, org.AccountReservePercent
+	}
+	if useOrg("local_api", user.LocalAPI != "", user.LocalAPI == org.LocalAPI, org.LocalAPI != "") {
+		p.LocalAPI = org.LocalAPI
+	}
+	return p, sets, ignored
+}
+
+func equalReserve(a, b *int) bool {
+	return a == b || a != nil && b != nil && *a == *b
+}
+
 type Provider struct {
 	Target string `json:"target,omitempty"`
 }
@@ -56,6 +223,20 @@ func (p Prefs) Reserve() int {
 }
 
 var errBillingCeiling = errors.New("billing_max_cost_usd: want a finite positive amount")
+
+type preferenceError struct {
+	detail, safe string
+}
+
+func (e preferenceError) Error() string { return e.detail }
+
+func withoutValues(err error) error {
+	var e preferenceError
+	if errors.As(err, &e) {
+		return errors.New(e.safe)
+	}
+	return err
+}
 
 func (p Prefs) Enabled(name string) bool {
 	return len(p.EnabledNames) == 0 || slices.Contains(p.EnabledNames, name)
@@ -104,8 +285,12 @@ func (p Prefs) Check(name string) error {
 }
 
 func (p Prefs) validate() error {
-	if p.DefaultName != "" && !slices.Contains(p.EnabledNames, p.DefaultName) {
-		return fmt.Errorf("default backend %s is not in enabled", p.DefaultName)
+	return p.validateUser(false)
+}
+
+func (p Prefs) validateUser(inheritsEnabled bool) error {
+	if p.DefaultName != "" && !(inheritsEnabled && len(p.EnabledNames) == 0) && !slices.Contains(p.EnabledNames, p.DefaultName) {
+		return preferenceError{fmt.Sprintf("default backend %s is not in enabled", p.DefaultName), "default backend is not in enabled"}
 	}
 	switch p.Billing {
 	case "", "plan", "metered":
@@ -122,16 +307,16 @@ func (p Prefs) validate() error {
 	}
 	for backend, provider := range p.Providers {
 		if backend != "claude" {
-			return fmt.Errorf("providers: backend %s does not support a declared target", backend)
+			return preferenceError{fmt.Sprintf("providers: backend %s does not support a declared target", backend), "providers: backend does not support a declared target"}
 		}
 		switch provider.Target {
 		case "", "plan":
 		case "bedrock", "vertex", "foundry", "gateway":
 			if !p.Metered() {
-				return fmt.Errorf("providers: claude target %s bills per token and needs billing metered", provider.Target)
+				return preferenceError{fmt.Sprintf("providers: claude target %s bills per token and needs billing metered", provider.Target), "providers: declared target bills per token and needs billing metered"}
 			}
 		default:
-			return fmt.Errorf("providers: unknown claude target %q", provider.Target)
+			return preferenceError{fmt.Sprintf("providers: unknown claude target %q", provider.Target), "providers: unknown target"}
 		}
 	}
 
@@ -151,19 +336,19 @@ func (p Prefs) validateAccounts() error {
 			return errors.New("accounts: only claude and codex support accounts")
 		}
 		if len(accounts) > 16 {
-			return fmt.Errorf("accounts: %s allows at most 16 accounts", backend)
+			return preferenceError{fmt.Sprintf("accounts: %s allows at most 16 accounts", backend), "accounts: at most 16 accounts per backend"}
 		}
 		count += len(accounts)
 		seen := map[string]bool{}
 		for _, a := range accounts {
 			if !accountName.MatchString(a.Name) {
-				return fmt.Errorf("accounts: %s account names must match %s", backend, accountName)
+				return preferenceError{fmt.Sprintf("accounts: %s account names must match %s", backend, accountName), fmt.Sprintf("accounts: names must match %s", accountName)}
 			}
 			if seen[a.Name] {
-				return fmt.Errorf("accounts: duplicate %s account %s", backend, a.Name)
+				return preferenceError{fmt.Sprintf("accounts: duplicate %s account %s", backend, a.Name), "accounts: duplicate account name"}
 			}
 			if !filepath.IsAbs(a.Home) || strings.ContainsRune(a.Home, 0) {
-				return fmt.Errorf("accounts: %s account %s needs an absolute config home without NUL", backend, a.Name)
+				return preferenceError{fmt.Sprintf("accounts: %s account %s needs an absolute config home without NUL", backend, a.Name), "accounts: config homes must be absolute and contain no NUL"}
 			}
 			seen[a.Name] = true
 		}
@@ -193,7 +378,7 @@ func checkLocalAPI(raw string) error {
 	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate()) {
 		return nil
 	}
-	return fmt.Errorf("local_api: host %s is not localhost or a loopback or private-network address", u.Host)
+	return preferenceError{fmt.Sprintf("local_api: host %s is not localhost or a loopback or private-network address", u.Host), "local_api: host must be localhost or a loopback or private-network address"}
 }
 
 // Retry Windows sharing conflicts between readers and renames.
@@ -216,6 +401,22 @@ func Raw(home string) ([]byte, error) {
 }
 
 func Load(home string) (Prefs, error) {
+	return loadUser(home, func() bool {
+		org, _ := LoadOrg()
+		return len(org.EnabledNames) > 0
+	})
+}
+
+// LoadForReset keeps personal settings when a default's inherited list is unavailable.
+func LoadForReset(home string) (Prefs, error) {
+	return loadUser(home, func() bool { return true })
+}
+
+func (o Org) LoadUser(home string) (Prefs, error) {
+	return loadUser(home, func() bool { return len(o.EnabledNames) > 0 })
+}
+
+func loadUser(home string, orgEnablesBackends func() bool) (Prefs, error) {
 	path := filepath.Join(home, "backends.json")
 	data, err := Raw(home)
 	if os.IsNotExist(err) {
@@ -226,7 +427,8 @@ func Load(home string) (Prefs, error) {
 	}
 	var p *struct {
 		Prefs
-		BillingMaxCostUSD *float64 `json:"billing_max_cost_usd"`
+		BillingMaxCostUSD *float64        `json:"billing_max_cost_usd"`
+		Locked            json.RawMessage `json:"locked"`
 	}
 	if err := json.Unmarshal(data, &p); err != nil {
 		return Prefs{}, fmt.Errorf("%s: %w", path, err)
@@ -234,20 +436,32 @@ func Load(home string) (Prefs, error) {
 	if p == nil {
 		return Prefs{}, fmt.Errorf("%s: want a preferences object", path)
 	}
+	if p.Locked != nil {
+		return Prefs{}, fmt.Errorf("%s: locked: only the organisation's file may lock fields", path)
+	}
 	if p.BillingMaxCostUSD != nil {
 		if *p.BillingMaxCostUSD <= 0 {
 			return Prefs{}, fmt.Errorf("%s: %w", path, errBillingCeiling)
 		}
 		p.Prefs.BillingMaxCostUSD = *p.BillingMaxCostUSD
 	}
-	if err := p.validate(); err != nil {
+	inheritsEnabled := p.DefaultName != "" && len(p.EnabledNames) == 0 && orgEnablesBackends()
+	if err := p.validateUser(inheritsEnabled); err != nil {
 		return Prefs{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return p.Prefs, nil
 }
 
 func Save(home string, p Prefs) error {
-	if err := p.validate(); err != nil {
+	return saveUser(home, p, false)
+}
+
+func (o Org) SaveUser(home string, p Prefs) error {
+	return saveUser(home, p, len(o.EnabledNames) > 0)
+}
+
+func saveUser(home string, p Prefs, inheritsEnabled bool) error {
+	if err := p.validateUser(inheritsEnabled); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(p, "", "  ")

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -243,6 +244,9 @@ func LoadSpec(path string) (Spec, error) {
 		spec.Dir = filepath.Join(filepath.Dir(abs), spec.Dir)
 	}
 	if err := spec.normalize(); err != nil {
+		if errors.Is(err, prefs.ErrOrganisation) {
+			return Spec{}, err
+		}
 		return Spec{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return spec, nil
