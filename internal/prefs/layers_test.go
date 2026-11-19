@@ -1,6 +1,7 @@
 package prefs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -35,14 +36,11 @@ func TestLoadOrg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old, oldTrusted := orgPathOverride, orgPathTrusted
-	t.Cleanup(func() { orgPathOverride, orgPathTrusted = old, oldTrusted })
-	orgPathOverride, orgPathTrusted = filepath.Join(dir, "backends.json"), true
+	useOrgPath(t, filepath.Join(dir, "backends.json"), true)
 	if got, err := LoadOrg(); err != nil || !reflect.DeepEqual(got, Org{}) {
 		t.Fatalf("missing: %+v, %v", got, err)
 	}
 	for _, tc := range []struct{ name, raw string }{
-		{"unreadable", ""},
 		{"malformed", "{"},
 		{"trailing", "{}{}"},
 		{"null", "null"},
@@ -58,11 +56,7 @@ func TestLoadOrg(t *testing.T) {
 		{"over cap", "{}" + strings.Repeat(" ", 1<<20)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.name == "unreadable" {
-				if err := os.Mkdir(orgPathOverride, 0700); err != nil {
-					t.Fatal(err)
-				}
-			} else if err := os.WriteFile(orgPathOverride, []byte(tc.raw), 0600); err != nil {
+			if err := os.WriteFile(orgPathOverride, []byte(tc.raw), 0600); err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() {
@@ -81,6 +75,80 @@ func TestLoadOrg(t *testing.T) {
 	}
 	if got, err := LoadOrg(); err != nil || !slices.Equal(got.EnabledNames, []string{"claude"}) || !slices.Equal(got.Locked, []string{"enabled"}) {
 		t.Fatalf("valid: %+v, %v", got, err)
+	}
+}
+
+func useOrgPath(t *testing.T, path string, trusted bool) {
+	t.Helper()
+	old, oldTrusted := orgPathOverride, orgPathTrusted
+	orgPathOverride, orgPathTrusted = path, trusted
+	t.Cleanup(func() { orgPathOverride, orgPathTrusted = old, oldTrusted })
+}
+
+func requireOrgError(t *testing.T, message string) {
+	t.Helper()
+	if _, err := LoadOrg(); !errors.Is(err, ErrOrganisation) || err.Error() != "the organisation's backends.json: "+message {
+		t.Fatalf("organisation policy error = %v, want %q", err, message)
+	}
+}
+
+func TestLoadOrgPathChecks(t *testing.T) {
+	for _, name := range []string{"hard link", "symlink file", "symlink folder", "directory as file", "missing file", "missing folder", "unreadable file"} {
+		t.Run(name, func(t *testing.T) {
+			dir, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "backends.json")
+			target := filepath.Join(dir, "policy.json")
+			write := func(name string) {
+				t.Helper()
+				if err := os.WriteFile(name, []byte("{}"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			symlink := func(old, new string) {
+				t.Helper()
+				if err := os.Symlink(old, new); err != nil {
+					t.Skipf("cannot create symlink: %v", err)
+				}
+			}
+			switch name {
+			case "hard link":
+				write(path)
+				if err := os.Link(path, target); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink file":
+				write(target)
+				symlink(target, path)
+			case "symlink folder":
+				write(path)
+				link := filepath.Join(dir, "linked")
+				symlink(dir, link)
+				path = filepath.Join(link, "backends.json")
+			case "directory as file":
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "missing folder":
+				path = filepath.Join(dir, "missing", "backends.json")
+			case "unreadable file":
+				write(path)
+				makeOrgUnreadable(t, path)
+			}
+			useOrgPath(t, path, true)
+			switch name {
+			case "missing file", "missing folder":
+				if got, err := LoadOrg(); err != nil || !reflect.DeepEqual(got, Org{}) {
+					t.Fatalf("missing policy = %+v, %v", got, err)
+				}
+			case "unreadable file":
+				requireOrgError(t, "could not be read")
+			default:
+				requireOrgError(t, "not owned by an administrator account")
+			}
+		})
 	}
 }
 
@@ -183,10 +251,6 @@ func TestLoadOrgRefusesScratchOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	skipTrustedScratchOwner(t, path)
-	old := orgPathOverride
-	t.Cleanup(func() { orgPathOverride = old })
-	orgPathOverride = path
-	if _, err := LoadOrg(); err == nil || err.Error() != "the organisation's backends.json: not owned by an administrator account" {
-		t.Fatalf("scratch policy error = %v", err)
-	}
+	useOrgPath(t, path, false)
+	requireOrgError(t, "not owned by an administrator account")
 }

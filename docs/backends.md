@@ -661,11 +661,13 @@ organisation controls. `billing` includes `billing_max_cost_usd`, and
   set. Otherwise it inherits the organisation's settings.
 - Work-map settings are personal and come from the user's file.
 
+The `hrn` folder must be a real folder and the file must be a regular file with
+no other hard links.
 On Windows the file and its `hrn` folder must be owned by the local Administrators
-group, Local System, or TrustedInstaller. Elsewhere the file must be regular and
-both the file and its folder must be owned by root, with group and other write
-permissions disabled.
+group, Local System, or TrustedInstaller. Elsewhere both the file and its folder
+must be owned by root, with group and other write permissions disabled.
 A file that fails these checks stops runs.
+On Windows an ordinary user can create that folder or file when no administrator has; hrn then refuses to run until an administrator removes it or replaces it with their own, rather than treating a file of unknown origin as no policy.
 
 When the organisation locks `enabled`, omit `--only` to set an unlocked preference.
 An explicitly set default must be in the effective enabled list.

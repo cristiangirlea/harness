@@ -5,7 +5,6 @@ package prefs
 import (
 	"io/fs"
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -34,22 +33,12 @@ func skipTrustedScratchOwner(t *testing.T, _ string) {
 	}
 }
 
-func TestLoadOrgRefusesSymlink(t *testing.T) {
-	dir, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
+func makeOrgUnreadable(t *testing.T, path string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root can read files with mode 000")
 	}
-	path := filepath.Join(dir, "policy.json")
-	if err := os.WriteFile(path, []byte("{}"), 0600); err != nil {
+	if err := os.Chmod(path, 0); err != nil {
 		t.Fatal(err)
-	}
-	old, oldTrusted := orgPathOverride, orgPathTrusted
-	t.Cleanup(func() { orgPathOverride, orgPathTrusted = old, oldTrusted })
-	orgPathOverride, orgPathTrusted = filepath.Join(dir, "backends.json"), true
-	if err := os.Symlink(path, orgPathOverride); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadOrg(); err == nil || err.Error() != "the organisation's backends.json: not owned by an administrator account" {
-		t.Fatalf("symlink policy error = %v", err)
 	}
 }

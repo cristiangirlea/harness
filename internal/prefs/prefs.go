@@ -57,6 +57,18 @@ var (
 // ErrOrganisation identifies policy errors that can be shown without a path.
 var ErrOrganisation = errors.New("the organisation's backends.json")
 
+var (
+	errOrgOwner = fmt.Errorf("%w: not owned by an administrator account", ErrOrganisation)
+	errOrgRead  = fmt.Errorf("%w: could not be read", ErrOrganisation)
+)
+
+func orgOpenError(err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return fs.ErrNotExist
+	}
+	return errOrgRead
+}
+
 func OrgPath() (string, error) {
 	if orgPathOverride != "" {
 		return orgPathOverride, nil
@@ -70,25 +82,17 @@ func LoadOrg() (Org, error) {
 	if err != nil {
 		return Org{}, err
 	}
-	info, err := os.Lstat(path)
+	f, err := openTrustedOrg(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return Org{}, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || !(path == orgPathOverride && orgPathTrusted || trustedOrgPath(path)) {
-		return Org{}, fmt.Errorf("%w: not owned by an administrator account", ErrOrganisation)
-	}
-	f, err := os.Open(path)
 	if err != nil {
-		return Org{}, fmt.Errorf("%w: could not be read", ErrOrganisation)
+		return Org{}, err
 	}
 	defer f.Close()
-	info, err = f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return Org{}, fmt.Errorf("%w: could not be read", ErrOrganisation)
-	}
 	data, err := io.ReadAll(io.LimitReader(f, maxSize+1))
 	if err != nil {
-		return Org{}, fmt.Errorf("%w: could not be read", ErrOrganisation)
+		return Org{}, errOrgRead
 	}
 	if len(data) > maxSize {
 		return Org{}, fmt.Errorf("%w: exceeds 1 MiB", ErrOrganisation)

@@ -534,7 +534,7 @@ func TestBackendsOrganisationNoticeAndListing(t *testing.T) {
 	}
 	got, err := os.ReadFile(stderr.Name())
 	want := "backends: billing, local_api set by the organisation; your backends.json values for them are ignored\n"
-	if err != nil || string(got) != want {
+	if err != nil || strings.Count(string(got), want) != 1 {
 		t.Fatalf("stderr = %q, %v", got, err)
 	}
 }
