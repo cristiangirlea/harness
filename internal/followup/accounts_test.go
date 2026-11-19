@@ -90,7 +90,12 @@ func TestAccountContinuationAndCarryOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	agent.Register(agent.NewCodexBackend())
-	task := agent.Task{Prompt: "finish the task", Dir: t.TempDir()}
+	// A session belongs to its resolved workspace; a temp dir can be a short name on Windows.
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := agent.Task{Prompt: "finish the task", Dir: dir}
 	rec, err := runlog.Create("codex", task, nil)
 	if err != nil {
 		t.Fatal(err)
