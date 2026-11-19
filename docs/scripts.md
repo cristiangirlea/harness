@@ -3,7 +3,7 @@
 Use Bash (Git Bash on Windows, Bash on Linux), or standard-library Go via
 `go run`. Run examples from the repository root. No Python is needed.
 
-Every `.sh` and `.go` file in `scripts/`, and every `.go` file one directory
+Every `.sh`, `.ps1` and `.go` file in `scripts/`, and every `.go` file one directory
 down (a Go package such as `scripts/tool-shapes/`, its tests included), starts
 with this header (after a shell shebang). Go uses `//` instead of `#`. The
 header ends at the first comment line that is not a lowercase `key: value`, so
@@ -40,17 +40,20 @@ collapsed to one space. A script with no `matches:` line is never hinted.
 - Write the header first.
 - Compose by calling scripts, never copying their code.
 
-`bash scripts/verify.sh` reads headers of `scripts/*.sh`, `scripts/*.go` and
+`bash scripts/verify.sh` reads headers of `scripts/*.sh`, `scripts/*.ps1`, `scripts/*.go` and
 `scripts/*/*.go`, runs examples, stamps SHA-256 excluding the hash line, and
 replaces the marked index in AGENTS.md with sorted paths and summaries.
 Nested Go files (`scripts/*/*.go`) are hashed, but their examples run through
 their entry script `scripts/<dir>.sh` when it exists, whose own example must run
 `go test` on that directory. Without an entry script, the verifier runs each example itself. Failed examples are reported, omitted
 from the index and cause a non-zero exit. Header errors also fail, and so does
-any other file: in `scripts/` only `.sh`, `.go` and `.txt` data (such as the
+any other file: in `scripts/` only `.sh`, `.ps1`, `.go` and `.txt` data (such as the
 comment baseline) are allowed, one directory down only `.go`;
 `scripts/testdata/` is not checked. Shell scripts are mode 100755 but are
 always run through `bash`.
+PowerShell scripts need no executable bit. The verifier checks their headers and
+hashes and indexes them on every system, running their examples only when
+`powershell.exe` is available.
 Writes are in place so Windows can handle files held open by other processes.
 
 `bash scripts/verify.sh --check` performs the same examples but writes nothing.
