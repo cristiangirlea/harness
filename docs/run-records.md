@@ -18,6 +18,7 @@ their own name. Each tool item belongs to the call running when it started; noth
 unless the rollout's tool items match the stream's and each one started inside a call.
 
 A claude result with a declared metered target records its name in `provider`.
+A named-account CLI result records its account name in `account`.
 
 Records hold the original text; human-facing displays mask secret-looking values, while JSON record output remains unchanged.
 Only non-durable api runs carry flags, using the api loop's guard/permission texts

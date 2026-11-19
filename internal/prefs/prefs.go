@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -27,12 +28,31 @@ type Prefs struct {
 	BillingMaxCostUSD float64             `json:"billing_max_cost_usd,omitempty"`
 	Providers         map[string]Provider `json:"providers,omitempty"`
 
+	Accounts              map[string][]Account `json:"accounts,omitempty"`
+	AccountReservePercent *int                 `json:"account_reserve_percent,omitempty"`
+
 	// LocalAPI opts an unmetered api endpoint in as the last carry-on partner.
 	LocalAPI string `json:"local_api,omitempty"`
 }
 
 type Provider struct {
 	Target string `json:"target,omitempty"`
+}
+
+type Account struct {
+	Name string `json:"name"`
+	Home string `json:"home"`
+}
+
+var accountName = regexp.MustCompile("^[a-z0-9-]{1,32}$")
+
+func (p Prefs) AccountsFor(backend string) []Account { return p.Accounts[backend] }
+
+func (p Prefs) Reserve() int {
+	if p.AccountReservePercent != nil {
+		return *p.AccountReservePercent
+	}
+	return 10
 }
 
 var errBillingCeiling = errors.New("billing_max_cost_usd: want a finite positive amount")
@@ -114,8 +134,47 @@ func (p Prefs) validate() error {
 			return fmt.Errorf("providers: unknown claude target %q", provider.Target)
 		}
 	}
+
+	if err := p.validateAccounts(); err != nil {
+		return err
+	}
 	if p.LocalAPI != "" {
 		return checkLocalAPI(p.LocalAPI)
+	}
+	return nil
+}
+
+func (p Prefs) validateAccounts() error {
+	count := 0
+	for backend, accounts := range p.Accounts {
+		if backend != "claude" && backend != "codex" {
+			return errors.New("accounts: only claude and codex support accounts")
+		}
+		if len(accounts) > 16 {
+			return fmt.Errorf("accounts: %s allows at most 16 accounts", backend)
+		}
+		count += len(accounts)
+		seen := map[string]bool{}
+		for _, a := range accounts {
+			if !accountName.MatchString(a.Name) {
+				return fmt.Errorf("accounts: %s account names must match %s", backend, accountName)
+			}
+			if seen[a.Name] {
+				return fmt.Errorf("accounts: duplicate %s account %s", backend, a.Name)
+			}
+			if !filepath.IsAbs(a.Home) || strings.ContainsRune(a.Home, 0) {
+				return fmt.Errorf("accounts: %s account %s needs an absolute config home without NUL", backend, a.Name)
+			}
+			seen[a.Name] = true
+		}
+	}
+	if p.AccountReservePercent != nil {
+		if p.Reserve() < 0 || p.Reserve() > 90 {
+			return errors.New("account_reserve_percent: want 0 through 90")
+		}
+		if count == 0 {
+			return errors.New("account_reserve_percent: requires accounts")
+		}
 	}
 	return nil
 }

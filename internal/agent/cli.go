@@ -25,6 +25,8 @@ import (
 type CLIBackend struct {
 	name           string
 	ProviderTarget string
+	Account        string
+	AccountHome    string
 	// PATH takes precedence over bundled installations.
 	candidates func() []string
 	// promptFile replaces stdin for attachment-based CLIs.
@@ -161,11 +163,28 @@ func (c *CLIBackend) Detect() (string, error) {
 }
 
 func (c *CLIBackend) Run(ctx context.Context, task Task, emit func(Event)) Result {
+	var redact *strings.Replacer
+	if c.AccountHome != "" {
+		redact = accountHomeRedactor(c.AccountHome)
+		send := emit
+		emit = func(e Event) {
+			e.Text = redact.Replace(e.Text)
+			e.Tool = redact.Replace(e.Tool)
+			if e.Input != nil {
+				e.Input = []byte(redact.Replace(string(e.Input)))
+			}
+			send(e)
+		}
+	}
 	res := c.run(ctx, task, emit)
 	if c.limits && res.Status == StatusError {
 		if limited, resets := usageLimit(res.Error, time.Now()); limited {
 			res.Status, res.LimitResets = StatusLimited, resets
 		}
+	}
+	if redact != nil {
+		res.Final = redact.Replace(res.Final)
+		res.Error = redact.Replace(res.Error)
 	}
 	return res
 }
@@ -187,6 +206,15 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		res.Error = err.Error()
 		emit(Event{Time: time.Now(), Kind: EventError, Text: err.Error()})
 		return finish(&res, started)
+	}
+
+	task.AccountHome = c.AccountHome
+	if task.AccountHome != "" {
+		res.Account = c.Account
+		info, err := os.Stat(task.AccountHome)
+		if err != nil || !info.IsDir() {
+			return fail(StatusError, fmt.Errorf("account %s: its config home is missing", c.Account))
+		}
 	}
 	if task.ForkSession != "" && !c.forks {
 		return fail(StatusError, fmt.Errorf("the %s backend cannot resume a session", c.name))
@@ -300,6 +328,11 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	if declared {
 		cmd.Env = provider.apply(cmd.Env)
 	}
+
+	if task.AccountHome != "" {
+		key := accountHomeEnv(c.name)
+		cmd.Env = append(withoutEnv(cmd.Env, key), key+"="+task.AccountHome)
+	}
 	guarded := !task.AllowDangerous
 	if guarded {
 		guardDir, err := os.MkdirTemp("", "hrn-guard-*")
@@ -339,6 +372,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: gateLine})
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: envLine})
+	if task.AccountHome != "" {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "account: " + c.Account})
+	}
 	if declared {
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "provider: " + res.Provider + ", declared in backends.json"})
 		if guarded && (res.Provider == "bedrock" || res.Provider == "foundry") {

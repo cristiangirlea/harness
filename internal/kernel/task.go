@@ -15,6 +15,7 @@ type Task struct {
 	MaxTokens  int                                `json:"max_tokens,omitempty"`
 	Knowledge  func() (retrieval.Searcher, error) `json:"-"`
 
+	AccountHome     string            `json:"-"`
 	ChildEnv        []string          `json:"-"`
 	OriginalPrompt  string            `json:"original_prompt,omitempty"`
 	RetrievalState  *retrieval.Record `json:"-"`

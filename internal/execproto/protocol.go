@@ -198,8 +198,6 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 		b = &agent.APIBackend{BaseURL: workerURL, MaxRetries: 3, HTTPClient: &http.Client{
 			Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}}
-	} else {
-		b = nonWorkerBackend(b, preferences)
 	}
 	if !preferences.Enabled(t.Backend) {
 		return w.reject(req.AttemptID, "unsupported", "backend disabled by worker preference")
@@ -254,6 +252,16 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 		plan.ApplyRetrieval(&task.Options)
 		if task.Model != "" && !agent.ValidModel(task.Model) {
 			return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("model %q from run %s is not a model id", task.Model, t.ContinueRunID))
+		}
+	}
+
+	if !worker {
+		b, err = nonWorkerBackend(b, preferences, plan)
+		if err != nil {
+			return w.reject(req.AttemptID, "bad_request", err.Error())
+		}
+		if cli, ok := b.(*agent.CLIBackend); ok {
+			task.AccountHome = cli.AccountHome
 		}
 	}
 	if _, err := b.Detect(); err != nil {
@@ -750,20 +758,16 @@ func hello() map[string]any {
 	}
 }
 
-func nonWorkerBackend(b agent.Backend, p prefs.Prefs) agent.Backend {
+func nonWorkerBackend(b agent.Backend, p prefs.Prefs, plan followup.Plan) (agent.Backend, error) {
 	switch backend := b.(type) {
 	case *agent.APIBackend:
 		if p.Metered() && p.BillingMaxCostUSD > 0 {
 			capped := *backend
 			capped.CostCeilingUSD = p.BillingMaxCostUSD
-			return &capped
+			return &capped, nil
 		}
 	case *agent.CLIBackend:
-		if target := p.ProviderTarget(backend.Name()); target != "" {
-			configured := *backend
-			configured.ProviderTarget = target
-			return &configured
-		}
+		return plan.ConfigureCLI(backend, p)
 	}
-	return b
+	return b, nil
 }

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -149,14 +150,7 @@ func feedBackend(name string) (agent.Backend, error) {
 		return nil, err
 	}
 	if name != "api" {
-		if cli, ok := b.(*agent.CLIBackend); ok {
-			if target := p.ProviderTarget(name); target != "" {
-				configured := *cli
-				configured.ProviderTarget = target
-				return &configured, nil
-			}
-		}
-		return b, nil
+		return (followup.Plan{}).ConfigureCLI(b, p)
 	}
 	base := os.Getenv("ANTHROPIC_BASE_URL")
 	if !agent.IsLoopbackHTTPURL(base) {
@@ -316,7 +310,7 @@ func runFeedItem(ctx context.Context, b agent.Backend, c feedConfig, dir string,
 	task := agent.Task{Dir: dir, Purpose: "none", MaxTokens: c.maxTokens, NoTools: true, NoThinking: c.thinking != "on",
 		Prompt:  c.task + "\n\n<item>\n" + html.EscapeString(item.text) + "\n</item>",
 		Options: agent.Options{Model: c.model, Mode: agent.ModeReadOnly, MaxTurns: 1, NoInstructions: true, NoSwitch: true, Lean: agent.Bool(true), Timeout: agent.Duration(c.timeout)}}
-	rec, err := runlog.Create(b.Name(), task, agent.ResolveSetup(b.Name(), task))
+	rec, err := runlog.Create(b.Name(), task, agent.ResolveBackendSetup(b, task))
 	if err != nil {
 		out.Status, out.Error = "error", err.Error()
 		return out

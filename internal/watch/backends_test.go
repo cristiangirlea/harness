@@ -567,3 +567,18 @@ func TestBackendsSaveKeepsTheWorkMapGitHubSetting(t *testing.T) {
 		}
 	}
 }
+
+func TestSavingBackendCardKeepsNamedAccounts(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	reserve := 23
+	want := prefs.Prefs{Accounts: map[string][]prefs.Account{"codex": {{Name: "team-a", Home: t.TempDir()}}}, AccountReservePercent: &reserve}
+	if err := prefs.Save(runlog.Home(), want); err != nil {
+		t.Fatal(err)
+	}
+	h := New(t.Context(), Options{Key: "test-key"})
+	w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "localhost", "test-key", "", backendBodyForTest(t, `{"enabled":["claude"]}`))
+	got, err := prefs.Load(runlog.Home())
+	if w.Code != http.StatusNoContent || err != nil || !reflect.DeepEqual(got.Accounts, want.Accounts) || got.Reserve() != reserve {
+		t.Fatalf("save = %d %s, preferences = %+v, %v", w.Code, w.Body, got, err)
+	}
+}

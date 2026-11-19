@@ -54,6 +54,10 @@ func load() map[string]entry {
 
 // Note persists a known limit reset.
 func Note(backend string, res kernel.Result) error {
+	return NoteAccount(backend, "", res)
+}
+
+func NoteAccount(backend, account string, res kernel.Result) error {
 	if res.Status != kernel.StatusLimited || res.LimitResets.IsZero() {
 		return nil
 	}
@@ -66,7 +70,7 @@ func Note(backend string, res kernel.Result) error {
 			delete(m, name)
 		}
 	}
-	m[backend] = entry{Until: res.LimitResets, Reason: res.Error}
+	m[accountKey(backend, account)] = entry{Until: res.LimitResets, Reason: res.Error}
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
@@ -97,13 +101,24 @@ func writeFile(name string, data []byte) error {
 
 // Until returns a reset or zero, bounding implausibly long diversions.
 func Until(backend string, now time.Time) time.Time {
+	return UntilAccount(backend, "", now)
+}
+
+func UntilAccount(backend, account string, now time.Time) time.Time {
 	mu.RLock()
 	m := load()
 	mu.RUnlock()
-	if e, ok := m[backend]; ok && e.Until.After(now) && !e.Until.After(now.Add(kernel.MaxLimitWindow)) {
+	if e, ok := m[accountKey(backend, account)]; ok && e.Until.After(now) && !e.Until.After(now.Add(kernel.MaxLimitWindow)) {
 		return e.Until
 	}
 	return time.Time{}
+}
+
+func accountKey(backend, account string) string {
+	if account == "" {
+		return backend
+	}
+	return backend + "@" + account
 }
 
 // Status describes a limit or returns "", naming the file for early-reset cleanup.

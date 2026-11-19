@@ -31,7 +31,7 @@ func codexMCPArgs(t Task) []string {
 		a = append(a, "-c", "mcp_servers."+name+"."+field+"="+value)
 	}
 	if t.IsLean() {
-		for _, name := range codexLoadedConfigServers(t.Dir) {
+		for _, name := range codexLoadedConfigServers(t) {
 			if !ours[name] && isBareKey(name) {
 				set(name, "enabled", "false")
 			}
@@ -181,6 +181,16 @@ func codexMCPLookup(t Task) func(string) (string, bool) {
 			return v, ok
 		}
 	}
+
+	if t.AccountHome != "" {
+		other := lookup
+		lookup = func(k string) (string, bool) {
+			if k == "CODEX_HOME" || runtime.GOOS == "windows" && strings.EqualFold(k, "CODEX_HOME") {
+				return t.AccountHome, true
+			}
+			return other(k)
+		}
+	}
 	return lookup
 }
 
@@ -199,7 +209,7 @@ func codexMCPConfigs(t Task) ([]mcp.ServerConfig, []mcp.Remote, []string, error)
 	if home {
 		explicit = explicit[1:]
 	}
-	collisions := codexAllConfigServers(t.Dir)
+	collisions := codexAllConfigServers(t)
 	for _, file := range explicit {
 		ss, _, err := mcp.LoadConfigsWithEnv([]string{file}, lookup)
 		if err != nil {
@@ -258,8 +268,8 @@ func codexMCPConfigs(t Task) ([]mcp.ServerConfig, []mcp.Remote, []string, error)
 	return servers, remotes, skipped, nil
 }
 
-func codexConfigPath(dir string) string {
-	home := codexHomeDir(dir)
+func codexConfigPath(t Task) string {
+	home := codexHomeDir(t)
 	if home == "" {
 		return ""
 	}
@@ -267,10 +277,13 @@ func codexConfigPath(dir string) string {
 }
 
 // codexHomeDir is the directory codex started in dir reads and writes; "" when unknown.
-func codexHomeDir(dir string) string {
+func codexHomeDir(t Task) string {
+	if t.AccountHome != "" {
+		return t.AccountHome
+	}
 	if h := os.Getenv("CODEX_HOME"); h != "" {
 		if !filepath.IsAbs(h) {
-			h = filepath.Join(dir, h)
+			h = filepath.Join(t.Dir, h)
 		}
 		return h
 	}
@@ -281,9 +294,9 @@ func codexHomeDir(dir string) string {
 	return filepath.Join(home, ".codex")
 }
 
-func codexAllConfigServers(dir string) []string {
-	names := codexConfigServers(codexConfigPath(dir))
-	for _, path := range codexProjectConfigs(dir) {
+func codexAllConfigServers(t Task) []string {
+	names := codexConfigServers(codexConfigPath(t))
+	for _, path := range codexProjectConfigs(t.Dir) {
 		for _, name := range codexConfigServers(path) {
 			if !slices.Contains(names, name) {
 				names = append(names, name)
@@ -313,14 +326,14 @@ func codexProjectConfigs(dir string) []string {
 	return paths
 }
 
-func codexLoadedConfigServers(dir string) []string {
-	names := codexConfigServers(codexConfigPath(dir))
-	paths := codexProjectConfigs(dir)
+func codexLoadedConfigServers(t Task) []string {
+	names := codexConfigServers(codexConfigPath(t))
+	paths := codexProjectConfigs(t.Dir)
 	if len(paths) == 0 {
 		return names
 	}
 	root := filepath.Dir(filepath.Dir(paths[len(paths)-1]))
-	run, err := filepath.Abs(dir)
+	run, err := filepath.Abs(t.Dir)
 	if err != nil {
 		return names
 	}
@@ -330,7 +343,7 @@ func codexLoadedConfigServers(dir string) []string {
 		paths = paths[:1]
 	}
 	main := codexWorktreeMainRoot(git)
-	config := codexConfigPath(dir)
+	config := codexConfigPath(t)
 	if !codexProjectTrusted(config, run) && !codexProjectTrusted(config, root) && (main == "" || !codexProjectTrusted(config, main)) {
 		return names
 	}

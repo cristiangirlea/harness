@@ -124,3 +124,31 @@ func TestRunToolOffersEveryBackendWithoutAPreferenceFile(t *testing.T) {
 		t.Fatalf("enum %v, want %v", got, want)
 	}
 }
+
+func TestRunAndBackendsToolsHandleNamedAccounts(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	home := t.TempDir()
+	orig, _ := agent.Get("claude")
+	agent.Register(installStub{"claude", true})
+	t.Cleanup(func() { agent.Register(orig) })
+	pref := prefs.Prefs{Accounts: map[string][]prefs.Account{"claude": {{Name: "team-a", Home: home}}}}
+	if err := prefs.Save(runlog.Home(), pref); err != nil {
+		t.Fatal(err)
+	}
+	tool := runTool(t.TempDir(), false)
+	if tool.InputSchema["properties"].(map[string]any)["account"] == nil {
+		t.Fatal("missing account schema")
+	}
+	_, err := tool.Handler(t.Context(), mcp.Call{Arguments: json.RawMessage(`{"prompt":"hello","backend":"claude","account":"missing"}`)})
+	if err == nil || !strings.Contains(err.Error(), "unknown claude account") {
+		t.Fatalf("invalid account = %v", err)
+	}
+	records, err := runlog.List(0)
+	if err != nil || len(records) != 0 {
+		t.Fatalf("recorded a refused run: %v, %v", records, err)
+	}
+	result, err := backendsTool().Handler(t.Context(), mcp.Call{})
+	if err != nil || len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "    team-a: usage unknown") || strings.Contains(result.Content[0].Text, home) {
+		t.Fatalf("listing: %+v, %v", result, err)
+	}
+}

@@ -40,6 +40,7 @@ type Result struct {
 	// RecoveryRequired requires reconciliation before replay.
 	RecoveryRequired bool   `json:"recovery_required,omitempty"`
 	Backend          string `json:"backend"`
+	Account          string `json:"account,omitempty"`
 	Provider         string `json:"provider,omitempty"`
 	Model            string `json:"model,omitempty"`
 	// ModelReported distinguishes actual and requested model names.

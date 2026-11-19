@@ -123,6 +123,23 @@ func For(backend string, now time.Time) Quota {
 	return Quota{}
 }
 
+func ForAccount(backend, account, home string, now time.Time) Quota {
+	if account == "" {
+		return For(backend, now)
+	}
+	switch backend {
+	case "codex":
+		if home != "" {
+			root := filepath.Join(home, "sessions")
+			return cachedRead("codex\x00"+root+"\x00"+account, now, func() Quota { return codexFrom(root) })
+		}
+	case "claude":
+		root := runlog.Root()
+		return cachedRead("claude\x00"+root+"\x00"+account, now, func() Quota { return claudeFromAccount(root, account) })
+	}
+	return Quota{}
+}
+
 // cachedRead answers from the cache under key, refreshing it with read once it
 // is older than cacheFor; the lock is never held while read runs.
 func cachedRead(key string, now time.Time, read func() Quota) Quota {
@@ -388,6 +405,10 @@ const maxClaudeRuns = 40
 // claudeFrom reads the quota events of the newest claude runs under root and
 // keeps each window's latest report: the quota is the account's and runs overlap.
 func claudeFrom(root string) Quota {
+	return claudeFromAccount(root, "")
+}
+
+func claudeFromAccount(root, account string) Quota {
 	var q Quota
 	entries := readDir(root)
 	slices.Reverse(entries) // run ids start with when they started
@@ -400,7 +421,7 @@ func claudeFrom(root string) Quota {
 			break
 		}
 		dir := filepath.Join(root, e.Name())
-		if !claudeRun(dir) {
+		if !claudeRun(dir) || (account != "" && !claudeAccount(dir, account)) {
 			continue
 		}
 		data, partial, err := tail(filepath.Join(dir, "events.jsonl"))
@@ -439,4 +460,18 @@ func claudeRun(dir string) bool {
 		Backend string `json:"backend"`
 	}
 	return json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&rec) == nil && rec.Backend == "claude"
+}
+
+func claudeAccount(dir, account string) bool {
+	f, _, err := openRegular(filepath.Join(dir, "result.json"))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var res struct {
+		Result struct {
+			Account string `json:"account"`
+		} `json:"result"`
+	}
+	return json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&res) == nil && res.Result.Account == account
 }

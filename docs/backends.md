@@ -613,6 +613,38 @@ that reports `apiKeyHelper`, so an init reporting the plan login on disk is refu
 A run with no init line is refused too. Claude Code may already have sent its first request.
 Codex names its providers in its own config.
 
+#### Accounts
+
+A named account pairs a name with the claude or codex CLI's own absolute config
+home. Each owner signs in with the CLI itself. hrn never copies or reads a login.
+Declare accounts with repeated `--account BACKEND=NAME:PATH` flags on
+`hrn backends set`. Account names use 1 to 32 lowercase letters, digits or
+hyphens, with up to 16 unique names per backend. The optional
+`--account-reserve N` sets the minimum quota left for automatic selection
+(default 10 percent, range 0 to 90). Omitting the flags on `backends set`, or
+running `backends reset`, clears the account list and reserve.
+
+- An explicit account is used even below the reserve. Unknown accounts and
+  accounts at a remembered limit are refused.
+- Otherwise, take the first account in declaration order that is ready and
+  meets the reserve in every current, known quota window. Unknown or expired
+  windows count as available.
+- If all ready accounts fall below the reserve, take the one whose lowest
+  current window has the most left. Declaration order breaks ties.
+- If all accounts are at a remembered limit, the backend is out.
+
+Limits are remembered per account. When a run reaches its limit, carry-on first
+tries a ready account on the same backend using a fresh session and a hand-over,
+then tries the partner backend if no account is ready. Resuming or forking a
+session uses the account recorded with that session and requires it to remain
+declared. Use `--fresh` to pick another account on a continuation.
+
+Codex quota comes from the selected home's `sessions` directory. Claude quota
+comes from hrn runs recorded on that account. Account listings, run events and
+run results show names. The config home paths are never printed.
+
+Accounts are for seats and organisation accounts that each belong to the people or team using them. hrn does not check a provider's terms; using several logins of one person to pass a plan's limit may break them.
+
 #### A local model as the last partner
 
 A local inference server that speaks the Messages API on loopback or the private network

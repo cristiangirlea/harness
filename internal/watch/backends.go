@@ -106,6 +106,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 
 	p.WorkMapRepos, p.WorkMapGitHub, p.WorkMapSessions, p.LocalAPI = had.WorkMapRepos, had.WorkMapGitHub, had.WorkMapSessions, had.LocalAPI
 	p.Billing, p.BillingMaxCostUSD, p.Providers = had.Billing, had.BillingMaxCostUSD, had.Providers
+	p.Accounts, p.AccountReservePercent = had.Accounts, had.AccountReservePercent
 
 	// Preserve fallback preference order despite the card's alphabetical display.
 	if len(p.EnabledNames) > 0 && len(had.EnabledNames) > 0 {

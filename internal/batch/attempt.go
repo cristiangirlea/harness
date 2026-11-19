@@ -36,6 +36,7 @@ type attemptPlan struct {
 	gateTimeout             time.Duration
 	gate                    commandGate // set when the gate commands run through adanext-exec
 	switchedFrom, continues string
+	freshAccount            bool
 	// Model and effort are backend-scoped.
 	chosenFor string
 	reason    string
@@ -284,6 +285,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 		}
 		if carry != nil {
 			plan.switchedFrom, plan.continues = carry.Backend, carry.RunID
+			plan.freshAccount = carry.Backend == name && carry.Result.Account != ""
 			carry = nil
 		}
 		if !opts.NoSwitch {
@@ -306,6 +308,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			}
 			if pick != name {
 				plan.switchedFrom, name = name, pick
+				plan.freshAccount = false
 				s.decide(flow.StatusOK, why)
 				s.notify(Event{Task: s.t.ID, Kind: "switch", Text: why})
 			} else if why != "" {
@@ -313,7 +316,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 				s.notify(Event{Task: s.t.ID, Kind: "info", Text: why})
 			}
 		}
-		b, err := followup.Backend(name)
+		b, err := spent.Backend(name)
 		if err != nil {
 			return s.fail(err)
 		}
@@ -456,7 +459,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			return taskEnd{StatusFail, s.tr.Error}
 		}
 		if att := out.att; att.Result.Status == agent.StatusLimited {
-			spent[att.Backend] = true
+			spent.Mark(att.Backend, att.Result.Account)
 			if err := followup.Note(att.Backend, att.Result); err != nil {
 				text := "the limit was not remembered: " + err.Error()
 				s.decide(flow.StatusOK, text)
@@ -464,7 +467,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			}
 			// A usage-limit carry-on preserves work without consuming a retry.
 			if other := followup.Partner(att.Backend, time.Now(), spent); other != "" && !opts.NoSwitch {
-				if ok, why := followup.Ready(other, time.Now(), spent); ok && retrievalOn(opts) {
+				if ok, why := followup.Ready(other, time.Now(), spent); ok && other != att.Backend && retrievalOn(opts) {
 					s.tr.Error = pinnedSwitch(att.Backend, other, att.Backend)
 					return taskEnd{StatusFail, "limited: " + s.tr.Error}
 				} else if ok {
@@ -715,7 +718,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		}
 	}()
 	task.ChildEnv = env
-	if plan.switchedFrom != "" {
+	if plan.switchedFrom != "" && !plan.freshAccount {
 		task.Model = "" // the model named for the other backend means nothing here
 	}
 	if b.Name() != plan.chosenFor {
@@ -723,7 +726,11 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	}
 
 	turnDefault := !noTurnDefault && resolve.ApplyTurnDefault(&task, b.Name())
-	rec, err := runlog.CreateContinuing(b.Name(), task, agent.ResolveSetup(b.Name(), task), plan.continues, plan.routedBy)
+	route := ""
+	if plan.freshAccount {
+		route = runlog.RouteFreshHandover
+	}
+	rec, err := runlog.CreateContinuingRoute(b.Name(), task, agent.ResolveBackendSetup(b, task), plan.continues, route, plan.routedBy)
 	if err != nil {
 		return attemptOutcome{att: att}, fmt.Errorf("creating run record: %w", err)
 	}
