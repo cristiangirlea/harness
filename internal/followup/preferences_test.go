@@ -11,6 +11,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/prefs/prefstest"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -364,5 +365,25 @@ func TestAnAgyLimitWithNoPartnerEndsLimitedAndIsRemembered(t *testing.T) {
 				t.Fatalf("remembered %v, want %v", got, until)
 			}
 		})
+	}
+}
+
+func TestOrganisationPlanPolicyControlsLimitCarryOn(t *testing.T) {
+	t.Setenv("HRN_HOME", prefstest.TempDir(t))
+	path := prefstest.OrgPath(t)
+	standIn(t, true, true)
+	original, _ := agent.Get("gemini")
+	agent.Register(stub{"gemini", true})
+	t.Cleanup(func() { agent.Register(original) })
+	if err := prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude", "gemini", "codex"}, Billing: "metered"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if got := Partner("claude", now, nil); got != "gemini" {
+		t.Fatalf("metered partner = %q", got)
+	}
+	prefstest.Write(t, path, `{"billing":"plan","locked":["billing"]}`)
+	if got := Partner("claude", now, nil); got != "codex" {
+		t.Fatalf("plan partner = %q", got)
 	}
 }

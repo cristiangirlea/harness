@@ -5,12 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/prefs/prefstest"
+	"github.com/cristiangirlea/harness/internal/purpose"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -448,5 +451,165 @@ func TestBackendsAccountFlagsAndRunRefusal(t *testing.T) {
 		if err != nil || len(p.Accounts) != 0 || p.AccountReservePercent != nil {
 			t.Fatalf("clear: %+v, %v", p, err)
 		}
+	}
+}
+
+func TestBackendsOrganisationSetAndReset(t *testing.T) {
+	t.Setenv("HRN_HOME", prefstest.TempDir(t))
+	path := prefstest.OrgPath(t)
+	for _, tc := range []struct {
+		field, doc string
+		args       []string
+	}{
+		{"enabled", `"enabled":["api","claude"]`, nil},
+		{"default", `"enabled":["api","claude"],"default":"api"`, []string{"--default", "claude"}},
+		{"default", `"enabled":["api","claude"],"default":"api"`, []string{"--default", ""}},
+		{"billing", `"billing":"plan"`, []string{"--billing", "metered"}},
+		{"providers", `"billing":"metered"`, []string{"--billing", "metered", "--provider", "claude=vertex"}},
+		{"accounts", `"billing":"plan"`, []string{"--account", "claude=work:" + prefstest.TempDir(t)}},
+		{"local_api", `"local_api":"http://localhost:2000"`, []string{"--local-api", "http://localhost:3000"}},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			prefstest.Write(t, path, fmt.Sprintf(`{%s,"locked":[%q]}`, tc.doc, tc.field))
+			err := cmdBackends(append([]string{"set", "--only", "claude,api"}, tc.args...))
+			if err == nil || err.Error() != "backends set: "+tc.field+" is set by the organisation" {
+				t.Fatalf("set error = %v", err)
+			}
+			if _, err := prefs.Raw(runlog.Home()); !os.IsNotExist(err) {
+				t.Fatalf("user file changed: %v", err)
+			}
+		})
+	}
+	prefstest.Write(t, path, `{"enabled":["claude","api"],"locked":["enabled"]}`)
+	if err := cmdBackends([]string{"set", "--only", "claude,api"}); err != nil {
+		t.Fatal(err)
+	}
+	prefstest.Write(t, path, `{"billing":"plan","locked":["billing"]}`)
+	err := cmdBackends([]string{"set", "--only", "claude,api", "--provider", "claude=vertex"})
+	if err == nil || !strings.Contains(err.Error(), "(after the organisation's settings)") {
+		t.Fatalf("merged error = %v", err)
+	}
+	prefstest.Write(t, path, "{")
+	if err := cmdBackends([]string{"reset"}); err == nil || err.Error() != "the organisation's backends.json: malformed JSON" {
+		t.Fatalf("reset error = %v", err)
+	}
+	if _, err := prefs.Raw(runlog.Home()); !os.IsNotExist(err) {
+		t.Fatalf("reset left user file: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBackendsOrganisationNoticeAndListing(t *testing.T) {
+	backendNoticeOnce = sync.Once{}
+	t.Cleanup(func() { backendNoticeOnce = sync.Once{} })
+	t.Setenv("HRN_HOME", prefstest.TempDir(t))
+	path := prefstest.OrgPath(t)
+	prefstest.Write(t, path, `{"enabled":["claude"],"billing":"plan","locked":["billing","local_api"]}`)
+	prefstest.Write(t, filepath.Join(runlog.Home(), "backends.json"), `{"billing":"metered","local_api":"http://localhost:1234"}`)
+	stderr, err := os.CreateTemp(prefstest.TempDir(t), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stderr.Close()
+	old := os.Stderr
+	os.Stderr = stderr
+	defer func() { os.Stderr = old }()
+	out, err := captureStdout(t, func() error {
+		for range 2 {
+			if err := cmdBackends(nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"  enabled: set by the organisation\n", "  billing: set by the organisation (locked)\n", "  local_api: set by the organisation (locked)\n"} {
+		if !strings.Contains(string(out), line) {
+			t.Errorf("missing %q", line)
+		}
+	}
+	got, err := os.ReadFile(stderr.Name())
+	want := "backends: billing, local_api set by the organisation; your backends.json values for them are ignored\n"
+	if err != nil || strings.Count(string(got), want) != 1 {
+		t.Fatalf("stderr = %q, %v", got, err)
+	}
+}
+
+func TestRouteSetSurfacesUnreadableOrganisationPreferences(t *testing.T) {
+	t.Setenv("HRN_HOME", prefstest.TempDir(t))
+	prefstest.Write(t, prefstest.OrgPath(t), "{")
+	if code, err := cmdRoute([]string{"set", purpose.Categories[0], "-b", "claude"}); code != 2 || err == nil || !strings.Contains(err.Error(), "the organisation's backends.json") {
+		t.Fatalf("route set = %d, %v", code, err)
+	}
+}
+
+func TestBackendsSetDefaultWithOrganisationEnabled(t *testing.T) {
+	home := prefstest.TempDir(t)
+	t.Setenv("HRN_HOME", home)
+	policy := prefstest.OrgPath(t)
+	args := []string{"set", "--default", "claude"}
+	if err := cmdBackends(args); err == nil || !strings.HasPrefix(err.Error(), "usage: hrn backends set --only ") {
+		t.Fatalf("missing --only: %v", err)
+	}
+	prefstest.Write(t, policy, `{"enabled":["claude"],"locked":["enabled"]}`)
+	if _, err := captureStdout(t, func() error { return cmdBackends(args) }); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := prefs.Raw(home)
+	if err != nil || strings.Contains(string(raw), "enabled") || !strings.Contains(string(raw), `"default": "claude"`) {
+		t.Fatalf("user file = %s, %v", raw, err)
+	}
+	args[2] = "codex"
+	if err := cmdBackends(args); err == nil || err.Error() != "backend preferences: default backend is not in enabled (after the organisation's settings)" {
+		t.Fatalf("excluded default: %v", err)
+	}
+}
+
+func TestBackendsResetPreservesPersonalSettingsWhenPolicyBreaks(t *testing.T) {
+	home := prefstest.TempDir(t)
+	t.Setenv("HRN_HOME", home)
+	policy := prefstest.OrgPath(t)
+	prefstest.Write(t, filepath.Join(home, "backends.json"), `{"default":"claude","work_map_github":true}`)
+	prefstest.Write(t, policy, "{")
+	if err := cmdBackends([]string{"reset"}); err == nil || err.Error() != "the organisation's backends.json: malformed JSON" {
+		t.Fatalf("reset error = %v", err)
+	}
+	p, err := prefs.Load(home)
+	if err != nil || p.Default() != "" || p.WorkMapGitHub == nil || !*p.WorkMapGitHub {
+		t.Fatalf("reset did not preserve personal settings: %+v, %v", p, err)
+	}
+}
+
+func TestRouteSetSkipsMalformedUserPreferences(t *testing.T) {
+	home := prefstest.TempDir(t)
+	t.Setenv("HRN_HOME", home)
+	prefstest.OrgPath(t)
+	prefstest.Write(t, filepath.Join(home, "backends.json"), "{")
+	if code, err := cmdRoute([]string{"set", purpose.Categories[0], "-b", "claude"}); code != 0 || err != nil {
+		t.Fatalf("route set = %d, %v", code, err)
+	}
+}
+
+func TestBatchAndEvalRejectMalformedOrganisationPreferences(t *testing.T) {
+	t.Setenv("HRN_HOME", prefstest.TempDir(t))
+	prefstest.Write(t, prefstest.OrgPath(t), "{")
+	for _, tc := range []struct {
+		name string
+		run  func([]string) (int, error)
+	}{
+		{"batch", cmdBatch},
+		{"eval", cmdEval},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := filepath.Join(prefstest.TempDir(t), "spec.json")
+			prefstest.Write(t, spec, `{"tasks":[{"prompt":"test"}]}`)
+			if code, err := tc.run([]string{spec}); code != 2 || err == nil || err.Error() != "the organisation's backends.json: malformed JSON" {
+				t.Fatalf("command = %d, %v", code, err)
+			}
+		})
 	}
 }

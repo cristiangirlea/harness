@@ -645,6 +645,33 @@ run results show names. The config home paths are never printed.
 
 Accounts are for seats and organisation accounts that each belong to the people or team using them. hrn does not check a provider's terms; using several logins of one person to pass a plan's limit may break them.
 
+#### Organisation settings
+
+hrn reads organisation settings from `/etc/hrn/backends.json` on non-Windows
+systems and from `ProgramData\hrn\backends.json` on the Windows system volume.
+An unreadable or invalid organisation file stops runs.
+
+The organisation file can set `enabled`, `default`, `billing`, `providers`,
+`accounts`, and `local_api`. Its optional `locked` array names the groups the
+organisation controls. `billing` includes `billing_max_cost_usd`, and
+`accounts` includes `account_reserve_percent`. Each pair moves together.
+
+- A locked group uses the organisation's settings, including an empty group.
+- An unlocked group uses the user's settings when any field in the group is
+  set. Otherwise it inherits the organisation's settings.
+- Work-map settings are personal and come from the user's file.
+
+The `hrn` folder must be a real folder and the file must be a regular file with
+no other hard links.
+On Windows the file and its `hrn` folder must be owned by the local Administrators
+group, Local System, or TrustedInstaller. Elsewhere both the file and its folder
+must be owned by root, with group and other write permissions disabled.
+A file that fails these checks stops runs.
+On Windows an ordinary user can create that folder or file when no administrator has; hrn then refuses to run until an administrator removes it or replaces it with their own, rather than treating a file of unknown origin as no policy.
+
+When the organisation locks `enabled`, omit `--only` to set an unlocked preference.
+An explicitly set default must be in the effective enabled list.
+
 #### A local model as the last partner
 
 A local inference server that speaks the Messages API on loopback or the private network
@@ -655,7 +682,7 @@ It is a weaker model, so it is opt-in and always last:
 hrn backends set --only claude,codex,agy,api --local-api http://127.0.0.1:8081
 ```
 
-- `--local-api` is stored as `local_api` in `backends.json` and needs `api` in `--only`.
+- `--local-api` is stored as `local_api` in `backends.json` and needs `api` in the effective enabled list.
   Only an `http` or `https` URL whose host is `localhost` or a loopback or private-network
   IP literal (127.0.0.0/8, ::1, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7) is
   accepted, with no credentials, query or fragment; other host names are refused, since

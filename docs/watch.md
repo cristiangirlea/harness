@@ -229,6 +229,7 @@ as `at its limit, resets in 2h 5m` (any backend, agy included, whose run ended a
 limit with a reset time). Unreadable or malformed preferences show a single notice without a path,
 and the enabled column says unknown until the preferences are fixed. The edit controls start unchecked.
 Reload the index to refresh the card.
+Enabled and default choices locked by the organisation are fixed on the card.
 
 The Quota left column shows what is left of claude's and codex's plans, per window, as the
 CLI last reported it: `5h: 62% left, resets in 1h 12m / week: 80% left, resets in 3d 4h`.

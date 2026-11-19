@@ -1,6 +1,7 @@
 package execproto
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/prefs/prefstest"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -175,4 +177,34 @@ func TestProtocolAccountLimitAndRemovedPinRejectCodes(t *testing.T) {
 		}
 		h.exit(t, 2)
 	}
+}
+
+func TestProtocolMalformedOrganisationPreferences(t *testing.T) {
+	name := registerFake(t, nil)
+	home := prefstest.TempDir(t)
+	t.Setenv("HRN_HOME", home)
+	policy := prefstest.OrgPath(t)
+	prefstest.Write(t, policy, "{")
+	h := openHarness(t, nil)
+	hello := h.next(t, "hello")
+	for _, raw := range hello["backends"].([]any) {
+		if b := raw.(map[string]any); b["available"] != false {
+			t.Errorf("backend available: %+v", b)
+		}
+	}
+	h.send(t, start(prefstest.TempDir(t), name))
+	rejected := h.next(t, "rejected")
+	if e := rejected["error"].(map[string]any); e["code"] != "storage" {
+		t.Fatalf("rejection: %+v", e)
+	}
+	for _, frame := range []map[string]any{hello, rejected} {
+		raw, err := json.Marshal(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "backends.json") || strings.Contains(string(raw), strings.ReplaceAll(home, `\`, `\`)) || strings.Contains(string(raw), strings.ReplaceAll(filepath.Dir(policy), `\`, `\`)) {
+			t.Fatalf("frame exposes preference location: %s", raw)
+		}
+	}
+	h.exit(t, 2)
 }

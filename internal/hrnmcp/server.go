@@ -755,10 +755,11 @@ func backendsTool() mcp.Tool {
 		Handler: func(ctx context.Context, call mcp.Call) (mcp.CallResult, error) {
 			var b strings.Builder
 			var list []map[string]any
-			p, err := resolve.BackendPreferences(runlog.Home())
+			layers, err := resolve.BackendLayers(runlog.Home())
 			if err != nil {
 				return text(err.Error(), nil, true), nil
 			}
+			p := layers.Effective
 			if line := p.BillingSummary(); line != "" {
 				fmt.Fprintln(&b, line)
 			}
@@ -806,7 +807,20 @@ func backendsTool() mcp.Tool {
 				entry["default"] = name == def
 				list = append(list, entry)
 			}
-			return text(b.String(), map[string]any{"backends": list, "default": def}, false), nil
+			data := map[string]any{"backends": list, "default": def}
+			if layers.Org.Exists() {
+				data["organisation"] = map[string][]string{
+					"locked": append([]string{}, layers.Org.Locked...),
+					"sets":   append([]string{}, layers.Org.Sets(layers.User)...),
+				}
+				for _, line := range layers.OrganisationLines() {
+					fmt.Fprintln(&b, line)
+				}
+				if notice := layers.Notice(); notice != "" {
+					fmt.Fprintln(&b, notice)
+				}
+			}
+			return text(b.String(), data, false), nil
 		},
 	}
 }
