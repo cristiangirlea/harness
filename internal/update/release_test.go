@@ -150,8 +150,9 @@ func TestFetchReleaseSendsTheTokenAsABearerAndNeverInErrors(t *testing.T) {
 	srv, auth := fakeGitHub(t, nil, "")
 	src := ReleaseSource{API: srv.URL + "/repos/cristiangirlea/harness/releases/latest", Client: srv.Client(), GOOS: "darwin", GOARCH: "arm64", Token: "ghp_secret123"}
 	_, _, err := src.Fetch(context.Background(), t.TempDir())
-	if err == nil {
-		t.Fatal("want the missing-asset error")
+	// Any other error means the fake server was never reached, which the header check would misreport.
+	if err == nil || !strings.Contains(err.Error(), "hrn_0.2.0_darwin_arm64") {
+		t.Fatalf("err = %v; want the missing-asset error", err)
 	}
 	if strings.Contains(err.Error(), "ghp_secret123") {
 		t.Errorf("the token leaked into %q", err)
