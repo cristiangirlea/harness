@@ -89,6 +89,21 @@ func (s ReleaseSource) Fetch(ctx context.Context, dir string) (path, tag string,
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Minute}
 	}
+	// A redirect is as untrusted as the address that led to it, so each hop passes the asset rule.
+	checked, previous := *client, client.CheckRedirect
+	checked.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) > 5 {
+			return errors.New("stopped after 5 redirects")
+		}
+		if err := assetURLAllowed(api, req.URL.String()); err != nil {
+			return err
+		}
+		if previous != nil {
+			return previous(req, via)
+		}
+		return nil
+	}
+	client = &checked
 	if goos == "" {
 		goos = runtime.GOOS
 	}
