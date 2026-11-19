@@ -31,10 +31,12 @@ SETS = {
 }
 
 
-def helm(*args, ok=True):
+def helm(*args, ok=True, error=None):
     result = subprocess.run([HELM, *args], text=True, capture_output=True)
     if (result.returncode == 0) != ok:
         raise AssertionError(f"Helm exit {result.returncode}: {result.stderr}")
+    if error is not None:
+        assert error in result.stderr, f"Expected Helm error {error!r}: {result.stderr}"
     return result.stdout
 
 
@@ -49,6 +51,14 @@ def render(chart, namespace, values):
     kinds = {doc["kind"]: doc for doc in docs}
     assert len(docs) == len(kinds), f"{chart}: repeated document kind"
     return kinds
+
+
+def has_runtime_class(value):
+    if isinstance(value, dict):
+        return "runtimeClassName" in value or any(has_runtime_class(item) for item in value.values())
+    if isinstance(value, list):
+        return any(has_runtime_class(item) for item in value)
+    return False
 
 
 def main():
@@ -126,6 +136,7 @@ def main():
         "ports": [{"protocol": "TCP", "port": 5432}],
     }]
     docs = render("project-worker", NAMESPACE, SETS)
+    assert not has_runtime_class(docs), "default worker render must omit runtimeClassName"
     assert set(docs) == {"StatefulSet", "Service", "ScaledObject",
                          "TriggerAuthentication", "NetworkPolicy"}
     stateful = docs["StatefulSet"]
@@ -194,6 +205,16 @@ def main():
         "ports": [{"protocol": "TCP", "port": 8443}],
     }]
 
+    for runtime_class, requirement in (("sandboxed.worker-v1", "false"), ("a" * 253, "true")):
+        configured = render("project-worker", NAMESPACE, {
+            **SETS, "worker.runtimeClassName": runtime_class,
+            "isolation.requireRuntimeClass": requirement,
+        })
+        configured_pod = configured["StatefulSet"]["spec"]["template"]["spec"]
+        assert configured_pod.pop("runtimeClassName", None) == runtime_class, (
+            "configured runtimeClassName must appear on the worker pod spec")
+        assert configured == docs, "runtimeClassName must be the only change to the worker render"
+
     bad = [
         ("default", SETS),
         (NAMESPACE, {**SETS, "image.ref": "hrn:latest"}),
@@ -212,6 +233,19 @@ def main():
     for namespace, values in bad:
         helm("template", "fixture", str(ROOT / "project-worker"),
              "--namespace", namespace, *set_args(values), ok=False)
+    bad_runtime_classes = [
+        *[({"worker.runtimeClassName": name},
+           "worker.runtimeClassName must be a DNS subdomain of at most 253 characters")
+          for name in ("Sandbox", "-sandbox", "sandbox-", "a" * 254)],
+        ({"worker.runtimeClassName": "true"}, "worker.runtimeClassName must be a string"),
+        ({"isolation.requireRuntimeClass": "true"},
+         "isolation.requireRuntimeClass is set: worker.runtimeClassName is required"),
+        ({"isolation.requireRuntimeClass": "yes"},
+         "isolation.requireRuntimeClass must be a boolean"),
+    ]
+    for values, error in bad_runtime_classes:
+        helm("template", "fixture", str(ROOT / "project-worker"), "--namespace",
+             NAMESPACE, *set_args({**SETS, **values}), ok=False, error=error)
     helm("template", "fixture", str(ROOT / "control"), "--namespace",
          "default", *set_args(CONTROL_SETS), ok=False)
     for key, value in (("image.ref", "hrn:latest"), ("secrets.databaseName", ""),

@@ -81,11 +81,14 @@ other namespace. Example render validation:
 
 `HELM_BIN` can point to a Helm 4.3.0 binary. The verifier checks the module
 download layer and unconditional CA wiring, runs Helm lint,
-renders all three charts, checks scaling, storage, isolation, credential references,
-and rejects unsafe values: unpinned images, missing required Secret names,
-malformed tenant/project IDs, and control URLs with HTTP or a path. It also
-rejects repeated document kinds, checks the control container's image and
-security settings (including inherited seccomp), forbids `capabilities.add` on
+renders all three charts, and checks scaling, storage, isolation, and credential
+references. It checks that the runtime class is omitted by default and changes
+only the worker pod spec when set. It rejects unpinned images, missing required Secret
+names, malformed tenant/project IDs, control URLs with HTTP or a path, invalid
+runtime class names, a missing required runtime class, and a non-boolean
+runtime class requirement. It also rejects repeated document kinds, checks the
+control container's image and security settings (including inherited seccomp),
+forbids `capabilities.add` on
 the control, worker and fake-model containers, verifies DNS/control/PostgreSQL
 egress selectors and ports and the control ingress sources (project workers,
 KEDA, hrn-admin) and port 8443, forbids `envFrom` on both worker containers, and
@@ -104,6 +107,19 @@ continuity. Until backup and clean restore are tested, the cluster deployment
 must remain disposable. Tenant namespace deletion also deletes its PVCs, even
 when StatefulSet retention is `Retain`, so namespace deletion is not part of a
 routine scale-down.
+
+## A runtime class for the worker
+
+Set `worker.runtimeClassName` to select a RuntimeClass for the worker pod.
+The name defaults to an empty string, which omits the field. Set
+`isolation.requireRuntimeClass` to `true` to require a name at render time.
+This option defaults to `false`.
+
+The cluster must provide the RuntimeClass object and its runtime handler.
+The chart cannot verify whether the handler isolates workloads. The development
+worker still runs no shell, file, or tool execution and remains unsuitable as
+an isolation boundary for untrusted code. The fake-model sidecar shares the pod
+and uses the same runtime class.
 
 ## Control chart prerequisites
 
@@ -131,9 +147,9 @@ The tenant chart owns its Namespace, so install it as one Helm release per
 tenant without `--create-namespace` for that target. Install the control chart
 in a separately precreated `harness-system` namespace and the project chart in
 the tenant namespace. Values contain only Secret names, image digests, tenant
-and project IDs, storage class, and endpoint configuration. Do not use Helm
-upgrade to replace an active worker without an explicit drain and checkpoint
-compatibility check.
+and project IDs, storage class, runtime class settings, and endpoint
+configuration. Do not use Helm upgrade to replace an active worker without
+an explicit drain and checkpoint compatibility check.
 
 
 ## Disposable cluster evidence
