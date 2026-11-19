@@ -406,6 +406,15 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   share `--agent hrn` and the run id with the agent's own commands in the audit; a separate label
   is a maintainer's call. Heavy-command slots are not used. Not checked: the real gate's tree kill
   and audit line for gate commands, Linux or macOS. Slice 6 stays open.
+- 2026-11-10: `archtest` checks that every spawn site hides its console window on Windows (#893,
+  PR #898). `TestEverySpawnSiteHidesItsConsoleWindow` parses the non-test Go files under `cmd/hrn`
+  and `internal/` and accepts one shape only: `x := exec.Command(...)` as a statement, then
+  `nowindow.Set(x)` later in the same list, with nothing in between that starts `x` and nothing
+  after it that undoes the hidden window. Two sites are exempt, one function each: the browser the
+  bot opens and the macOS process listing. The gate handshake that prompted the issue was fixed
+  in PR #900. Limits: the check is syntactic, so an alias of the attributes taken after `Set`, or
+  a local name that shadows `exec` or `nowindow`, is not seen; a new site written in another shape
+  has to be reshaped or exempted.
 - 2026-11-10: watch shows the gate's record (#435 slice 5, PR #905), display only. A run's header
   says `ungated` without `--gate` or when the run ended before any command reached the gate,
   else `through adanext-exec` with the key its audit lines carry (`run_id` on api and codex,
