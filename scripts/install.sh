@@ -4,7 +4,7 @@
 # effects: read, exec, network
 # parameters: HRN_INSTALL_DIR:path=$HOME/.local/bin; HRN_INSTALL_VERSION:tag=latest; HRN_INSTALL_API:test-url=github; HRN_INSTALL_OS:test-os=uname; HRN_INSTALL_ARCH:test-arch=uname
 # example: out=$(HRN_INSTALL_API=ftp://example.invalid sh scripts/install.sh 2>&1) && exit 1; test "$out" = '{"error":"HRN_INSTALL_API must use https or loopback http"}'
-# hash: 6d67a791a6be17ea4b906a77751f5289b52f3237822c3573530610212638abb7
+# hash: f699c8d25eaccfe995cfb35a799558c2d06d653f52635d647b226a888709ad59
 
 json_string() {
 	HRN_JSON_STRING=$1 LC_ALL=C awk 'BEGIN {
@@ -56,6 +56,10 @@ asset_allowed() {
 	parse_url "$1" || return 1
 	# Match the same origin and GitHub suffixes used by internal/update/release.go's assetURLAllowed.
 	[ "$scheme://$authority" != "$api_origin" ] || return 0
+	github_asset
+}
+
+github_asset() {
 	[ "$scheme" = https ] || return 1
 	case $(printf '%s' "$host" | tr '[:upper:]' '[:lower:]') in
 		github.com|*.github.com|githubusercontent.com|*.githubusercontent.com) return 0 ;;
@@ -67,15 +71,56 @@ plain_tag() {
 	case $1 in ''|v|*..*|*[!a-zA-Z0-9._+-]*) return 1 ;; esac
 }
 
-fetch() {
-	if [ "$downloader" = curl ]; then
-		protocol=https
-		case $1 in http://*) protocol=http,https ;; esac
-		curl -q -g -fsSL --proto "=$protocol" --proto-redir "=$protocol" -H "Accept: $2" "$1"
-	else
-		wget --no-config --no-netrc -qO- --header="Accept: $2" "$1"
-	fi
-}
+fetch() (
+	url=$1
+	work=$(mktemp -d "${TMPDIR:-/tmp}/hrn-fetch.XXXXXXXX") || exit 1
+	trap 'rm -rf "$work"' 0
+	trap 'exit 1' HUP INT TERM
+	redirects=0
+	while :; do
+		parse_url "$url" || exit 1
+		if [ "$downloader" = curl ]; then
+			response=$(curl -q -g -sS --fail --proto "=$scheme" --proto-redir "=$scheme" --max-redirs 5 \
+				-H "Accept: $2" --output "$work/body" --write-out '%{http_code} %{redirect_url}' "$url") || exit 1
+			case ${response%% *} in 2[0-9][0-9]) cat "$work/body"; exit ;; esac
+		else
+			# Inspect each target before GNU wget connects to it.
+			if wget --no-config --no-netrc --https-only --max-redirect=0 --server-response \
+				--header="Accept: $2" -O "$work/body" "$url" 2>"$work/headers"; then
+				cat "$work/body"
+				exit
+			fi
+			response=$(LC_ALL=C awk '
+				/^  HTTP\// {status = $2; location = ""}
+				tolower($0) ~ /^  location:/ {sub(/^  [^:]+:[[:blank:]]*/, ""); sub(/\r$/, ""); location = $0}
+				END {print status " " location}' "$work/headers") || exit 1
+		fi
+		case ${response%% *} in
+			301|302|303|307|308) ;;
+			*) exit 1 ;;
+		esac
+		location=${response#* }
+		[ -n "$location" ] && [ "$redirects" -lt 5 ] || exit 1
+		case $location in
+			http://*|https://*) url=$location ;;
+			//*) url=$scheme:$location ;;
+			/*) url=$scheme://$authority$location ;;
+			\?*) url=${url%%[?#]*}$location ;;
+			\#*) url=${url%%#*}$location ;;
+			*)
+				case ${location%%[/?#]*} in *:*) exit 1 ;; esac
+				path=${url#*://}
+				path=${path%%[?#]*}
+				case $path in */*) path=${path%/*} ;; esac
+				url=$scheme://$path/$location ;;
+		esac
+		parse_url "$url" || exit 1
+		if [ "$scheme" != http ] || [ "$scheme://$authority" != "$api_origin" ]; then
+			github_asset || exit 1
+		fi
+		redirects=$((redirects + 1))
+	done
+)
 
 release_fields() {
 	LC_ALL=C awk -v platform="$platform" -v arch="$arch" '
@@ -176,8 +221,12 @@ case $machine in
 esac
 
 if command -v curl >/dev/null 2>&1; then downloader=curl
-elif command -v wget >/dev/null 2>&1; then downloader=wget
-else fail 'curl or wget is required'; fi
+else
+	case $(wget --version 2>/dev/null) in
+		'GNU Wget '*) downloader=wget ;;
+		*) fail 'curl or GNU wget is required' ;;
+	esac
+fi
 if command -v sha256sum >/dev/null 2>&1; then
 	set -- sha256sum
 elif command -v shasum >/dev/null 2>&1; then
@@ -194,7 +243,7 @@ fields=$(printf '%s\n' "$release" | release_fields 2>/dev/null) || fail 'invalid
 $fields
 EOF
 plain_tag "$tag" || fail 'release has no plain version tag'
-[ -z "$pin" ] || [ "$tag" = "$pin" ] || fail 'release tag does not match HRN_INSTALL_VERSION'
+[ -z "$pin" ] || [ "$tag" = "$pin" ] || fail "release tag $tag is not the requested $pin"
 asset=hrn_${tag#v}_${platform}_${arch}
 [ -n "$binary_url" ] || fail "release $tag has no asset $asset"
 [ -n "$sums_url" ] || fail "release $tag has no SHA256SUMS"
@@ -217,6 +266,8 @@ want=$(LC_ALL=C awk -v name="$asset" '
 	{ sub(/\r$/, ""); if (NF == 2 && ($2 == name || $2 == "*" name)) { print tolower($1); exit } }
 ' "$temp/SHA256SUMS" 2>/dev/null) || fail 'could not read SHA256SUMS'
 [ -n "$want" ] || fail "SHA256SUMS does not list $asset"
+case $want in *[!0123456789abcdef]*) fail "SHA256SUMS has no valid digest for $asset" ;; esac
+[ "${#want}" -eq 64 ] || fail "SHA256SUMS has no valid digest for $asset"
 digest=$("$@" <"$temp/$asset" 2>/dev/null) || fail "could not hash $asset"
 [ "$want" = "${digest%% *}" ] || fail "checksum mismatch for $asset"
 

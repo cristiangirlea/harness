@@ -285,7 +285,25 @@ irm https://raw.githubusercontent.com/cristiangirlea/harness/main/scripts/instal
 
 The installers fetch the newest release and check the download against its
 `SHA256SUMS` before installing. Set `HRN_INSTALL_VERSION` to a tag such as
-`v0.2.0` to pin a release. Set `HRN_INSTALL_DIR` to choose another directory.
+`v0.2.0` to pin a release.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cristiangirlea/harness/main/scripts/install.sh | HRN_INSTALL_VERSION=v0.2.0 sh
+```
+
+```powershell
+$env:HRN_INSTALL_VERSION = 'v0.2.0'
+irm https://raw.githubusercontent.com/cristiangirlea/harness/main/scripts/install.ps1 | iex
+```
+
+The script comes from the default branch and `HRN_INSTALL_VERSION` pins only
+the binary, so download and read the script before running it if you want to
+inspect what it will execute.
+The check catches a corrupted or swapped download; the sums file comes from the same release, so it does not protect against a release that was itself tampered with.
+If a release lists multiple assets with the same name, the installers use the
+last one, as `hrn update` does. The shell installer requires curl or GNU wget.
+
+Set `HRN_INSTALL_DIR` to choose another directory.
 The defaults are `$HOME/.local/bin/hrn` on Linux and macOS and
 `$env:LOCALAPPDATA\hrn\hrn.exe` on Windows. If the directory is outside
 `PATH`, the installer prints how to add it.

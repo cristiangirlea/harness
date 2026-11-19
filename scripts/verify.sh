@@ -47,7 +47,7 @@ while IFS= read -r -d '' file; do
     error "unsupported file: $file"; status=1
   fi
 done < <(find scripts -type f -print0)
-for file in scripts/*.go scripts/*/*.go scripts/*.sh; do
+for file in scripts/*.go scripts/*/*.go scripts/*.sh scripts/*.ps1; do
   [[ $file != scripts/testdata/* ]] || continue
   header=$(awk '/^#!/ {next} /^# / {sub(/^# /, ""); print; next}
     /^\/\/ / {sub(/^\/\/ /, ""); print; next} {exit}' "$file")
@@ -80,7 +80,8 @@ for file in scripts/*.go scripts/*/*.go scripts/*.sh; do
     printf -- '- `%s`: %s (not verified: %s)\n' "$file" "$summary" "$reason" >> "$tmp/index"
     continue
   fi
-  if { [[ $file != scripts/*/*.go ]] || [[ ! -f ${file%/*}.sh ]]; } &&
+  if { [[ $file != *.ps1 ]] || command -v powershell.exe >/dev/null; } &&
+    { [[ $file != scripts/*/*.go ]] || [[ ! -f ${file%/*}.sh ]]; } &&
     ! bash -c "$example" > "$tmp/output" 2>&1; then
     error "example failed: $file"
     tail -c 2000 "$tmp/output" >&2
