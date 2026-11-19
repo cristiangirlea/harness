@@ -54,6 +54,11 @@ func TestLoadOrgReportsSharingViolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer syscall.CloseHandle(h)
+	// Some accounts open past an exclusive holder; the mapping itself is tested on every system.
+	if f, err := os.Open(path); err == nil {
+		f.Close()
+		t.Skip("this account can open a file another handle holds exclusively")
+	}
 	useOrgPath(t, path, true)
 	requireOrgError(t, "could not be read")
 }

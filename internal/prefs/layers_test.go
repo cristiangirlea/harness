@@ -2,6 +2,8 @@ package prefs
 
 import (
 	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -89,6 +91,18 @@ func requireOrgError(t *testing.T, message string) {
 	t.Helper()
 	if _, err := LoadOrg(); !errors.Is(err, ErrOrganisation) || err.Error() != "the organisation's backends.json: "+message {
 		t.Fatalf("organisation policy error = %v, want %q", err, message)
+	}
+}
+
+func TestOrgOpenErrorKeepsOnlyMissingApartFromCouldNotBeRead(t *testing.T) {
+	if err := orgOpenError(fs.ErrNotExist); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a missing file must stay missing, got %v", err)
+	}
+	for _, err := range []error{fs.ErrPermission, errors.New("sharing violation"), io.ErrUnexpectedEOF} {
+		got := orgOpenError(err)
+		if !errors.Is(got, ErrOrganisation) || got.Error() != "the organisation's backends.json: could not be read" {
+			t.Errorf("open error %v became %v", err, got)
+		}
 	}
 }
 
