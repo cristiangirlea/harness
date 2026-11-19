@@ -253,3 +253,20 @@ func TestBackendsToolOrganisation(t *testing.T) {
 		t.Fatalf("organisation = %s, %v", got, err)
 	}
 }
+
+func TestRunToolRefusesBackendExcludedByOrganisation(t *testing.T) {
+	t.Setenv("HRN_HOME", prefstest.TempDir(t))
+	prefstest.Write(t, prefstest.OrgPath(t), `{"enabled":["claude"],"locked":["enabled"]}`)
+	prefstest.Write(t, filepath.Join(runlog.Home(), "backends.json"), `{"enabled":["codex"]}`)
+	original, err := agent.Get("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Register(installStub{"codex", true})
+	t.Cleanup(func() { agent.Register(original) })
+	tool := runTool(prefstest.TempDir(t), false)
+	result, err := tool.Handler(context.Background(), mcp.Call{Arguments: json.RawMessage(`{"prompt":"hello","backend":"codex"}`)})
+	if err != nil || !result.IsError || len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "backend codex is disabled") {
+		t.Fatalf("run = %+v, %v", result, err)
+	}
+}

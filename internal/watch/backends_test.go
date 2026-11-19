@@ -229,7 +229,7 @@ func TestBackendsWritesRequireAnAllowedViewerAndValidPreferences(t *testing.T) {
 		{"unknown enabled", "127.0.0.1:1234", "test-key", `{"enabled":["unknown"]}`, "unknown backend", 400},
 		{"empty backend name", "127.0.0.1:1234", "test-key", `{"enabled":[""]}`, "unknown backend", 400},
 		{"unknown default", "127.0.0.1:1234", "test-key", `{"enabled":["codex"],"default":"unknown"}`, "unknown backend", 400},
-		{"disabled default", "127.0.0.1:1234", "test-key", `{"enabled":["codex"],"default":"claude"}`, "not in enabled", 400},
+		{"disabled default", "127.0.0.1:1234", "test-key", `{"enabled":["codex"],"default":"claude"}`, "default backend claude is not in enabled", 400},
 		{"empty enabled with default", "127.0.0.1:1234", "test-key", `{"enabled":[],"default":"codex"}`, "not in enabled", 400},
 		{"malformed", "127.0.0.1:1234", "test-key", `{broken`, "", 400},
 		{"wrong enabled type", "127.0.0.1:1234", "test-key", `{"enabled":[1]}`, "", 400},
@@ -640,5 +640,23 @@ func TestBackendsCardOrganisationValuesStayOutOfUserFile(t *testing.T) {
 	want := prefs.Prefs{EnabledNames: []string{"claude"}, DefaultName: "claude"}
 	if w.Code != http.StatusNoContent || err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("edited save = %d %s, user = %+v, %v", w.Code, w.Body, got, err)
+	}
+}
+
+func TestBackendsCardSavesDefaultWithLockedEnabled(t *testing.T) {
+	home := prefstest.TempDir(t)
+	t.Setenv("HRN_HOME", home)
+	prefstest.Write(t, prefstest.OrgPath(t), `{"enabled":["claude","codex"],"locked":["enabled"]}`)
+	h := New(context.Background(), Options{Key: "test-key"})
+	for _, name := range []string{"claude", "codex"} {
+		body := backendBodyForTest(t, fmt.Sprintf(`{"default":%q}`, name))
+		w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "localhost", "test-key", "", body)
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("save = %d %s", w.Code, w.Body)
+		}
+		p, err := resolve.BackendPreferences(home)
+		if err != nil || p.Default() != name || !p.Enabled(name) {
+			t.Fatalf("effective preferences = %+v, %v", p, err)
+		}
 	}
 }

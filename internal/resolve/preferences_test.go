@@ -108,3 +108,21 @@ func TestOrganisationBackendPreferences(t *testing.T) {
 		t.Fatalf("organisation error = %v", err)
 	}
 }
+
+func TestBackendPreferencesDefaultInheritsOrganisationEnabled(t *testing.T) {
+	policy := prefstest.OrgPath(t)
+	home := prefstest.TempDir(t)
+	user := filepath.Join(home, "backends.json")
+	prefstest.Write(t, user, `{"default":"claude"}`)
+	if _, err := BackendPreferences(home); err == nil {
+		t.Fatal("accepted a default without a user or organisation enabled list")
+	}
+	prefstest.Write(t, policy, `{"enabled":["claude","codex"]}`)
+	if p, err := BackendPreferences(home); err != nil || p.Default() != "claude" {
+		t.Fatalf("inherited enabled list: %+v, %v", p, err)
+	}
+	prefstest.Write(t, user, `{"default":"claude","enabled":["codex"]}`)
+	if _, err := BackendPreferences(home); err == nil || !strings.Contains(err.Error(), "default backend claude is not in enabled") {
+		t.Fatalf("user enabled list overrides organisation: %v", err)
+	}
+}

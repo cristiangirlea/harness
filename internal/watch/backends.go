@@ -99,16 +99,17 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	had, loadErr := prefs.Load(runlog.Home())
+	had, loadErr := org.LoadUser(runlog.Home())
 	if org.Locks("enabled") || len(had.EnabledNames) == 0 && len(org.EnabledNames) > 0 && sameEnabled {
 		p.EnabledNames = had.EnabledNames
 	}
 	if org.Locks("default") || had.DefaultName == "" && p.DefaultName == org.DefaultName {
 		p.DefaultName = had.DefaultName
 	}
-	if p.Default() != "" && !slices.Contains(p.EnabledNames, p.Default()) {
+	if !org.Locks("enabled") && (len(p.EnabledNames) > 0 || len(org.EnabledNames) == 0) &&
+		p.Default() != "" && !slices.Contains(p.EnabledNames, p.Default()) {
 		s.writeRefusal(client, "/backends", "default backend is not enabled")
-		http.Error(w, "Default backend is not in enabled", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("default backend %s is not in enabled", p.Default()), http.StatusBadRequest)
 		return
 	}
 	p.WorkMapRepos, p.WorkMapGitHub, p.WorkMapSessions, p.LocalAPI = had.WorkMapRepos, had.WorkMapGitHub, had.WorkMapSessions, had.LocalAPI
@@ -179,7 +180,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Action audit could not be written", http.StatusInternalServerError)
 		return
 	}
-	if err := prefs.Save(runlog.Home(), *p); err != nil {
+	if err := org.SaveUser(runlog.Home(), *p); err != nil {
 		row.Result = "error: backend preferences could not be saved"
 		_ = auditAppender(row)
 		// Only default-validation errors are safe to show; filesystem errors may expose paths.

@@ -11,24 +11,22 @@ import (
 )
 
 func TestOrgPath(t *testing.T) {
-	t.Setenv("ProgramData", "")
-	want := "/etc/hrn/backends.json"
-	if runtime.GOOS == "windows" {
-		want = `C:\ProgramData\hrn\backends.json`
+	before, err := OrgPath()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := OrgPath(); got != want {
-		t.Fatalf("organisation path = %q, want %q", got, want)
+	if runtime.GOOS != "windows" && before != "/etc/hrn/backends.json" {
+		t.Fatalf("organisation path = %q", before)
 	}
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ProgramData", dir)
-	if runtime.GOOS == "windows" {
-		want = filepath.Join(dir, "hrn", "backends.json")
+	for _, name := range []string{"ProgramData", "ALLUSERSPROFILE", "SystemDrive"} {
+		t.Setenv(name, dir)
 	}
-	if got := OrgPath(); got != want {
-		t.Fatalf("organisation path = %q, want %q", got, want)
+	if got, err := OrgPath(); err != nil || got != before || strings.HasPrefix(strings.ToLower(got), strings.ToLower(dir)) {
+		t.Fatalf("organisation path = %q, before = %q, error = %v", got, before, err)
 	}
 }
 
@@ -37,9 +35,9 @@ func TestLoadOrg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := orgPathOverride
-	t.Cleanup(func() { orgPathOverride = old })
-	orgPathOverride = filepath.Join(dir, "backends.json")
+	old, oldTrusted := orgPathOverride, orgPathTrusted
+	t.Cleanup(func() { orgPathOverride, orgPathTrusted = old, oldTrusted })
+	orgPathOverride, orgPathTrusted = filepath.Join(dir, "backends.json"), true
 	if got, err := LoadOrg(); err != nil || !reflect.DeepEqual(got, Org{}) {
 		t.Fatalf("missing: %+v, %v", got, err)
 	}
@@ -172,5 +170,23 @@ func TestMergeEmptyLocksPairsAndPersonalFields(t *testing.T) {
 	_, _, err = Merge(org, user)
 	if err == nil || !strings.HasPrefix(err.Error(), "backend preferences: providers:") || !strings.HasSuffix(err.Error(), " (after the organisation's settings)") || strings.Contains(err.Error(), "vertex") {
 		t.Fatalf("merged validation = %v", err)
+	}
+}
+
+func TestLoadOrgRefusesScratchOwner(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "backends.json")
+	if err := os.WriteFile(path, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	skipTrustedScratchOwner(t, path)
+	old := orgPathOverride
+	t.Cleanup(func() { orgPathOverride = old })
+	orgPathOverride = path
+	if _, err := LoadOrg(); err == nil || err.Error() != "the organisation's backends.json: not owned by an administrator account" {
+		t.Fatalf("scratch policy error = %v", err)
 	}
 }

@@ -1,7 +1,6 @@
 package resolve
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -46,7 +45,7 @@ func BackendLayers(home string) (Layers, error) {
 	if err != nil {
 		return Layers{}, err
 	}
-	user, err := prefs.Load(home)
+	user, err := org.LoadUser(home)
 	if err != nil {
 		return Layers{}, err
 	}
@@ -58,7 +57,7 @@ func BackendLayers(home string) (Layers, error) {
 	for _, name := range p.EnabledNames {
 		if _, err := agent.Get(name); err != nil {
 			if org.Locks("enabled") || len(user.EnabledNames) == 0 {
-				return layers, errors.New("the organisation's backends.json: enabled contains an unknown backend")
+				return layers, fmt.Errorf("%w: enabled contains an unknown backend", prefs.ErrOrganisation)
 			}
 			return layers, err
 		}

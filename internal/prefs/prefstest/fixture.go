@@ -12,6 +12,9 @@ import (
 //go:linkname orgPathOverride github.com/cristiangirlea/harness/internal/prefs.orgPathOverride
 var orgPathOverride string
 
+//go:linkname orgPathTrusted github.com/cristiangirlea/harness/internal/prefs.orgPathTrusted
+var orgPathTrusted bool
+
 func TempDir(t *testing.T) string {
 	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -23,9 +26,9 @@ func TempDir(t *testing.T) string {
 
 func OrgPath(t *testing.T) string {
 	t.Helper()
-	previous := orgPathOverride
-	orgPathOverride = filepath.Join(TempDir(t), "backends.json")
-	t.Cleanup(func() { orgPathOverride = previous })
+	previous, trusted := orgPathOverride, orgPathTrusted
+	orgPathOverride, orgPathTrusted = filepath.Join(TempDir(t), "backends.json"), true
+	t.Cleanup(func() { orgPathOverride, orgPathTrusted = previous, trusted })
 	return orgPathOverride
 }
 

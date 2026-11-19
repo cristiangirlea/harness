@@ -24,6 +24,8 @@ func layer(p string) (int, bool) {
 	n, ok := layers[p]
 	return n, ok
 }
+func testOnlyImport(to string) bool { return to == "internal/prefs/prefstest" }
+
 func allowed(from, to string) bool {
 	if from == to {
 		return true

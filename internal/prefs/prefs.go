@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -50,43 +49,49 @@ func (o Org) Exists() bool { return o.present }
 
 func (o Org) Locks(field string) bool { return slices.Contains(o.Locked, field) }
 
-var orgPathOverride string
+var (
+	orgPathOverride string
+	orgPathTrusted  bool
+)
 
-func OrgPath() string {
+// ErrOrganisation identifies policy errors that can be shown without a path.
+var ErrOrganisation = errors.New("the organisation's backends.json")
+
+func OrgPath() (string, error) {
 	if orgPathOverride != "" {
-		return orgPathOverride
+		return orgPathOverride, nil
 	}
-	if runtime.GOOS != "windows" {
-		return "/etc/hrn/backends.json"
-	}
-	root := os.Getenv("ProgramData")
-	if root == "" {
-		root = `C:\ProgramData`
-	}
-	return filepath.Join(root, "hrn", "backends.json")
+	return systemOrgPath()
 }
 
 func LoadOrg() (Org, error) {
-	const label = "the organisation's backends.json"
 	const maxSize = 1 << 20
-	f, err := os.Open(OrgPath())
+	path, err := OrgPath()
+	if err != nil {
+		return Org{}, err
+	}
+	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return Org{}, nil
 	}
+	if err != nil || !info.Mode().IsRegular() || !(path == orgPathOverride && orgPathTrusted || trustedOrgPath(path)) {
+		return Org{}, fmt.Errorf("%w: not owned by an administrator account", ErrOrganisation)
+	}
+	f, err := os.Open(path)
 	if err != nil {
-		return Org{}, errors.New(label + ": could not be read")
+		return Org{}, fmt.Errorf("%w: could not be read", ErrOrganisation)
 	}
 	defer f.Close()
-	info, err := f.Stat()
+	info, err = f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		return Org{}, errors.New(label + ": could not be read")
+		return Org{}, fmt.Errorf("%w: could not be read", ErrOrganisation)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxSize+1))
 	if err != nil {
-		return Org{}, errors.New(label + ": could not be read")
+		return Org{}, fmt.Errorf("%w: could not be read", ErrOrganisation)
 	}
 	if len(data) > maxSize {
-		return Org{}, errors.New(label + ": exceeds 1 MiB")
+		return Org{}, fmt.Errorf("%w: exceeds 1 MiB", ErrOrganisation)
 	}
 	var p *struct {
 		Org
@@ -96,25 +101,25 @@ func LoadOrg() (Org, error) {
 		WorkMapRepos      json.RawMessage `json:"work_map_repos"`
 	}
 	if !json.Valid(data) {
-		return Org{}, errors.New(label + ": malformed JSON")
+		return Org{}, fmt.Errorf("%w: malformed JSON", ErrOrganisation)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&p); err != nil {
 		if strings.HasPrefix(err.Error(), "json: unknown field ") {
-			return Org{}, errors.New(label + ": unknown field")
+			return Org{}, fmt.Errorf("%w: unknown field", ErrOrganisation)
 		}
-		return Org{}, errors.New(label + ": invalid preferences object")
+		return Org{}, fmt.Errorf("%w: invalid preferences object", ErrOrganisation)
 	}
 	if p == nil {
-		return Org{}, errors.New(label + ": want a preferences object")
+		return Org{}, fmt.Errorf("%w: want a preferences object", ErrOrganisation)
 	}
 	if p.WorkMapSessions != nil || p.WorkMapGitHub != nil || p.WorkMapRepos != nil {
-		return Org{}, errors.New(label + ": work-map fields are personal")
+		return Org{}, fmt.Errorf("%w: work-map fields are personal", ErrOrganisation)
 	}
 	if p.BillingMaxCostUSD != nil {
 		if *p.BillingMaxCostUSD <= 0 {
-			return Org{}, fmt.Errorf("%s: %w", label, errBillingCeiling)
+			return Org{}, fmt.Errorf("%w: %w", ErrOrganisation, errBillingCeiling)
 		}
 		p.Prefs.BillingMaxCostUSD = *p.BillingMaxCostUSD
 	}
@@ -123,15 +128,15 @@ func LoadOrg() (Org, error) {
 		switch field {
 		case "enabled", "default", "billing", "providers", "accounts", "local_api":
 		default:
-			return Org{}, errors.New(label + ": unknown locked field")
+			return Org{}, fmt.Errorf("%w: unknown locked field", ErrOrganisation)
 		}
 		if seen[field] {
-			return Org{}, errors.New(label + ": duplicate locked field")
+			return Org{}, fmt.Errorf("%w: duplicate locked field", ErrOrganisation)
 		}
 		seen[field] = true
 	}
 	if err := p.validate(); err != nil {
-		return Org{}, fmt.Errorf("%s: %w", label, withoutValues(err))
+		return Org{}, fmt.Errorf("%w: %w", ErrOrganisation, withoutValues(err))
 	}
 	p.present = true
 	return p.Org, nil
@@ -276,7 +281,11 @@ func (p Prefs) Check(name string) error {
 }
 
 func (p Prefs) validate() error {
-	if p.DefaultName != "" && !slices.Contains(p.EnabledNames, p.DefaultName) {
+	return p.validateUser(false)
+}
+
+func (p Prefs) validateUser(inheritsEnabled bool) error {
+	if p.DefaultName != "" && !(inheritsEnabled && len(p.EnabledNames) == 0) && !slices.Contains(p.EnabledNames, p.DefaultName) {
 		return preferenceError{fmt.Sprintf("default backend %s is not in enabled", p.DefaultName), "default backend is not in enabled"}
 	}
 	switch p.Billing {
@@ -388,6 +397,22 @@ func Raw(home string) ([]byte, error) {
 }
 
 func Load(home string) (Prefs, error) {
+	return loadUser(home, func() bool {
+		org, _ := LoadOrg()
+		return len(org.EnabledNames) > 0
+	})
+}
+
+// LoadForReset keeps personal settings when a default's inherited list is unavailable.
+func LoadForReset(home string) (Prefs, error) {
+	return loadUser(home, func() bool { return true })
+}
+
+func (o Org) LoadUser(home string) (Prefs, error) {
+	return loadUser(home, func() bool { return len(o.EnabledNames) > 0 })
+}
+
+func loadUser(home string, orgEnablesBackends func() bool) (Prefs, error) {
 	path := filepath.Join(home, "backends.json")
 	data, err := Raw(home)
 	if os.IsNotExist(err) {
@@ -416,14 +441,23 @@ func Load(home string) (Prefs, error) {
 		}
 		p.Prefs.BillingMaxCostUSD = *p.BillingMaxCostUSD
 	}
-	if err := p.validate(); err != nil {
+	inheritsEnabled := p.DefaultName != "" && len(p.EnabledNames) == 0 && orgEnablesBackends()
+	if err := p.validateUser(inheritsEnabled); err != nil {
 		return Prefs{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return p.Prefs, nil
 }
 
 func Save(home string, p Prefs) error {
-	if err := p.validate(); err != nil {
+	return saveUser(home, p, false)
+}
+
+func (o Org) SaveUser(home string, p Prefs) error {
+	return saveUser(home, p, len(o.EnabledNames) > 0)
+}
+
+func saveUser(home string, p Prefs, inheritsEnabled bool) error {
+	if err := p.validateUser(inheritsEnabled); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(p, "", "  ")

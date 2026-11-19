@@ -573,7 +573,6 @@ func cliBackendLayers(stderr io.Writer) (resolve.Layers, error) {
 }
 
 func cmdBackends(args []string) error {
-	reset := false
 	if len(args) > 0 {
 		switch args[0] {
 		case "set":
@@ -594,20 +593,28 @@ func cmdBackends(args []string) error {
 			if err := fs.Parse(args[1:]); err != nil {
 				return err
 			}
-			if *only == "" || fs.NArg() != 0 {
-				return errors.New("usage: hrn backends set --only claude,codex [--default claude] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET] [--account BACKEND=NAME:PATH]... [--account-reserve N]")
-			}
+			const setUsage = "usage: hrn backends set --only claude,codex [--default claude] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET] [--account BACKEND=NAME:PATH]... [--account-reserve N]"
 			set := map[string]bool{}
 			fs.Visit(func(f *flag.Flag) {
 				set[f.Name] = true
 			})
+			if fs.NArg() != 0 || set["only"] && *only == "" {
+				return errors.New(setUsage)
+			}
+			org, err := prefs.LoadOrg()
+			if err != nil {
+				return err
+			}
+			if *only == "" && !org.Locks("enabled") {
+				return errors.New(setUsage)
+			}
 			if set["max-cost"] && (*maxCost <= 0 || math.IsNaN(*maxCost) || math.IsInf(*maxCost, 0)) {
 				return errors.New("backends set: --max-cost wants a positive amount")
 			}
 			if set["max-cost"] && *billing != "metered" {
 				return errors.New("backends set: --max-cost needs --billing metered")
 			}
-			p, _ := prefs.Load(runlog.Home())
+			p, _ := org.LoadUser(runlog.Home())
 			p.EnabledNames = nil
 			p.DefaultName = *def
 			p.LocalAPI = *localAPI
@@ -635,16 +642,15 @@ func cmdBackends(args []string) error {
 				}
 				p.Providers = map[string]prefs.Provider{name: {Target: target}}
 			}
-			for _, name := range strings.Split(*only, ",") {
-				name = strings.TrimSpace(name)
-				p.EnabledNames = append(p.EnabledNames, name)
+			if *only != "" {
+				for _, name := range strings.Split(*only, ",") {
+					p.EnabledNames = append(p.EnabledNames, strings.TrimSpace(name))
+				}
 			}
-			org, err := prefs.LoadOrg()
-			if err != nil {
-				return err
-			}
+			effective := p
 			if org.Exists() {
-				_, ignored, err := prefs.Merge(org, p)
+				var ignored []string
+				effective, ignored, err = prefs.Merge(org, p)
 				explicitClears := map[string]bool{
 					"default":   set["default"] && p.DefaultName == "" && org.DefaultName != "",
 					"billing":   set["billing"] && p.Billing == "" && org.Billing != "",
@@ -669,18 +675,17 @@ func cmdBackends(args []string) error {
 					return err
 				}
 			}
-			if *localAPI != "" && !p.Enabled("api") {
+			if *localAPI != "" && !slices.Contains(effective.EnabledNames, "api") {
 				return errors.New("backends set: --local-api needs api in --only")
 			}
-			if err := prefs.Save(runlog.Home(), p); err != nil {
+			if err := org.SaveUser(runlog.Home(), p); err != nil {
 				return err
 			}
 		case "reset":
 			if len(args) != 1 {
 				return errors.New("usage: hrn backends reset")
 			}
-			reset = true
-			p, err := prefs.Load(runlog.Home())
+			p, err := prefs.LoadForReset(runlog.Home())
 			if err != nil || (len(p.WorkMapRepos) == 0 && p.WorkMapGitHub == nil && p.WorkMapSessions == nil) {
 				if err := os.Remove(filepath.Join(runlog.Home(), "backends.json")); err != nil && !os.IsNotExist(err) {
 					return err
@@ -702,9 +707,6 @@ func cmdBackends(args []string) error {
 	}
 	layers, err := cliBackendLayers(os.Stderr)
 	if err != nil {
-		if reset {
-			return nil
-		}
 		return err
 	}
 	p := layers.Effective

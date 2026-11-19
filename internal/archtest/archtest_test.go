@@ -18,6 +18,8 @@ func TestFixtures(t *testing.T) {
 		{"unclassified import", map[string]string{"internal/mcp/a.go": `package mcp; import _ "example.com/root/internal/unknown"`}, "", "unclassified import: internal/unknown"},
 		{"duplicate baseline", map[string]string{"internal/mcp/a.go": `package mcp; import _ "example.com/root/internal/retrieval"`}, "mcp -> retrieval\nmcp -> retrieval\n", "duplicate baseline: mcp -> retrieval"},
 		{"allowed and exact baseline", map[string]string{"internal/tools/a.go": `package tools; import _ "example.com/root/internal/mcp"`, "internal/flow/a.go": `package flow; import _ "example.com/root/internal/runlog"`, "internal/runlog/a.go": `package runlog; import (_ "example.com/root/internal/kernel"; _ "example.com/root/internal/agent")`}, "runlog -> agent\n", ""},
+		{"policy fixture in production", map[string]string{"internal/resolve/a.go": `package resolve; import _ "example.com/root/internal/prefs/prefstest"`}, "resolve -> prefs/prefstest\n", "prefstest may only be imported by test files"},
+		{"policy fixture in tests", map[string]string{"internal/resolve/a_test.go": `package resolve; import _ "example.com/root/internal/prefs/prefstest"`}, "", ""},
 		{"kernel denied runlog", map[string]string{"internal/kernel/a.go": `package kernel; import _ "example.com/root/internal/runlog"`}, "", "kernel -> runlog"},
 		{"forbidden", map[string]string{"internal/mcp/a.go": `package mcp; import _ "example.com/root/internal/retrieval"`}, "", "mcp -> retrieval"},
 		{"stale", map[string]string{"internal/mcp/a.go": `package mcp`}, "mcp -> retrieval\n", "stale"},
