@@ -68,6 +68,141 @@ func fakeModel(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func TestHTTPOIDCJobActorsAndBudgetAccess(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	tenantID, staticToken, err := store.CreateTenant(ctx, "oidc-tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _, err := store.CreateProject(ctx, Project{
+		TenantID: tenantID, Name: "oidc-project", RepositoryURL: "https://example.invalid/example.git",
+		BaseRef: fixtureRef, Backend: "api",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newOIDCFixture(t)
+	claims := f.claims()
+	claims["tenants"] = tenantID
+	signedTenant := f.sign(t, oidcHeader("RS256", "rsa"), claims, "RS256")
+	delete(claims, "tenants")
+	claims["roles"] = "operator"
+	signedOperator := f.sign(t, oidcHeader("ES256", "ec"), claims, "ES256")
+	s := httptest.NewServer((&HTTPServer{Store: store, OIDC: f.verifier(t)}).Handler())
+	defer s.Close()
+	call := func(t *testing.T, method, path, token string, input any, want int) []byte {
+		t.Helper()
+		status, raw := sendJSON(t, s.Client(), method, s.URL+path, token, input)
+		if status != want {
+			t.Fatalf("%s %s = %d, want %d: %s", method, path, status, want, raw)
+		}
+		return raw
+	}
+	budget := "/v1/tenants/" + tenantID + "/budget"
+	call(t, "PUT", budget, signedOperator, map[string]int{"budget_usd": 100}, 200)
+	call(t, "GET", budget, signedOperator, nil, 200)
+	call(t, "GET", budget, signedTenant, nil, 200)
+	t.Run("cross-tenant submission", func(t *testing.T) {
+		otherTenant, _, err := store.CreateTenant(ctx, "oidc-other-tenant")
+		if err != nil {
+			t.Fatal(err)
+		}
+		otherProject, _, err := store.CreateProject(ctx, Project{
+			TenantID: otherTenant, Name: "oidc-other-project", RepositoryURL: "https://example.invalid/other.git",
+			BaseRef: fixtureRef, Backend: "api",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		const wrong = "wrong-static-token-abcdefghijklmnopqrstuvwxyz"
+		for _, target := range []Project{otherProject, project} {
+			input := testSubmission(target, "cross-tenant", "fixture")
+			input.TenantID = otherTenant
+			path := "/v1/projects/" + target.ID + "/jobs"
+			want := call(t, "POST", path, wrong, input, 404)
+			got := call(t, "POST", path, signedTenant, input, 404)
+			if !bytes.Equal(got, want) {
+				t.Errorf("%s signed refusal %s differs from static refusal %s", path, got, want)
+			}
+		}
+	})
+	t.Run("recovery actor", func(t *testing.T) {
+		input := testSubmission(project, "recovery", "fixture")
+		raw := call(t, "POST", "/v1/projects/"+project.ID+"/jobs", staticToken, input, 201)
+		var job Job
+		if err := json.Unmarshal(raw, &job); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.db.Exec(ctx, "UPDATE jobs SET state=$2 WHERE id=$1", job.ID, RecoveryRequired); err != nil {
+			t.Fatal(err)
+		}
+		path := "/v1/jobs/" + job.ID
+		call(t, "POST", path+"/resume", signedOperator, recoveryRequest{
+			TenantID: tenantID, ProjectID: project.ID, Action: "resume", TerminationEvidence: "worker stopped",
+		}, 200)
+		raw = call(t, "GET", path+"/events?tenant_id="+tenantID+"&project_id="+project.ID, signedTenant, nil, 200)
+		var page struct {
+			Events []Event `json:"events"`
+		}
+		if err := json.Unmarshal(raw, &page); err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Events) != 2 || page.Events[1].Kind != "recovery_resolved" {
+			t.Fatalf("unexpected events: %s", raw)
+		}
+		var details map[string]string
+		if err := json.Unmarshal(page.Events[1].Details, &details); err != nil {
+			t.Fatal(err)
+		}
+		if details["action"] != "resume" || details["state"] != string(Queued) ||
+			details["actor"] != "person" || details["actor_issuer"] != f.issuer {
+			t.Fatalf("recovery details: %s", page.Events[1].Details)
+		}
+	})
+	for _, tc := range []struct {
+		name, token string
+		signed      bool
+	}{
+		{"signed", signedTenant, true},
+		{"static", staticToken, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := testSubmission(project, tc.name, "fixture")
+			raw := call(t, "POST", "/v1/projects/"+project.ID+"/jobs", tc.token, input, 201)
+			var job Job
+			if err := json.Unmarshal(raw, &job); err != nil {
+				t.Fatal(err)
+			}
+			path := "/v1/jobs/" + job.ID
+			scope := "?tenant_id=" + tenantID + "&project_id=" + project.ID
+			call(t, "GET", path+scope, tc.token, nil, 200)
+			call(t, "POST", path+"/cancel"+scope, tc.token, nil, 200)
+			raw = call(t, "GET", path+"/events"+scope, tc.token, nil, 200)
+			var page struct {
+				Events []Event `json:"events"`
+			}
+			if err := json.Unmarshal(raw, &page); err != nil {
+				t.Fatal(err)
+			}
+			if events := page.Events; len(events) != 2 || events[0].Kind != "queued" || events[1].Kind != "canceled" {
+				t.Fatalf("unexpected events: %s", raw)
+			}
+			for _, event := range page.Events {
+				var details map[string]string
+				if err := json.Unmarshal(event.Details, &details); err != nil {
+					t.Fatal(err)
+				}
+				actor, hasActor := details["actor"]
+				issuer, hasIssuer := details["actor_issuer"]
+				if hasActor != tc.signed || hasIssuer != tc.signed || tc.signed && (actor != "person" || issuer != f.issuer) {
+					t.Errorf("%s details: %s", event.Kind, event.Details)
+				}
+			}
+		})
+	}
+}
+
 func TestHTTPClientDisconnectControlRestartAndWorkerCompletion(t *testing.T) {
 	store := testStore(t)
 	operator := "operator-token-abcdefghijklmnopqrstuvwxyz"
