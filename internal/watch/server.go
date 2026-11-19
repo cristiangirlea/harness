@@ -42,6 +42,8 @@ type Options struct {
 	// Key is required in X-Hrn-Watch-Key for all non-GET/HEAD requests; empty denies actions.
 	Key         string
 	OwnerEmails []string
+	// Voice speaks Ada's sentences for this computer's browser; nil leaves speech to the browser.
+	Voice *VoiceProgram
 }
 
 // Endpoint is one private network address the page is served on.
@@ -255,6 +257,7 @@ type server struct {
 	batches     batchCache
 	familiarity familiarityCache
 	tally       runTally
+	speech      *speaker
 }
 
 // New returns a watch handler whose streams end with ctx so shutdown need not wait for browsers.
@@ -273,7 +276,7 @@ func newHandlerWithMap(ctx context.Context, opt Options, access *accessVerifier,
 	if opt.Runs <= 0 {
 		opt.Runs = 50
 	}
-	s := &server{ctx: ctx, opt: opt, redact: mask.Env(os.Environ()), system: systemFolders(), mapConfig: maps}
+	s := &server{ctx: ctx, opt: opt, redact: mask.Env(os.Environ()), system: systemFolders(), mapConfig: maps, speech: newSpeaker(opt.Voice)}
 	s.home, _ = os.UserHomeDir()
 	if opt.Public != nil {
 		if access == nil {
@@ -309,6 +312,7 @@ func newHandlerWithMap(ctx context.Context, opt Options, access *accessVerifier,
 	mux.HandleFunc("GET /stream/flow/{id}", s.recordRoute(s.streamFlow))
 	mux.HandleFunc("GET /bot", s.bot)
 	mux.HandleFunc("GET /bot/answer", s.answerBot)
+	mux.HandleFunc("GET /bot/voice", s.speakBot)
 	mux.HandleFunc("GET /stream/bot", s.streamBot)
 	mux.HandleFunc("GET /voice", s.voice)
 	mux.HandleFunc("GET /static/{name}", s.static)

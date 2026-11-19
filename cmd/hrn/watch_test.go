@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -149,6 +150,28 @@ func TestWatchPublicFlagsMustBeCompleteAndUseAnHTTPSOrigin(t *testing.T) {
 	} {
 		if err := cmdWatch(args); err == nil {
 			t.Errorf("cmdWatch(%q) accepted invalid public flags", args)
+		}
+	}
+}
+
+func TestWatchAndBotRefuseABadVoiceBeforeListening(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		cmd  func([]string) error
+		args []string
+		want string
+	}{
+		{cmdWatch, []string{"--voice-arg", "--fast"}, "--voice-arg"},
+		{cmdBot, []string{"--voice-arg", "--fast"}, "--voice-arg"},
+		{cmdWatch, []string{"--voice", "speak"}, "--voice"},
+		{cmdBot, []string{"--voice", "speak"}, "--voice"},
+		{cmdWatch, []string{"--voice", exe, "--public", "https://harness.example.com", "--access-team", "team.cloudflareaccess.com", "--access-aud", "aud-tag"}, "--voice"},
+	} {
+		if err := c.cmd(c.args); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: err = %v; want a refusal naming %s", c.args, err, c.want)
 		}
 	}
 }

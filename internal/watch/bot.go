@@ -515,6 +515,7 @@ type botPage struct {
 	page
 	Now        botNow
 	Local      bool // on this computer, where recording her voice works
+	LocalVoice bool // a speech program is configured and this is its computer
 	Kinds      []botKind
 	MapOwner   bool
 	MapSummary string
@@ -746,6 +747,11 @@ func (s *server) bot(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(self), geolocation=()")
 	snap := s.newBotWatcher(r).look()
 	p := botPage{page: page{Title: "Ada", Home: s.homeFor(r), Script: "bot.js"}, Now: botNowOf(snap), Kinds: botKinds, Local: s.fromThisComputer(r), MapOwner: s.mapOwner(r)}
+	p.LocalVoice = p.Local && s.speech != nil
+	if p.LocalVoice {
+		// The fetched sound plays from a blob: URL, which 'self' does not cover.
+		w.Header().Set("Content-Security-Policy", csp+"; media-src blob:")
+	}
 	if p.MapOwner {
 		pieces, _ := s.mapResult(r.Context(), false)
 		n := 0
