@@ -32,16 +32,19 @@ class VerifierTests(unittest.TestCase):
         self.process.start()
         self.addCleanup(self.process.stop)
 
-    def check_mutation(self, chart, mutate):
+    def check_mutation(self, chart, mutate, *, overrides=None, error=None):
         def render(name, namespace, values):
             docs = self.render(name, namespace, values)
-            if name == chart:
+            if name == chart and (overrides is None or values == {**verify.CONTROL_SETS, **overrides}):
                 mutate(docs)
             return docs
 
         with patch.object(verify, "render", side_effect=render):
-            with self.assertRaises(AssertionError):
+            with self.assertRaisesRegex(AssertionError, error or ""):
                 verify.main()
+
+    def control_pod(self, docs):
+        return docs["Deployment"]["spec"]["template"]["spec"]
 
     def test_valid_charts_and_fixture_pass(self):
         verify.main()
@@ -95,6 +98,96 @@ class VerifierTests(unittest.TestCase):
             docs["Service"]["metadata"]["annotations"] = {"runtimeClassName": "unexpected"}
 
         self.check_mutation("project-worker", mutate)
+
+    def test_default_control_must_match_pre_metrics_render(self):
+        def mutate(docs):
+            docs["Deployment"]["spec"]["template"]["spec"]["terminationGracePeriodSeconds"] = 31
+
+        self.check_mutation("control", mutate, overrides={}, error="match the pre-metrics render")
+
+    def test_default_control_must_omit_metrics_env_vars_and_volume(self):
+        for name in ("HRN_METRICS_TOKEN", "HRN_METRICS_TOKEN_FILE", "metrics-token"):
+            with self.subTest(name=name):
+                def mutate(docs):
+                    pod = self.control_pod(docs)
+                    if name == "metrics-token":
+                        pod["volumes"].append({"name": name})
+                    else:
+                        pod["containers"][0]["env"].append({"name": name})
+
+                error = "omit the metrics volume" if name == "metrics-token" else "omit metrics env vars"
+                self.check_mutation("control", mutate, overrides={}, error=error)
+
+    def test_metrics_secret_must_only_add_volume_mount_and_file_env(self):
+        def container(docs):
+            return self.control_pod(docs)["containers"][0]
+
+        cases = [
+            ("on the control container", lambda docs: container(docs).update(name="other")),
+            ("omit the plain metrics env var", lambda docs: container(docs)["env"].append(
+                {"name": "HRN_METRICS_TOKEN", "value": "unexpected"})),
+            ("project the named Secret", lambda docs: self.control_pod(docs)["volumes"].pop()),
+            ("project the named Secret", lambda docs: self.control_pod(docs)["volumes"][-1][
+                "secret"]["items"][0].update(key="other")),
+            ("read-only mount", lambda docs: container(docs)["volumeMounts"].pop()),
+            ("read-only mount", lambda docs: container(docs)["volumeMounts"][-1].update(readOnly=False)),
+            ("mounted token file", lambda docs: container(docs)["env"].pop()),
+            ("mounted token file", lambda docs: container(docs)["env"][-1].update(value="/other/token")),
+            ("only add the volume", lambda docs: container(docs)["env"][0].update(value="unexpected")),
+            ("only add the volume", lambda docs: docs["Service"]["metadata"].update(name="other")),
+        ]
+        for error, mutate in cases:
+            with self.subTest(check=error):
+                self.check_mutation("control", mutate,
+                                    overrides={"secrets.metricsName": verify.METRICS_SECRET}, error=error)
+
+    def test_scrape_source_must_only_add_one_intersected_tls_rule(self):
+        def ingress(docs):
+            return docs["NetworkPolicy"]["spec"]["ingress"]
+
+        def split_selectors(docs):
+            peers = ingress(docs)[-1]["from"]
+            peers.append({"podSelector": peers[0].pop("podSelector")})
+
+        cases = [
+            ("exactly one ingress rule", lambda docs: ingress(docs).pop()),
+            ("exactly one ingress rule", lambda docs: ingress(docs).append({})),
+            ("intersect namespace and pod selectors", split_selectors),
+            ("intersect namespace and pod selectors", lambda docs: ingress(docs)[-1]["from"][0][
+                "podSelector"]["matchLabels"].clear()),
+            ("intersect namespace and pod selectors", lambda docs: ingress(docs)[-1]["ports"].append(
+                {"protocol": "TCP", "port": 80})),
+            ("intersect namespace and pod selectors", lambda docs: ingress(docs)[-1]["ports"][0].update(port=80)),
+            ("only add the ingress rule", lambda docs: ingress(docs)[0]["from"].pop()),
+            ("only add the ingress rule", lambda docs: docs["Service"]["metadata"].update(name="other")),
+        ]
+        for error, mutate in cases:
+            with self.subTest(check=error):
+                self.check_mutation("control", mutate, overrides=verify.SCRAPE_SETS, error=error)
+
+    def test_invalid_metrics_values_must_be_refused_with_expected_error(self):
+        cases = [
+            *[["--set", f"secrets.metricsName={name}"]
+              for name in ("Metrics", "metrics-", "a" * 254, "0", "control-auth")],
+            ["--set", "metrics=false"],
+            ["--set", "metrics.scrapeFrom=false"],
+            *[[flag, f"metrics.scrapeFrom.{selector}{assignment}"]
+              for selector in ("namespaceLabels", "podLabels")
+              for flag, assignment in (("--set", ".role=collector"), ("--set", "=false"),
+                                       ("--set", ".role=true"), ("--set-json", '={"":"collector"}'))],
+        ]
+        for option in cases:
+            for exit_code in (0, 1):
+                with self.subTest(option=option, exit_code=exit_code):
+                    def run(args, **kwargs):
+                        if (args[1] == "template" and Path(args[3]).name == "control"
+                                and args[-2:] == option):
+                            return subprocess.CompletedProcess(args, exit_code, "", "unrelated error")
+                        return copy.deepcopy(helm_result(tuple(args)))
+
+                    with patch.object(verify.subprocess, "run", side_effect=run):
+                        with self.assertRaisesRegex(AssertionError, "unrelated error"):
+                            verify.main()
 
     def test_configured_runtime_class_must_only_change_worker_pod_spec(self):
         def pod(docs):
