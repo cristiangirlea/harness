@@ -447,11 +447,37 @@ func (s *Store) GetJob(ctx context.Context, tenantID, projectID, jobID string) (
 	return job, nil
 }
 
-func appendEvent(ctx context.Context, tx pgx.Tx, tenantID, projectID, jobID, kind string, details any) error {
+type eventActorKey struct{}
+
+type eventActor struct {
+	subject, issuer string
+}
+
+func WithActor(ctx context.Context, subject, issuer string) context.Context {
+	return context.WithValue(ctx, eventActorKey{}, eventActor{subject: subject, issuer: issuer})
+}
+
+func eventDetails(ctx context.Context, details any) ([]byte, error) {
 	if details == nil {
 		details = map[string]any{}
 	}
 	payload, err := json.Marshal(details)
+	actor, present := ctx.Value(eventActorKey{}).(eventActor)
+	if err != nil || !present || payload[0] != '{' {
+		return payload, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	var object map[string]any
+	if err := decoder.Decode(&object); err != nil {
+		return nil, err
+	}
+	object["actor"], object["actor_issuer"] = actor.subject, actor.issuer
+	return json.Marshal(object)
+}
+
+func appendEvent(ctx context.Context, tx pgx.Tx, tenantID, projectID, jobID, kind string, details any) error {
+	payload, err := eventDetails(ctx, details)
 	if err != nil {
 		return err
 	}

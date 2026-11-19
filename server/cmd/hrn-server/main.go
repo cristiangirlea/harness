@@ -70,13 +70,17 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	oidc, err := oidcFromEnv(os.LookupEnv)
+	if err != nil {
+		return err
+	}
 	store, err := platform.Open(ctx, dsn)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
 	server := &http.Server{Addr: address, Handler: (&platform.HTTPServer{
-		Store: store, OperatorToken: operator, ScalerToken: scaler, MaxCostUSDPerJob: maxCost, RequireTenantBudget: budgetRequired,
+		Store: store, OperatorToken: operator, ScalerToken: scaler, OIDC: oidc, MaxCostUSDPerJob: maxCost, RequireTenantBudget: budgetRequired,
 	}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 16 * 1024}
 	go func() {
@@ -112,6 +116,27 @@ func run() error {
 		return nil
 	}
 	return fmt.Errorf("serve: %w", err)
+}
+
+func oidcFromEnv(lookup func(string) (string, bool)) (*platform.OIDCVerifier, error) {
+	var config platform.OIDCConfig
+	for _, setting := range []struct {
+		name   string
+		target *string
+	}{
+		{"HRN_OIDC_ISSUER", &config.Issuer},
+		{"HRN_OIDC_AUDIENCE", &config.Audience},
+		{"HRN_OIDC_OPERATOR_CLAIM", &config.OperatorClaim},
+		{"HRN_OIDC_OPERATOR_VALUE", &config.OperatorValue},
+		{"HRN_OIDC_TENANT_CLAIM", &config.TenantClaim},
+	} {
+		value, set := lookup(setting.name)
+		if set && value == "" {
+			return nil, fmt.Errorf("%s must not be empty", setting.name)
+		}
+		*setting.target = value
+	}
+	return platform.NewOIDCVerifier(config)
 }
 
 func maxCostPerJob(raw string) (float64, error) {
