@@ -102,6 +102,9 @@ func check(root string, baseline io.Reader) error {
 			if _, ok := layer(to); !ok {
 				return fmt.Errorf("unclassified import: %s", to)
 			}
+			if testOnlyImport(to) && !strings.HasSuffix(file, "_test.go") {
+				return fmt.Errorf("%s: %s may only be imported by test files", file, display(to))
+			}
 			if allowed(dir, to) {
 				continue
 			}

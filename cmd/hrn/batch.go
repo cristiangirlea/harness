@@ -255,6 +255,9 @@ func cmdBatchRun(args []string) (int, error) {
 	if err != nil {
 		return 2, err
 	}
+	if _, err := cliBackendLayers(os.Stderr); err != nil {
+		return 2, err
+	}
 	if *parallel > 0 {
 		spec.Parallel = *parallel
 	}

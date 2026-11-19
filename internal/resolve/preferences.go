@@ -1,22 +1,69 @@
 package resolve
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/prefs"
 )
 
+type Layers struct {
+	Effective prefs.Prefs
+	User      prefs.Prefs
+	Org       prefs.Org
+	Ignored   []string
+}
+
+func (l Layers) Notice() string {
+	if len(l.Ignored) == 0 {
+		return ""
+	}
+	return "backends: " + strings.Join(l.Ignored, ", ") + " set by the organisation; your backends.json values for them are ignored"
+}
+
+func (l Layers) OrganisationLines() []string {
+	var lines []string
+	for _, field := range l.Org.Sets(l.User) {
+		line := fmt.Sprintf("  %s: set by the organisation", field)
+		if l.Org.Locks(field) {
+			line += " (locked)"
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
 // BackendPreferences loads and validates names against this binary's registry.
 func BackendPreferences(home string) (prefs.Prefs, error) {
-	p, err := prefs.Load(home)
+	layers, err := BackendLayers(home)
+	return layers.Effective, err
+}
+
+func BackendLayers(home string) (Layers, error) {
+	org, err := prefs.LoadOrg()
 	if err != nil {
-		return prefs.Prefs{}, err
+		return Layers{}, err
+	}
+	user, err := org.LoadUser(home)
+	if err != nil {
+		return Layers{}, err
+	}
+	p, ignored, err := prefs.Merge(org, user)
+	layers := Layers{User: user, Org: org, Ignored: ignored}
+	if err != nil {
+		return layers, err
 	}
 	for _, name := range p.EnabledNames {
 		if _, err := agent.Get(name); err != nil {
-			return prefs.Prefs{}, err
+			if org.Locks("enabled") || len(user.EnabledNames) == 0 {
+				return layers, fmt.Errorf("%w: enabled contains an unknown backend", prefs.ErrOrganisation)
+			}
+			return layers, err
 		}
 	}
-	return p, nil
+	layers.Effective = p
+	return layers, nil
 }
 
 // DefaultBackendNameIn prefers installed, enabled backends.

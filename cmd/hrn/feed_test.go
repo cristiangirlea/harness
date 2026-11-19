@@ -155,7 +155,7 @@ func TestFeedKeepsOKAfterDeadlineAndRemovesWorkspace(t *testing.T) {
 func TestFeedRejectsBackendsWithTools(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	for _, name := range []string{"codex", "gemini", "opencode", "agy"} {
-		if _, err := feedBackend(name); err == nil || !strings.Contains(err.Error(), "cannot run without tools yet") {
+		if _, err := feedBackend(name, io.Discard); err == nil || !strings.Contains(err.Error(), "cannot run without tools yet") {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -175,7 +175,7 @@ func TestFeedAppliesDeclaredClaudeProviderToACopy(t *testing.T) {
 	}
 	original := registered.(*agent.CLIBackend)
 	before := original.ProviderTarget
-	b, err := feedBackend("claude")
+	b, err := feedBackend("claude", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestFeedOnlyAllowsLoopbackHTTPForAPI(t *testing.T) {
 	for _, url := range []string{"", "https://api.anthropic.com", "http://example.com", "https://localhost", "http://127.0.0.1.evil", "http://user@localhost", "http://localhost?x=y"} {
 		t.Run(fmt.Sprintf("reject_%s", url), func(t *testing.T) {
 			t.Setenv("ANTHROPIC_BASE_URL", url)
-			if _, err := feedBackend("api"); err == nil {
+			if _, err := feedBackend("api", io.Discard); err == nil {
 				t.Fatal("accepted", url)
 			}
 		})
@@ -270,7 +270,7 @@ func TestFeedOnlyAllowsLoopbackHTTPForAPI(t *testing.T) {
 	for _, url := range []string{"http://127.0.0.1:8081", "http://localhost:8081", "http://[::1]:8081"} {
 		t.Run(fmt.Sprintf("accept_%s", url), func(t *testing.T) {
 			t.Setenv("ANTHROPIC_BASE_URL", url)
-			b, err := feedBackend("api")
+			b, err := feedBackend("api", io.Discard)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -447,7 +447,7 @@ func TestFeedParsingPreservesIDsAndEnforcesTheLineLimit(t *testing.T) {
 func TestFeedAPIReceivesNoToolsAndTheOutputTokenLimit(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:8081")
-	b, err := feedBackend("api")
+	b, err := feedBackend("api", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
