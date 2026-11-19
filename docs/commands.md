@@ -278,6 +278,8 @@ that used to be done by hand after a merge.
 **Sources.** Without a flag it takes the newest GitHub release of `cristiangirlea/harness`:
 the asset for this platform (`hrn_<version>_<os>_<arch>[.exe]`, as `.github/release.sh`
 names them) and `SHA256SUMS`, and refuses to go on when the checksum does not match. A
+download that is redirected is followed only to the release's own hosts over https, at most
+five times. A
 `GITHUB_TOKEN` in the environment is sent to the API when present and never printed.
 `--ref REF` runs `go install github.com/cristiangirlea/harness/cmd/hrn@REF` into a temporary
 `GOBIN` (with `GOFLAGS` unset and `GOPROXY` as configured); `--main` is `--ref main`; both
