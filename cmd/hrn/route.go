@@ -64,7 +64,11 @@ func cmdRoute(args []string) (int, error) {
 			if _, err := agent.Get(row.Backend); err != nil {
 				return 2, err
 			}
-			if p, err := resolve.BackendPreferences(runlog.Home()); err == nil && !p.Enabled(row.Backend) {
+			p, err := resolve.BackendPreferences(runlog.Home())
+			if err != nil {
+				return 2, err
+			}
+			if !p.Enabled(row.Backend) {
 				fmt.Fprintf(os.Stderr, "hrn: warning: backend %s is disabled; runs ignore this row until it is enabled (hrn backends set)\n", row.Backend)
 			}
 		}

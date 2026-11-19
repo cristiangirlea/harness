@@ -21,7 +21,6 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/followup"
-	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -82,7 +81,7 @@ func cmdFeedContext(ctx context.Context, args []string, stdin io.Reader, stdout,
 	if c.maxTokens > agent.DefaultMaxTokens {
 		return 2, fmt.Errorf("feed --max-tokens must not exceed %d", agent.DefaultMaxTokens)
 	}
-	b, err := feedBackend(*backend)
+	b, err := feedBackend(*backend, stderr)
 	if err != nil {
 		return 2, err
 	}
@@ -134,14 +133,15 @@ func cmdFeedContext(ctx context.Context, args []string, stdin io.Reader, stdout,
 	return 0, nil
 }
 
-func feedBackend(name string) (agent.Backend, error) {
+func feedBackend(name string, stderr io.Writer) (agent.Backend, error) {
 	if name != "api" && name != "claude" {
 		return nil, fmt.Errorf("feed refuses %s: cannot run without tools yet", name)
 	}
-	p, err := prefs.Load(runlog.Home())
+	layers, err := cliBackendLayers(stderr)
 	if err != nil {
 		return nil, err
 	}
+	p := layers.Effective
 	if err := p.Check(name); err != nil {
 		return nil, err
 	}

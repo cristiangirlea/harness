@@ -17,6 +17,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/prefs/prefstest"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -580,5 +581,64 @@ func TestSavingBackendCardKeepsNamedAccounts(t *testing.T) {
 	got, err := prefs.Load(runlog.Home())
 	if w.Code != http.StatusNoContent || err != nil || !reflect.DeepEqual(got.Accounts, want.Accounts) || got.Reserve() != reserve {
 		t.Fatalf("save = %d %s, preferences = %+v, %v", w.Code, w.Body, got, err)
+	}
+}
+
+func TestBackendsCardOrganisationLocksAndSaves(t *testing.T) {
+	t.Setenv("HRN_HOME", prefstest.TempDir(t))
+	path := prefstest.OrgPath(t)
+	prefstest.Write(t, path, fmt.Sprintf(`{"billing":"metered","accounts":{"claude":[{"name":"work","home":%q}]},"enabled":["claude"],"default":"claude","locked":["enabled","default"]}`, prefstest.TempDir(t)))
+	h := New(context.Background(), Options{Key: "test-key"})
+	request := func(method, route, body string) *httptest.ResponseRecorder {
+		return backendRequest(h, method, route, "127.0.0.1:1234", "localhost", "test-key", "", body)
+	}
+	card := backendCardHTML(t, request("GET", "/", ""))
+	for _, marker := range []string{`aria-label="Enable claude" checked disabled`, `aria-label="Default claude" checked disabled`, "set by the organisation"} {
+		if !strings.Contains(card, marker) {
+			t.Errorf("card lacks %q", marker)
+		}
+	}
+	for _, body := range []string{`{"enabled":["codex"],"default":"codex"}`, `{"enabled":["claude"],"default":""}`, `{"enabled":[]}`} {
+		w := request("POST", "/backends", backendBodyForTest(t, body))
+		if w.Code != http.StatusConflict || strings.TrimSpace(w.Body.String()) != "Set by the organisation" {
+			t.Fatalf("locked save = %d %s", w.Code, w.Body)
+		}
+	}
+	audit, err := os.ReadFile(filepath.Join(runlog.Home(), "watch-audit.jsonl"))
+	if err != nil || strings.Count(string(audit), `"result":"refused"`) != 3 {
+		t.Fatalf("refusal audit = %s, %v", audit, err)
+	}
+	w := request("POST", "/backends", backendBodyForTest(t, `{"enabled":["claude"],"default":"claude"}`))
+	p, err := prefs.Load(runlog.Home())
+	if w.Code != http.StatusNoContent || err != nil || !reflect.DeepEqual(p, prefs.Prefs{}) {
+		t.Fatalf("matching save = %d %s, user = %+v, %v", w.Code, w.Body, p, err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	w = request("POST", "/backends", backendBodyForTest(t, `{"enabled":["codex"]}`))
+	if w.Code != http.StatusInternalServerError || strings.TrimSpace(w.Body.String()) != "Backend preferences could not be read" {
+		t.Fatalf("unreadable policy save = %d %s", w.Code, w.Body)
+	}
+}
+
+func TestBackendsCardOrganisationValuesStayOutOfUserFile(t *testing.T) {
+	t.Setenv("HRN_HOME", prefstest.TempDir(t))
+	path := prefstest.OrgPath(t)
+	prefstest.Write(t, path, fmt.Sprintf(`{"billing":"metered","accounts":{"claude":[{"name":"work","home":%q}]},"enabled":["codex","claude"]}`, prefstest.TempDir(t)))
+	h := New(context.Background(), Options{Key: "test-key"})
+	w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "localhost", "test-key", "", backendBodyForTest(t, `{"enabled":["claude","codex"]}`))
+	got, err := prefs.Load(runlog.Home())
+	if w.Code != http.StatusNoContent || err != nil || !reflect.DeepEqual(got, prefs.Prefs{}) {
+		t.Fatalf("save = %d %s, user = %+v, %v", w.Code, w.Body, got, err)
+	}
+	w = backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "localhost", "test-key", "", backendBodyForTest(t, `{"enabled":["claude"],"default":"claude"}`))
+	got, err = prefs.Load(runlog.Home())
+	want := prefs.Prefs{EnabledNames: []string{"claude"}, DefaultName: "claude"}
+	if w.Code != http.StatusNoContent || err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("edited save = %d %s, user = %+v, %v", w.Code, w.Body, got, err)
 	}
 }

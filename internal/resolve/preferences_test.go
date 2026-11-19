@@ -5,10 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/prefs/prefstest"
 )
 
 type preferenceBackend struct {
@@ -77,5 +81,30 @@ func TestBackendPreferencesRejectUnknownNamesAndMalformedFiles(t *testing.T) {
 		if _, err := BackendPreferences(home); err == nil {
 			t.Fatalf("accepted %s", raw)
 		}
+	}
+}
+
+func TestOrganisationBackendPreferences(t *testing.T) {
+	path := prefstest.OrgPath(t)
+	home := prefstest.TempDir(t)
+	prefstest.Write(t, filepath.Join(home, "backends.json"), `{"billing":"metered","enabled":["codex"]}`)
+	user, err := prefs.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := BackendPreferences(home); err != nil || !reflect.DeepEqual(got, user) {
+		t.Fatalf("without organisation = %+v, %v", got, err)
+	}
+	prefstest.Write(t, path, `{"billing":"plan","locked":["billing"]}`)
+	layers, err := BackendLayers(home)
+	if err != nil || !reflect.DeepEqual(layers.User, user) || layers.Effective.Billing != "plan" || !slices.Equal(layers.Ignored, []string{"billing"}) {
+		t.Fatalf("layers = %+v, %v", layers, err)
+	}
+	if got, err := BackendPreferences(home); err != nil || !reflect.DeepEqual(got, layers.Effective) {
+		t.Fatalf("effective = %+v, %v", got, err)
+	}
+	prefstest.Write(t, path, "{")
+	if _, err := BackendPreferences(home); err == nil || !strings.Contains(err.Error(), "the organisation's backends.json") {
+		t.Fatalf("organisation error = %v", err)
 	}
 }

@@ -645,6 +645,26 @@ run results show names. The config home paths are never printed.
 
 Accounts are for seats and organisation accounts that each belong to the people or team using them. hrn does not check a provider's terms; using several logins of one person to pass a plan's limit may break them.
 
+#### Organisation settings
+
+hrn reads organisation settings from `/etc/hrn/backends.json` on non-Windows
+systems and from `%ProgramData%\hrn\backends.json` on Windows, using
+`C:\ProgramData` when `ProgramData` is unset. There is no option or dedicated
+environment variable to point hrn at another policy file. An unreadable or
+invalid organisation file stops runs.
+
+The organisation file can set `enabled`, `default`, `billing`, `providers`,
+`accounts`, and `local_api`. Its optional `locked` array names the groups the
+organisation controls. `billing` includes `billing_max_cost_usd`, and
+`accounts` includes `account_reserve_percent`. Each pair moves together.
+
+- A locked group uses the organisation's settings, including an empty group.
+- An unlocked group uses the user's settings when any field in the group is
+  set. Otherwise it inherits the organisation's settings.
+- Work-map settings are personal and come from the user's file.
+
+The organisation file is a managed-device setting: it holds against a user who cannot write that path. hrn does not check who owns the file.
+
 #### A local model as the last partner
 
 A local inference server that speaks the Messages API on loopback or the private network

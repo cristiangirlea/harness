@@ -16,6 +16,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/prefs/prefstest"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -217,5 +218,38 @@ func TestBackendsToolStructuresAccountQuotaAndLimits(t *testing.T) {
 				t.Error("legacy backend limit changed")
 			}
 		}
+	}
+}
+
+func TestBackendsToolOrganisation(t *testing.T) {
+	t.Setenv("HRN_HOME", prefstest.TempDir(t))
+	path := prefstest.OrgPath(t)
+	prefstest.Write(t, filepath.Join(runlog.Home(), "backends.json"), `{"billing":"metered"}`)
+	list := func() mcp.CallResult {
+		t.Helper()
+		result, err := backendsTool().Handler(context.Background(), mcp.Call{})
+		if err != nil || result.IsError {
+			t.Fatalf("backends = %+v, %v", result, err)
+		}
+		return result
+	}
+	if _, ok := list().StructuredContent.(map[string]any)["organisation"]; ok {
+		t.Fatal("organisation without a file")
+	}
+	prefstest.Write(t, path, "{}")
+	data := list().StructuredContent.(map[string]any)
+	if got, err := json.Marshal(data["organisation"]); err != nil || string(got) != `{"locked":[],"sets":[]}` {
+		t.Fatalf("empty organisation = %s, %v", got, err)
+	}
+	prefstest.Write(t, path, `{"enabled":["claude"],"billing":"plan","locked":["billing"]}`)
+	result := list()
+	for _, line := range []string{"  enabled: set by the organisation\n", "  billing: set by the organisation (locked)\n", "backends: billing set by the organisation; your backends.json values for them are ignored"} {
+		if !strings.Contains(result.Content[0].Text, line) {
+			t.Errorf("missing %q", line)
+		}
+	}
+	data = result.StructuredContent.(map[string]any)
+	if got, err := json.Marshal(data["organisation"]); err != nil || string(got) != `{"locked":["billing"],"sets":["enabled","billing"]}` {
+		t.Fatalf("organisation = %s, %v", got, err)
 	}
 }

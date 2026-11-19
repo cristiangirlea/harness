@@ -137,6 +137,7 @@ local index (and on watch's stderr); refresh the page to see the latest pass.
 `hrn backends set --account BACKEND=NAME:PATH` can be repeated in preference order.
 `--account-reserve N` sets the minimum percent left for automatic account selection.
 `backends set` without these flags and `backends reset` clear both settings.
+`backends set` refuses values that differ from [locked organisation settings](backends.md#organisation-settings).
 See [Accounts](backends.md#accounts).
 
 For `--continue ID`, `--fresh` starts a bounded hand-over and `--resume` uses the saved session. A codex run continued on codex defaults to fresh; MCP and exec callers use explicit `fresh: false` to resume. See [Continuing a run](backends.md#continuing-a-run).

@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -297,10 +298,11 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
 	}
-	preference, err := resolve.BackendPreferences(runlog.Home())
+	layers, err := cliBackendLayers(os.Stderr)
 	if err != nil {
 		return 2, fmt.Errorf("run: %w", err)
 	}
+	preference := layers.Effective
 	if err := preference.Check(backend); err != nil {
 		return 2, fmt.Errorf("run: %w", err)
 	}
@@ -560,7 +562,18 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	return 0, nil
 }
 
+var backendNoticeOnce sync.Once
+
+func cliBackendLayers(stderr io.Writer) (resolve.Layers, error) {
+	layers, err := resolve.BackendLayers(runlog.Home())
+	if notice := layers.Notice(); notice != "" {
+		backendNoticeOnce.Do(func() { fmt.Fprintln(stderr, notice) })
+	}
+	return layers, err
+}
+
 func cmdBackends(args []string) error {
+	reset := false
 	if len(args) > 0 {
 		switch args[0] {
 		case "set":
@@ -584,16 +597,14 @@ func cmdBackends(args []string) error {
 			if *only == "" || fs.NArg() != 0 {
 				return errors.New("usage: hrn backends set --only claude,codex [--default claude] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET] [--account BACKEND=NAME:PATH]... [--account-reserve N]")
 			}
-			var maxCostSet, providerSet, reserveSet bool
+			set := map[string]bool{}
 			fs.Visit(func(f *flag.Flag) {
-				maxCostSet = maxCostSet || f.Name == "max-cost"
-				providerSet = providerSet || f.Name == "provider"
-				reserveSet = reserveSet || f.Name == "account-reserve"
+				set[f.Name] = true
 			})
-			if maxCostSet && (*maxCost <= 0 || math.IsNaN(*maxCost) || math.IsInf(*maxCost, 0)) {
+			if set["max-cost"] && (*maxCost <= 0 || math.IsNaN(*maxCost) || math.IsInf(*maxCost, 0)) {
 				return errors.New("backends set: --max-cost wants a positive amount")
 			}
-			if maxCostSet && *billing != "metered" {
+			if set["max-cost"] && *billing != "metered" {
 				return errors.New("backends set: --max-cost needs --billing metered")
 			}
 			p, _ := prefs.Load(runlog.Home())
@@ -604,7 +615,7 @@ func cmdBackends(args []string) error {
 
 			p.Providers = nil
 			p.Accounts, p.AccountReservePercent = nil, nil
-			if reserveSet {
+			if set["account-reserve"] {
 				p.AccountReservePercent = reserve
 			}
 			if len(accountFlags) > 0 {
@@ -617,7 +628,7 @@ func cmdBackends(args []string) error {
 					p.Accounts[backend] = append(p.Accounts[backend], a)
 				}
 			}
-			if providerSet {
+			if set["provider"] {
 				name, target, ok := strings.Cut(*provider, "=")
 				if !ok || name == "" {
 					return errors.New("backends set: --provider wants NAME=TARGET")
@@ -626,10 +637,32 @@ func cmdBackends(args []string) error {
 			}
 			for _, name := range strings.Split(*only, ",") {
 				name = strings.TrimSpace(name)
+				p.EnabledNames = append(p.EnabledNames, name)
+			}
+			org, err := prefs.LoadOrg()
+			if err != nil {
+				return err
+			}
+			if org.Exists() {
+				_, ignored, err := prefs.Merge(org, p)
+				explicitClears := map[string]bool{
+					"default":   set["default"] && p.DefaultName == "" && org.DefaultName != "",
+					"billing":   set["billing"] && p.Billing == "" && org.Billing != "",
+					"local_api": set["local-api"] && p.LocalAPI == "" && org.LocalAPI != "",
+				}
+				for _, field := range []string{"enabled", "default", "billing", "providers", "accounts", "local_api"} {
+					if slices.Contains(ignored, field) || org.Locks(field) && explicitClears[field] {
+						return fmt.Errorf("backends set: %s is set by the organisation", field)
+					}
+				}
+				if err != nil {
+					return err
+				}
+			}
+			for _, name := range p.EnabledNames {
 				if _, err := agent.Get(name); err != nil {
 					return err
 				}
-				p.EnabledNames = append(p.EnabledNames, name)
 			}
 			if *def != "" {
 				if _, err := agent.Get(*def); err != nil {
@@ -646,6 +679,7 @@ func cmdBackends(args []string) error {
 			if len(args) != 1 {
 				return errors.New("usage: hrn backends reset")
 			}
+			reset = true
 			p, err := prefs.Load(runlog.Home())
 			if err != nil || (len(p.WorkMapRepos) == 0 && p.WorkMapGitHub == nil && p.WorkMapSessions == nil) {
 				if err := os.Remove(filepath.Join(runlog.Home(), "backends.json")); err != nil && !os.IsNotExist(err) {
@@ -666,10 +700,14 @@ func cmdBackends(args []string) error {
 			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET] [--account BACKEND=NAME:PATH]... [--account-reserve N] | reset]")
 		}
 	}
-	p, err := resolve.BackendPreferences(runlog.Home())
+	layers, err := cliBackendLayers(os.Stderr)
 	if err != nil {
+		if reset {
+			return nil
+		}
 		return err
 	}
+	p := layers.Effective
 	if line := p.BillingSummary(); line != "" {
 		fmt.Println(line)
 	}
@@ -711,6 +749,9 @@ func cmdBackends(args []string) error {
 		} else if s := limits.Status(name, now); s != "" {
 			fmt.Printf("    %-9s %s\n", "", s)
 		}
+	}
+	for _, line := range layers.OrganisationLines() {
+		fmt.Println(line)
 	}
 	return nil
 }
@@ -1053,6 +1094,9 @@ func cmdEval(args []string) (int, error) {
 	}
 	spec, err := eval.LoadSpec(fs.Arg(0))
 	if err != nil {
+		return 2, err
+	}
+	if _, err := cliBackendLayers(os.Stderr); err != nil {
 		return 2, err
 	}
 	if *parallel > 0 {
