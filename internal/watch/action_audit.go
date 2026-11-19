@@ -17,21 +17,63 @@ import (
 )
 
 type actionRow struct {
-	Time   string       `json:"time"`
-	ID     string       `json:"id,omitempty"`
-	Client string       `json:"client"`
-	Action string       `json:"action"`
-	Target string       `json:"target,omitempty"`
-	Old    any          `json:"old,omitempty"`
-	New    *prefs.Prefs `json:"new,omitempty"`
-	Result string       `json:"result"`
-	Reason string       `json:"reason,omitempty"`
+	Time   string `json:"time"`
+	ID     string `json:"id,omitempty"`
+	Client string `json:"client"`
+	Action string `json:"action"`
+	Target string `json:"target,omitempty"`
+	Old    any    `json:"old,omitempty"`
+	New    any    `json:"new,omitempty"`
+	Result string `json:"result"`
+	Reason string `json:"reason,omitempty"`
 }
 
 func newIntent(client string, old any, next prefs.Prefs) (actionRow, error) {
 	var id [16]byte
 	_, err := rand.Read(id[:])
-	return actionRow{Time: time.Now().UTC().Format(time.RFC3339Nano), ID: hex.EncodeToString(id[:]), Client: client, Action: "backends", Target: "backends.json", Old: old, New: &next, Result: "intent"}, err
+	return actionRow{Time: time.Now().UTC().Format(time.RFC3339Nano), ID: hex.EncodeToString(id[:]), Client: client, Action: "backends", Target: "backends.json", Old: old, New: auditPreferences(next), Result: "intent"}, err
+}
+
+const unreadablePreferences = "unreadable backend preferences"
+
+func auditPreferences(p prefs.Prefs) any {
+	accounts := make(map[string][]string, len(p.Accounts))
+	for backend, seats := range p.Accounts {
+		for _, a := range seats {
+			accounts[backend] = append(accounts[backend], a.Name)
+		}
+	}
+	p.Accounts = nil
+	return struct {
+		prefs.Prefs
+		Accounts map[string][]string `json:"accounts,omitempty"`
+	}{p, accounts}
+}
+
+// displayPreferences removes homes and raw preferences from older audit rows.
+func displayPreferences(value any) any {
+	switch v := value.(type) {
+	case string:
+		return unreadablePreferences
+	case map[string]any:
+		accounts, _ := v["accounts"].(map[string]any)
+		for backend, raw := range accounts {
+			seats, _ := raw.([]any)
+			var names []string
+			for _, seat := range seats {
+				switch a := seat.(type) {
+				case string:
+					names = append(names, a)
+				case map[string]any:
+					if name, ok := a["name"].(string); ok {
+						names = append(names, name)
+					}
+				}
+			}
+			accounts[backend] = names
+		}
+	}
+	return value
 }
 
 var auditAppender = appendAction
@@ -177,6 +219,9 @@ func scanRecentActions(r io.Reader) []actionRow {
 			continue
 		}
 		if row.Result == "intent" {
+			if row.Action == "backends" {
+				row.Old, row.New = displayPreferences(row.Old), displayPreferences(row.New)
+			}
 			row.Result = "interrupted"
 			positions[row.ID] = len(rows)
 			rows = append(rows, row)

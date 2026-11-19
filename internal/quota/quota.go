@@ -399,8 +399,10 @@ func digits(name string, depth int) bool {
 	return len(name) == want && strings.Trim(name, "0123456789") == ""
 }
 
-// maxClaudeRuns bounds a reading: the newest runs, by id.
-const maxClaudeRuns = 40
+const (
+	maxClaudeRuns = 40
+	maxClaudeDirs = 400
+)
 
 // claudeFrom reads the quota events of the newest claude runs under root and
 // keeps each window's latest report: the quota is the account's and runs overlap.
@@ -412,18 +414,23 @@ func claudeFromAccount(root, account string) Quota {
 	var q Quota
 	entries := readDir(root)
 	slices.Reverse(entries) // run ids start with when they started
-	runs := 0
+	scanLimit := maxClaudeDirs
+	if account == "" {
+		scanLimit = maxClaudeRuns
+	}
+	dirs, runs := 0, 0
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		if runs++; runs > maxClaudeRuns {
+		if dirs++; dirs > scanLimit || runs >= maxClaudeRuns {
 			break
 		}
 		dir := filepath.Join(root, e.Name())
-		if !claudeRun(dir) || (account != "" && !claudeAccount(dir, account)) {
+		if !claudeRun(dir, account) {
 			continue
 		}
+		runs++
 		data, partial, err := tail(filepath.Join(dir, "events.jsonl"))
 		if err != nil {
 			continue
@@ -449,8 +456,7 @@ func claudeFromAccount(root, account string) Quota {
 	return q
 }
 
-// claudeRun reports whether the run in dir ran on claude, from its task.json.
-func claudeRun(dir string) bool {
+func claudeRun(dir, account string) bool {
 	f, _, err := openRegular(filepath.Join(dir, "task.json"))
 	if err != nil {
 		return false
@@ -458,8 +464,20 @@ func claudeRun(dir string) bool {
 	defer f.Close()
 	var rec struct {
 		Backend string `json:"backend"`
+		Task    struct {
+			Account string `json:"account"`
+		} `json:"task"`
 	}
-	return json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&rec) == nil && rec.Backend == "claude"
+	if json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&rec) != nil || rec.Backend != "claude" {
+		return false
+	}
+	if account == "" {
+		return true
+	}
+	if rec.Task.Account != "" {
+		return rec.Task.Account == account
+	}
+	return claudeAccount(dir, account)
 }
 
 func claudeAccount(dir, account string) bool {

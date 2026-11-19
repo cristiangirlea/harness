@@ -32,11 +32,16 @@ const (
 	fileOutsideTree = "outside"
 )
 
-func ResolveBackendSetup(b Backend, task Task) *Setup {
+// BindBackendAccount records the selected name while keeping its config home in memory.
+func BindBackendAccount(b Backend, task *Task) {
 	if cli, ok := b.(*CLIBackend); ok {
-		task.AccountHome = cli.AccountHome
+		task.Account, task.AccountHome = cli.Account, cli.AccountHome
 	}
-	return ResolveSetup(b.Name(), task)
+}
+
+func ResolveBackendSetup(b Backend, task *Task) *Setup {
+	BindBackendAccount(b, task)
+	return ResolveSetup(b.Name(), *task)
 }
 
 // ResolveSetup records unreadable inputs without failing.

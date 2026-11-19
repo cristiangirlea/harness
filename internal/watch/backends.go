@@ -93,15 +93,21 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	had, loadErr := prefs.Load(runlog.Home())
-	var old any = had
+	var old any = auditPreferences(had)
 	if loadErr != nil {
-		data, err := os.ReadFile(filepath.Join(runlog.Home(), "backends.json"))
+		data, err := prefs.Raw(runlog.Home())
 		if err != nil || len(data) > 16<<10 {
 			s.writeRefusal(client, "/backends", "preferences could not be read")
 			http.Error(w, "Backend preferences could not be read", http.StatusInternalServerError)
 			return
 		}
-		old = string(data)
+		// The save below replaces the file, and the audit no longer holds its text.
+		if err := os.WriteFile(filepath.Join(runlog.Home(), "backends.unreadable.json"), data, 0o600); err != nil {
+			s.writeRefusal(client, "/backends", "unreadable preferences could not be kept")
+			http.Error(w, "Backend preferences could not be read", http.StatusInternalServerError)
+			return
+		}
+		old = unreadablePreferences
 	}
 
 	p.WorkMapRepos, p.WorkMapGitHub, p.WorkMapSessions, p.LocalAPI = had.WorkMapRepos, had.WorkMapGitHub, had.WorkMapSessions, had.LocalAPI

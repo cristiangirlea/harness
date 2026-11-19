@@ -243,15 +243,18 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			// Mirrors hrn run: limit routing first, then the earlier run's mode and purpose unless named.
 			var routed string
-			if !args.NoSwitch && args.Account == "" && args.ContinueRunID != "" {
-				meant := args.Backend
-				if args.Backend, routed = followup.Choose(args.Backend, args.ContinueRunID); args.Backend != meant {
-					args.Model = ""
-				}
-			}
 			plan := followup.Plan{Account: args.Account}
 			if args.ContinueRunID != "" {
-				plan, err = followup.Make(followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Account: args.Account, Dir: args.Dir, Model: args.Model, Retrieval: args.Retrieval, RetrievalRevision: args.RetrievalRevision, RetrievalTenant: args.RetrievalTenant, RetrievalProject: args.RetrievalProject, RetrievalVersion: args.RetrievalVersion, RetrievalRefresh: args.RetrievalRefresh, Fresh: args.Fresh != nil && *args.Fresh, Resume: args.Fresh != nil && !*args.Fresh})
+				req := followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Account: args.Account, Dir: args.Dir, Model: args.Model, Retrieval: args.Retrieval, RetrievalRevision: args.RetrievalRevision, RetrievalTenant: args.RetrievalTenant, RetrievalProject: args.RetrievalProject, RetrievalVersion: args.RetrievalVersion, RetrievalRefresh: args.RetrievalRefresh, Fresh: args.Fresh != nil && *args.Fresh, Resume: args.Fresh != nil && !*args.Fresh}
+				chosen, reason, err := followup.ChooseContinuation(req, args.NoSwitch, "fresh")
+				if err != nil {
+					return mcp.CallResult{}, err
+				}
+				if chosen != args.Backend {
+					req.Model = ""
+				}
+				req.Backend, routed = chosen, reason
+				plan, err = followup.Make(req)
 				if err != nil {
 					return mcp.CallResult{}, err
 				}
@@ -319,7 +322,8 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				return mcp.CallResult{}, err
 			}
 			routeNote = plan.RetrievalNote(routeNote)
-			rec, err := runlog.CreateRouted(args.Backend, task, agent.ResolveBackendSetup(b, task), args.ContinueRunID, plan.Route(), routedBy, routeNote)
+			setup := agent.ResolveBackendSetup(b, &task)
+			rec, err := runlog.CreateRouted(args.Backend, task, setup, args.ContinueRunID, plan.Route(), routedBy, routeNote)
 			if err != nil {
 				return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
 			}
@@ -397,7 +401,8 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				if err != nil {
 					return mcp.CallResult{}, err
 				}
-				nrec, err := runlog.CreateContinuingRoute(next.To, next.Task, agent.ResolveBackendSetup(nb, next.Task), rec.ID(), next.Route())
+				setup := agent.ResolveBackendSetup(nb, &next.Task)
+				nrec, err := runlog.CreateContinuingRoute(next.To, next.Task, setup, rec.ID(), next.Route())
 				if err != nil {
 					return mcp.CallResult{}, fmt.Errorf("creating run record: %w", err)
 				}
@@ -782,9 +787,17 @@ func backendsTool() mcp.Tool {
 				}
 
 				if accounts := p.AccountsFor(name); len(accounts) > 0 {
+					statuses := make([]map[string]string, 0, len(accounts))
 					for _, a := range accounts {
-						fmt.Fprintln(&b, "    "+followup.AccountStatus(name, a, now))
+						line, usage, until := followup.AccountStatus(name, a, now)
+						fmt.Fprintln(&b, "    "+line)
+						status := map[string]string{"name": a.Name, "quota": usage}
+						if !until.IsZero() {
+							status["limited_until"] = until.UTC().Format(time.RFC3339)
+						}
+						statuses = append(statuses, status)
 					}
+					entry["accounts"] = statuses
 				} else if s := limits.Status(name, now); s != "" {
 					fmt.Fprintf(&b, "  %-9s %s\n", "", s)
 					entry["limited_until"] = limits.Until(name, now)

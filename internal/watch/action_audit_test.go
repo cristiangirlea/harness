@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"runtime"
@@ -461,5 +462,71 @@ func TestApplyingTheBackendCardKeepsTheLocalAPI(t *testing.T) {
 	}
 	if p, err := prefs.Load(home); err != nil || p.LocalAPI != "http://127.0.0.1:8081" || len(p.EnabledNames) != 3 {
 		t.Fatalf("saved %+v, %v", p, err)
+	}
+}
+
+func TestBackendAuditKeepsAccountNamesWithoutHomes(t *testing.T) {
+	for _, malformed := range []bool{false, true} {
+		name := "valid"
+		if malformed {
+			name = "malformed"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			home := filepath.Join(t.TempDir(), "private-account-home")
+			p := prefs.Prefs{Accounts: map[string][]prefs.Account{"claude": {{Name: "team-a", Home: home}}}}
+			if err := prefs.Save(runlog.Home(), p); err != nil {
+				t.Fatal(err)
+			}
+			var unreadable []byte
+			if malformed {
+				path := filepath.Join(runlog.Home(), "backends.json")
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				unreadable = append(data, '{')
+				if err := os.WriteFile(path, unreadable, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			h := New(t.Context(), Options{Key: "key"})
+			get := func() string {
+				return backendRequest(h, "GET", "/", "127.0.0.1:1", "localhost", "", "", "").Body.String()
+			}
+			if strings.Contains(get(), "private-account-home") {
+				t.Error("initial page exposed account home")
+			}
+			w := backendRequest(h, "POST", "/backends", "127.0.0.1:1", "localhost", "key", "", backendBodyForTest(t, `{"enabled":["claude"]}`))
+			if w.Code != http.StatusNoContent || strings.Contains(w.Body.String(), "private-account-home") {
+				t.Errorf("unexpected save response status %d or exposed account home", w.Code)
+			}
+			kept, err := os.ReadFile(filepath.Join(runlog.Home(), "backends.unreadable.json"))
+			if malformed && !bytes.Equal(kept, unreadable) {
+				t.Errorf("the unreadable preferences were not kept beside the new file: %v", err)
+			}
+			if !malformed && !os.IsNotExist(err) {
+				t.Errorf("a readable file left a copy behind: %v", err)
+			}
+			data, err := os.ReadFile(filepath.Join(runlog.Home(), "watch-audit.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), "private-account-home") || strings.Contains(get(), "private-account-home") {
+				t.Error("audit or page exposed account home")
+			}
+			if !malformed && strings.Count(string(data), `"accounts":{"claude":["team-a"]}`) != 4 {
+				t.Error("expected account names in old and new preferences on both audit rows")
+			}
+			if err := appendAction(actionRow{ID: "legacy", Action: "backends", Old: p, New: &p, Result: "intent"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := appendAction(actionRow{ID: "legacy malformed", Action: "backends", Old: home, Result: "intent"}); err != nil {
+				t.Fatal(err)
+			}
+			if page := get(); strings.Contains(page, "private-account-home") || !strings.Contains(page, "team-a") {
+				t.Error("page failed to redact the legacy audit row to account names")
+			}
+		})
 	}
 }

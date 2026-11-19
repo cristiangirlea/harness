@@ -730,7 +730,8 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 	if plan.freshAccount {
 		route = runlog.RouteFreshHandover
 	}
-	rec, err := runlog.CreateContinuingRoute(b.Name(), task, agent.ResolveBackendSetup(b, task), plan.continues, route, plan.routedBy)
+	setup := agent.ResolveBackendSetup(b, &task)
+	rec, err := runlog.CreateContinuingRoute(b.Name(), task, setup, plan.continues, route, plan.routedBy)
 	if err != nil {
 		return attemptOutcome{att: att}, fmt.Errorf("creating run record: %w", err)
 	}

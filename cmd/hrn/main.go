@@ -329,23 +329,23 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 
 	// Resolve replacement before continuation planning; the requested model belongs to the original backend.
 	var routed string
-	if !opts.NoSwitch && *account == "" && *continueID != "" {
-		meant := backend
-		if backend, routed = followup.Choose(backend, *continueID); backend != meant {
-			opts.Model = ""
-		}
-	}
-
 	plan := followup.Plan{Account: *account}
 	if *continueID != "" {
 		req := followup.Request{RunID: *continueID, Backend: backend, Account: *account, Retrieval: opts.Retrieval, RetrievalRevision: opts.RetrievalRevision, RetrievalTenant: opts.RetrievalTenant, RetrievalProject: opts.RetrievalProject, RetrievalVersion: opts.RetrievalVersion, RetrievalRefresh: *retrievalRefresh, Fresh: *fresh, Resume: *resume || (set["fresh"] && !*fresh)}
+		chosen, reason, err := followup.ChooseContinuation(req, opts.NoSwitch, "--fresh")
+		if err != nil {
+			return 2, err
+		}
+		if chosen != backend {
+			opts.Model = ""
+		}
+		req.Backend, routed = chosen, reason
 		if set["C"] || set["dir"] {
 			req.Dir = dir
 		}
 		if set["m"] || set["model"] {
 			req.Model = opts.Model
 		}
-		var err error
 		if plan, err = followup.Make(req); err != nil {
 			return 2, err
 		}
@@ -445,7 +445,8 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 
 	routeNote = plan.RetrievalNote(routeNote)
-	rec, err := runlog.CreateRouted(backend, task, agent.ResolveBackendSetup(b, task), *continueID, plan.Route(), routedBy, routeNote)
+	setup := agent.ResolveBackendSetup(b, &task)
+	rec, err := runlog.CreateRouted(backend, task, setup, *continueID, plan.Route(), routedBy, routeNote)
 	if err != nil {
 		return 1, fmt.Errorf("creating run record: %w", err)
 	}
@@ -530,7 +531,8 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		nrec, err := runlog.CreateContinuingRoute(next.To, next.Task, agent.ResolveBackendSetup(nb, next.Task), rec.ID(), next.Route())
+		setup := agent.ResolveBackendSetup(nb, &next.Task)
+		nrec, err := runlog.CreateContinuingRoute(next.To, next.Task, setup, rec.ID(), next.Route())
 		if err != nil {
 			return 1, fmt.Errorf("creating run record: %w", err)
 		}
@@ -703,7 +705,8 @@ func cmdBackends(args []string) error {
 
 		if accounts := p.AccountsFor(name); len(accounts) > 0 {
 			for _, a := range accounts {
-				fmt.Println("    " + followup.AccountStatus(name, a, now))
+				line, _, _ := followup.AccountStatus(name, a, now)
+				fmt.Println("    " + line)
 			}
 		} else if s := limits.Status(name, now); s != "" {
 			fmt.Printf("    %-9s %s\n", "", s)

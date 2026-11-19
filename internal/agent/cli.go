@@ -208,7 +208,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		return finish(&res, started)
 	}
 
-	task.AccountHome = c.AccountHome
+	BindBackendAccount(c, &task)
 	if task.AccountHome != "" {
 		res.Account = c.Account
 		info, err := os.Stat(task.AccountHome)

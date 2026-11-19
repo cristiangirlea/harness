@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -20,7 +21,7 @@ func TestAccountsPreferences(t *testing.T) {
 		tooMany[i] = Account{Name: fmt.Sprintf("seat-%d", i), Home: home}
 	}
 	valid := Prefs{Accounts: map[string][]Account{"claude": {account}, "codex": {account}}, AccountReservePercent: &zero}
-	for name, bad := range map[string]Prefs{
+	invalid := map[string]Prefs{
 		"backend":          {Accounts: map[string][]Account{"api": {account}}},
 		"name":             {Accounts: map[string][]Account{"claude": {{Name: "Bad", Home: home}}}},
 		"long name":        {Accounts: map[string][]Account{"claude": {{Name: "abcdefghijklmnopqrstuvwxyz0123456", Home: home}}}},
@@ -31,23 +32,33 @@ func TestAccountsPreferences(t *testing.T) {
 		"negative reserve": {Accounts: valid.Accounts, AccountReservePercent: &negative},
 		"high reserve":     {Accounts: valid.Accounts, AccountReservePercent: &high},
 		"no accounts":      {Accounts: map[string][]Account{"codex": {}}, AccountReservePercent: &zero},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if err := Save(dir, bad); err == nil {
-				t.Fatal("Save accepted invalid preferences")
-			}
-			data, err := json.Marshal(bad)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, "backends.json"), data, 0600); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := Load(dir); err == nil {
-				t.Fatal("Load accepted invalid preferences")
-			}
-		})
 	}
+	checkInvalid := func(t *testing.T, bad Prefs) {
+		if err := Save(dir, bad); err == nil {
+			t.Fatal("Save accepted invalid preferences")
+		}
+		data, err := json.Marshal(bad)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "backends.json"), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(dir); err == nil {
+			t.Fatal("Load accepted invalid preferences")
+		}
+	}
+	for name, bad := range invalid {
+		t.Run(name, func(t *testing.T) { checkInvalid(t, bad) })
+	}
+	t.Run("Windows partial paths", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("Windows path syntax")
+		}
+		for _, path := range []string{`C:x`, `\x`} {
+			checkInvalid(t, Prefs{Accounts: map[string][]Account{"claude": {{Name: "team-a", Home: path}}}})
+		}
+	})
 	if err := Save(dir, valid); err != nil {
 		t.Fatal(err)
 	}

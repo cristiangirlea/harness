@@ -184,15 +184,17 @@ func accountLeft(q quota.Quota, now time.Time) float64 {
 	return left
 }
 
-func AccountStatus(backend string, a prefs.Account, now time.Time) string {
-	line := quota.ForAccount(backend, a.Name, a.Home, now).String(now)
-	if line == "" {
-		line = "usage unknown"
+func AccountStatus(backend string, a prefs.Account, now time.Time) (line, usage string, until time.Time) {
+	usage = quota.ForAccount(backend, a.Name, a.Home, now).String(now)
+	if usage == "" {
+		usage = "usage unknown"
 	}
-	if until := limits.UntilAccount(backend, a.Name, now); !until.IsZero() {
+	line = a.Name + ": " + usage
+	until = limits.UntilAccount(backend, a.Name, now)
+	if !until.IsZero() {
 		line += ", at its usage limit until " + when(until)
 	}
-	return a.Name + ": " + line
+	return line, usage, until
 }
 
 func backendOut(p prefs.Prefs, backend string, now time.Time, spent Spent) string {
@@ -244,6 +246,7 @@ func localAPI(p prefs.Prefs) (string, error) {
 	return p.LocalAPI, nil
 }
 
+// Backend applies the declared claude provider or the api endpoint and ceiling.
 func Backend(name string) (agent.Backend, error) {
 	return BackendFor(name, "")
 }
@@ -311,11 +314,19 @@ func (p Plan) ConfigureCLI(b agent.Backend, pref prefs.Prefs) (agent.Backend, er
 	return p.configureCLI(b, pref, nil)
 }
 
+// AccountLimitError reports a remembered limit on the requested account selection.
+type AccountLimitError string
+
+func (e AccountLimitError) Error() string { return string(e) }
+
 func (p Plan) configureCLI(b agent.Backend, pref prefs.Prefs, spent Spent) (agent.Backend, error) {
 	var account prefs.Account
 	if !p.defaultAccount {
 		chosen, configured, why := chooseAccount(pref, b.Name(), p.Account, time.Now(), spent)
 		if (p.Account != "" || configured && chosen.Name == "") && why != "" {
+			if chosen.Name != "" || p.Account == "" {
+				return nil, AccountLimitError(why)
+			}
 			return nil, errors.New(why)
 		}
 		account = chosen
@@ -424,10 +435,16 @@ func when(t time.Time) string { return t.Local().Format("Jan 2 15:04") }
 
 // Pick returns backend unless it is limited and its partner is ready; bothOut means pick stays backend.
 func Pick(backend string, now time.Time, spent Spent) (pick, why string, bothOut bool) {
-	other := Partner(backend, now, spent)
 	p, _ := resolve.BackendPreferences(runlog.Home())
-	gone := backendOut(p, backend, now, spent)
-	if gone == "" || other == "" {
+	return pickPartner(p, backend, backendOut(p, backend, now, spent), now, spent)
+}
+
+func pickPartner(p prefs.Prefs, backend, gone string, now time.Time, spent Spent) (pick, why string, bothOut bool) {
+	if gone == "" {
+		return backend, "", false
+	}
+	other := Partner(backend, now, spent)
+	if other == "" {
 		return backend, "", false
 	}
 	if ok, reason := Ready(other, now, spent); !ok {
@@ -438,20 +455,58 @@ func Pick(backend string, now time.Time, spent Spent) (pick, why string, bothOut
 
 // Choose returns backend as typed (even empty) unless a limit moves it; a continued run is planned after.
 func Choose(backend, continueID string) (string, string) {
-	meant := backend
-	if meant == "" && continueID != "" {
-		if prev, err := runlog.Load(continueID); err == nil {
+	pick, why, _ := ChooseContinuation(Request{Backend: backend, RunID: continueID}, false, "")
+	return pick, why
+}
+
+// ChooseContinuation checks the session's account before moving it to a partner.
+func ChooseContinuation(req Request, noSwitch bool, freshField string) (string, string, error) {
+	meant := req.Backend
+	var prev runlog.Record
+	if req.RunID != "" {
+		prev, _ = runlog.Load(req.RunID)
+		if meant == "" {
 			meant = prev.Backend
 		}
 	}
 	if meant == "" {
 		meant = resolve.DefaultBackendNameIn(runlog.Home())
 	}
-	pick, why, _ := Pick(meant, time.Now(), nil)
-	if pick != meant {
-		return pick, why
+	now := time.Now()
+	p, _ := resolve.BackendPreferences(runlog.Home())
+	account := prev.Result.Account
+	if prev.Done && meant == prev.Backend && !req.freshFor(prev.Backend, meant) &&
+		(account != "" || len(p.AccountsFor(meant)) > 0) && (req.Account == "" || req.Account == account) {
+		if account != "" && !slices.ContainsFunc(p.AccountsFor(meant), func(a prefs.Account) bool { return a.Name == account }) {
+			return req.Backend, "", nil
+		}
+		gone := Spent(nil).out(meant, account, now)
+		if gone == "" {
+			return req.Backend, "", nil
+		}
+		why := gone
+		if !noSwitch && req.Account == "" {
+			pick, reason, _ := pickPartner(p, meant, gone, now, nil)
+			if pick != meant {
+				return pick, reason, nil
+			}
+			if reason != "" {
+				why = reason
+			}
+		}
+		if freshField != "" {
+			return req.Backend, why, fmt.Errorf("%s; use %s to continue on another account", why, freshField)
+		}
+		return req.Backend, why, nil
 	}
-	return backend, why
+	if !noSwitch && req.Account == "" {
+		pick, why, _ := Pick(meant, now, nil)
+		if pick != meant {
+			return pick, why, nil
+		}
+		return req.Backend, why, nil
+	}
+	return req.Backend, "", nil
 }
 
 const carryOnPrompt = "The turn above stopped before it finished: %s reached its plan's usage limit. " +

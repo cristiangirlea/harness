@@ -169,3 +169,45 @@ func TestBackendForConfiguresACopyAndRejectsTheRememberedAccount(t *testing.T) {
 		t.Fatalf("limited account = %v", err)
 	}
 }
+
+func TestChooseLimitedContinuationWithNamedAccounts(t *testing.T) {
+	for _, account := range []string{"team-a", ""} {
+		t.Run(account, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t, true, true)
+			p := prefs.Prefs{Accounts: map[string][]prefs.Account{"claude": {
+				{Name: "team-a", Home: t.TempDir()}, {Name: "team-b", Home: t.TempDir()},
+			}}}
+			if err := prefs.Save(runlog.Home(), p); err != nil {
+				t.Fatal(err)
+			}
+			rec, err := runlog.Create("claude", agent.Task{Dir: t.TempDir()}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := rec.Close(agent.Result{Backend: "claude", Account: account, Session: "saved", Status: agent.StatusOK}); err != nil {
+				t.Fatal(err)
+			}
+			limited := agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}
+			if err := limits.NoteAccount("claude", account, limited); err != nil {
+				t.Fatal(err)
+			}
+			pick, why := Choose("", rec.ID())
+			if pick != "codex" || !strings.Contains(why, accountLabel("claude", account)+" is at its usage limit") {
+				t.Errorf("Choose = %q, %q", pick, why)
+			}
+			plan, err := Make(Request{RunID: rec.ID(), Backend: "codex"})
+			if err != nil || plan.Route() != "transcript_transfer" {
+				t.Fatalf("handover: %q, %v", plan.Route(), err)
+			}
+			plan.Release()
+			if err := limits.Note("codex", limited); err != nil {
+				t.Fatal(err)
+			}
+			pick, why = Choose("", rec.ID())
+			if pick != "" || !strings.Contains(why, "codex is at its usage limit") {
+				t.Errorf("Choose without ready partner = %q, %q", pick, why)
+			}
+		})
+	}
+}

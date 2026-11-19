@@ -310,7 +310,8 @@ func runFeedItem(ctx context.Context, b agent.Backend, c feedConfig, dir string,
 	task := agent.Task{Dir: dir, Purpose: "none", MaxTokens: c.maxTokens, NoTools: true, NoThinking: c.thinking != "on",
 		Prompt:  c.task + "\n\n<item>\n" + html.EscapeString(item.text) + "\n</item>",
 		Options: agent.Options{Model: c.model, Mode: agent.ModeReadOnly, MaxTurns: 1, NoInstructions: true, NoSwitch: true, Lean: agent.Bool(true), Timeout: agent.Duration(c.timeout)}}
-	rec, err := runlog.Create(b.Name(), task, agent.ResolveBackendSetup(b, task))
+	setup := agent.ResolveBackendSetup(b, &task)
+	rec, err := runlog.Create(b.Name(), task, setup)
 	if err != nil {
 		out.Status, out.Error = "error", err.Error()
 		return out

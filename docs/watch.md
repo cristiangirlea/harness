@@ -250,7 +250,9 @@ does any viewer whose request carries a forwarding header (`Forwarded`, `X-Forwa
 `Cf-Connecting-Ip`): a proxy in front of watch belongs in public mode, where Access says
 who the viewer is.
 Apply uses a same-origin request carrying the startup key; it writes
-`$HRN_HOME/backends.json` atomically and reloads the index. Runs started afterwards
+`$HRN_HOME/backends.json` atomically and reloads the index. Applying over a file that
+could not be read first keeps its old text beside it as `backends.unreadable.json`; the
+action audit holds account names, never their paths. Runs started afterwards
 follow those preferences. Choose "No configured default" to let hrn choose;
 leaving all backends unchecked with no default restores all backends. A configured
 default must be enabled, and unknown backend names are refused.

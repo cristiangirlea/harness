@@ -258,11 +258,13 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 	if !worker {
 		b, err = nonWorkerBackend(b, preferences, plan)
 		if err != nil {
+			var limited followup.AccountLimitError
+			if errors.As(err, &limited) {
+				return w.reject(req.AttemptID, "unavailable", err.Error())
+			}
 			return w.reject(req.AttemptID, "bad_request", err.Error())
 		}
-		if cli, ok := b.(*agent.CLIBackend); ok {
-			task.AccountHome = cli.AccountHome
-		}
+		agent.BindBackendAccount(b, &task)
 	}
 	if _, err := b.Detect(); err != nil {
 		return w.reject(req.AttemptID, "unavailable", err.Error())

@@ -44,6 +44,10 @@ type Request struct {
 	Resume bool
 }
 
+func (req Request) freshFor(previous, backend string) bool {
+	return req.Fresh || (!req.Resume && previous == "codex" && backend == "codex")
+}
+
 // Plan is how a follow-up run starts.
 type Plan struct {
 	// Prev is the predecessor; Backend, absolute Dir and Model describe the follow-up.
@@ -139,7 +143,7 @@ func Make(req Request) (Plan, error) {
 	if err := checkRetrievalPin(chain, p.Backend, req.Retrieval, req.Exec); err != nil {
 		return Plan{}, err
 	}
-	fresh := req.Fresh || (!req.Resume && prev.Backend == "codex" && p.Backend == "codex")
+	fresh := req.freshFor(prev.Backend, p.Backend)
 
 	if !fresh && p.Backend == prev.Backend {
 		if err := p.pinAccount(prev, req.Account); err != nil {

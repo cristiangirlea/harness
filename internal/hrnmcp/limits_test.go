@@ -509,3 +509,45 @@ func TestRunToolRefusesToContinueALocalRunOnAKey(t *testing.T) {
 		})
 	}
 }
+
+func TestRunToolRoutesOrRefusesALimitedContinuationAccount(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t)
+	p := prefs.Prefs{Accounts: map[string][]prefs.Account{"codex": {
+		{Name: "team-a", Home: t.TempDir()}, {Name: "team-b", Home: t.TempDir()},
+	}}}
+	if err := prefs.Save(runlog.Home(), p); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := runlog.Create("codex", agent.Task{Dir: dir}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(agent.Result{Backend: "codex", Session: "saved", Account: "team-a", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	limited := agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}
+	if err := limits.NoteAccount("codex", "team-a", limited); err != nil {
+		t.Fatal(err)
+	}
+	run := func(fresh bool) (mcp.CallResult, error) {
+		return runTool(dir, false).Handler(t.Context(), mcp.Call{Arguments: json.RawMessage(fmt.Sprintf(`{"prompt":"finish","continue_run_id":%q,"fresh":%t}`, rec.ID(), fresh))})
+	}
+	res, err := run(false)
+	if err != nil || res.IsError || !strings.Contains(res.Text(), "finished it") || !strings.Contains(res.Text(), "codex@team-a is at its usage limit") {
+		t.Errorf("routed run: %s, %v", res.Text(), err)
+	}
+	if err := limits.Note("claude", limited); err != nil {
+		t.Fatal(err)
+	}
+	_, err = run(false)
+	if err == nil || !strings.Contains(err.Error(), "codex@team-a is at its usage limit") || !strings.HasSuffix(err.Error(), "; use fresh to continue on another account") {
+		t.Errorf("refused run: %v", err)
+	}
+	agent.Register(scripted{"codex", func(agent.Task) agent.Result { return agent.Result{Status: agent.StatusOK, Final: "fresh answer"} }})
+	res, err = run(true)
+	if err != nil || res.IsError || !strings.Contains(res.Text(), "fresh answer") {
+		t.Errorf("fresh run: %s, %v", res.Text(), err)
+	}
+}

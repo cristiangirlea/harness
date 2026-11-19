@@ -78,7 +78,7 @@ Unknown arguments to `run`, `runs`, `show`, `flow`, `batch`, `batch_show` and `b
 | `runs` | `limit` | Recent runs, newest first. |
 | `show` | `run_id`, `events` | Task, event transcript and result of one run. |
 | `flow` | `id`, `level` | A run or batch execution tree with recorded reasons and next steps; level defaults to `technical` (`simple`, `technical` or `debug`). Text over 64 KiB is cut, and then the structured tree is left out with `truncated: true`; use a lower level or `hrn flow --json`. |
-| `backends` | — | Availability and remembered limits, plus per-backend `enabled` and `default` booleans. The top-level `default` string names the backend selected for a fresh run. |
+| `backends` | — | Availability and remembered limits, plus per-backend `enabled` and `default` booleans. Named accounts appear under `accounts` with their name, quota summary and, when limited, `limited_until`. The top-level `default` string names the backend selected for a fresh run. |
 | `batch` | `spec` | Runs a batch spec, the same JSON as a batch file, and blocks until every task is done: one line per task (status, backend, attempts, the gate that failed, branch and commit) and the batch id. Task outcomes stream back as progress. |
 | `batch_show` | `batch_id`, `task`, `limit` | No id: recent batches. An id: its tasks. An id and a task: that task's diff and its untracked files. |
 | `batch_merge` | `batch_id`, `tasks`, `squash` | Merges the passing branches into the repository's current branch, stopping at the first conflict with the tree put back. |

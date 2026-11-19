@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,37 +17,39 @@ func TestAccountHomeReplacesTheChildEnvironment(t *testing.T) {
 			t.Setenv("HRN_CLI_HELPER_VARS", key)
 			t.Setenv(key, "caller")
 			home := t.TempDir()
-			for _, inherit := range []bool{false, true} {
-				task := Task{Dir: t.TempDir(), Options: Options{InheritEnv: inherit}, ChildEnv: []string{key + "=child"}}
-				b := helperCLI(parseClaudeStream)
-				b.name = backend
-				b.candidates = func() []string { return []string{os.Args[0]} }
-				b.env = func(Task) ([]string, error) { return []string{key + "=extra"}, nil }
-				var accountEvents int
-				baseline := b.Run(t.Context(), task, func(e Event) {
-					if strings.HasPrefix(e.Text, "account:") {
-						t.Error(e.Text)
+			for _, dangerous := range []bool{false, true} {
+				for _, inherit := range []bool{false, true} {
+					task := Task{Dir: t.TempDir(), Options: Options{InheritEnv: inherit, AllowDangerous: dangerous}, ChildEnv: []string{key + "=child"}}
+					b := helperCLI(parseClaudeStream)
+					b.name = backend
+					b.candidates = func() []string { return []string{os.Args[0]} }
+					b.env = func(Task) ([]string, error) { return []string{key + "=extra"}, nil }
+					var accountEvents int
+					baseline := b.Run(t.Context(), task, func(e Event) {
+						if strings.HasPrefix(e.Text, "account:") {
+							t.Error(e.Text)
+						}
+					})
+					if baseline.Status != StatusOK || !strings.Contains(baseline.Final, key+"=child") || baseline.Account != "" {
+						t.Fatalf("baseline: %+v", baseline)
 					}
-				})
-				if baseline.Status != StatusOK || !strings.Contains(baseline.Final, key+"=child") || baseline.Account != "" {
-					t.Fatalf("baseline: %+v", baseline)
-				}
-				b.Account, b.AccountHome = "team-a", home
-				res := b.Run(t.Context(), task, func(e Event) {
-					if e.Kind == EventInfo && e.Text == "account: team-a" {
-						accountEvents++
+					b.Account, b.AccountHome = "team-a", home
+					res := b.Run(t.Context(), task, func(e Event) {
+						if e.Kind == EventInfo && e.Text == "account: team-a" {
+							accountEvents++
+						}
+						if strings.Contains(e.Text, home) {
+							t.Error("event exposed the home")
+						}
+					})
+					if accountEvents != 1 || res.Status != StatusOK || res.Account != "team-a" || strings.Contains(res.Final, home) || !strings.Contains(res.Final, key+"=[account home]") {
+						t.Fatalf("account run: %+v, events: %d", res, accountEvents)
 					}
-					if strings.Contains(e.Text, home) {
-						t.Error("event exposed the home")
+					b.AccountHome = filepath.Join(home, "missing")
+					res = b.Run(t.Context(), task, func(Event) {})
+					if res.Status != StatusError || res.Error != "account team-a: its config home is missing" {
+						t.Fatalf("missing home: %+v", res)
 					}
-				})
-				if accountEvents != 1 || res.Status != StatusOK || res.Account != "team-a" || strings.Contains(res.Final, home) || !strings.Contains(res.Final, key+"=[account home]") {
-					t.Fatalf("account run: %+v, events: %d", res, accountEvents)
-				}
-				b.AccountHome = filepath.Join(home, "missing")
-				res = b.Run(t.Context(), task, func(Event) {})
-				if res.Status != StatusError || res.Error != "account team-a: its config home is missing" {
-					t.Fatalf("missing home: %+v", res)
 				}
 			}
 		})
@@ -55,7 +58,7 @@ func TestAccountHomeReplacesTheChildEnvironment(t *testing.T) {
 
 func TestSetupAndCodexLookupsUseTheSelectedHome(t *testing.T) {
 	isolateSetupHome(t)
-	caller, home, dir := t.TempDir(), t.TempDir(), t.TempDir()
+	caller, home, dir := t.TempDir(), filepath.Join(t.TempDir(), "selected-account-home"), t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", caller)
 	t.Setenv("CODEX_HOME", caller)
 	writeTree(t, caller, map[string]string{
@@ -70,12 +73,18 @@ func TestSetupAndCodexLookupsUseTheSelectedHome(t *testing.T) {
 	})
 	claude := NewClaudeBackend()
 	claude.Account, claude.AccountHome = "team-a", home
-	if got := ResolveBackendSetup(claude, Task{Dir: dir}).MCP; len(got) != 1 || got[0] != "account" {
+	saved := Task{Dir: dir}
+	if got := ResolveBackendSetup(claude, &saved).MCP; len(got) != 1 || got[0] != "account" {
 		t.Fatalf("claude setup: %v", got)
+	}
+	record, err := json.Marshal(saved)
+	if err != nil || !strings.Contains(string(record), `"account":"team-a"`) || saved.AccountHome != home ||
+		strings.Contains(string(record), "account_home") || strings.Contains(string(record), filepath.Base(home)) {
+		t.Fatal("task record must contain the account name and omit its home")
 	}
 	codex := NewCodexBackend()
 	codex.Account, codex.AccountHome = "team-a", home
-	files := ResolveBackendSetup(codex, Task{Dir: dir}).Files
+	files := ResolveBackendSetup(codex, &Task{Dir: dir}).Files
 	if files["$CODEX_HOME/AGENTS.override.md"] == "" || files["$CODEX_HOME/AGENTS.md"] != "" {
 		t.Fatalf("codex setup: %v", files)
 	}

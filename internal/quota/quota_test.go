@@ -322,7 +322,7 @@ func TestNonRegularFilesAreNotOpened(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(run, "task.json"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if claudeRun(run) {
+	if claudeRun(run, "team-a") {
 		t.Fatal("a folder named task.json reads as a claude run")
 	}
 }

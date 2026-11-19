@@ -8,9 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
 func TestProtocolAppliesMeteredAPICeiling(t *testing.T) {
@@ -133,4 +136,43 @@ func TestProtocolPreferencesAreCheckedAtStart(t *testing.T) {
 		t.Fatalf("rejection: %+v", e)
 	}
 	h.exit(t, 2)
+}
+
+func TestProtocolAccountLimitAndRemovedPinRejectCodes(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	orig, _ := agent.Get("claude")
+	agent.Register(agent.NewClaudeBackend())
+	t.Cleanup(func() { agent.Register(orig) })
+	p := prefs.Prefs{Accounts: map[string][]prefs.Account{"claude": {{Name: "team-a", Home: t.TempDir()}}}}
+	if err := prefs.Save(runlog.Home(), p); err != nil {
+		t.Fatal(err)
+	}
+	if err := limits.NoteAccount("claude", "team-a", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	rec, err := runlog.Create("claude", agent.Task{Dir: dir}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(agent.Result{Backend: "claude", Account: "removed", Session: "saved", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ id, code, message string }{
+		{"", "unavailable", "accounts are all at their usage limit"},
+		{rec.ID(), "bad_request", "no longer declared"},
+	} {
+		h := openHarness(t, nil)
+		h.next(t, "hello")
+		req := start(dir, "claude")
+		if tc.id != "" {
+			req["task"].(map[string]any)["continue_run_id"] = tc.id
+		}
+		h.send(t, req)
+		e := h.next(t, "rejected")["error"].(map[string]any)
+		if e["code"] != tc.code || !strings.Contains(e["message"].(string), tc.message) {
+			t.Errorf("rejection: %v", e)
+		}
+		h.exit(t, 2)
+	}
 }
