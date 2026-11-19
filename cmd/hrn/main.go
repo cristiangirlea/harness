@@ -69,15 +69,19 @@ Usage:
   hrn flow <run-or-batch-id>      show a run or batch execution tree (--level simple|technical|debug, --json)
   hrn show -f <run-id>            follow a run as it happens, until it ends (--follow)
   hrn show --usage [--json] <id>  a run's model calls, one row each: tokens, context, compactions
-  hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG [--owner-email ADDR ...]]
+  hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--voice PROGRAM [--voice-arg ARG ...]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG [--owner-email ADDR ...]]
                                  a local page that follows runs and batches live (default 127.0.0.1:8089,
                                  loopback only); --lan also serves it, read-only and without a login,
                                  on this computer's private network addresses, for a phone, with a QR
                                  code; --lan=NAME only on one adapter (its name or address);
-                                 --public serves a Cloudflare Tunnel on loopback, checking Access on every request
-  hrn bot [--addr HOST:PORT]      Ada, hrn watch's bot, in a small window: says what hrn is doing in plain UK
+                                 --public serves a Cloudflare Tunnel on loopback, checking Access on every request;
+                                 --voice speaks Ada's sentences through a speech program on this computer
+                                 (its full path; --voice-arg, repeated, gives its arguments)
+  hrn bot [--addr HOST:PORT] [--voice PROGRAM [--voice-arg ARG ...]]
+                                 Ada, hrn watch's bot, in a small window: says what hrn is doing in plain UK
                                  English, out loud and as notifications, with skip, snooze and a few
-                                 spoken commands; serves hrn watch on loopback unless one already does
+                                 spoken commands; serves hrn watch on loopback unless one already does;
+                                 --voice as for hrn watch
   hrn bot stats                   your level, this week's experience and your badges, from hrn's records
   hrn mcp [--dir PATH] [--allow-dangerous-runs] [--retrieval-profile FILE]
                                  serve hrn as an MCP server on stdio; --dir is the default workspace (default: current

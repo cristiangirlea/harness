@@ -32,6 +32,9 @@ func cmdWatch(args []string) error {
 	fs.Var(&ownerEmails, "owner-email", "repeat to mark verified Access emails as the local owner")
 	var lan lanFlag
 	fs.Var(&lan, "lan", "")
+	voice := fs.String("voice", "", "")
+	var voiceArgs argListFlag
+	fs.Var(&voiceArgs, "voice-arg", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -45,12 +48,18 @@ func cmdWatch(args []string) error {
 		}
 		return fmt.Errorf("unexpected argument %q; the address is set with --addr", fs.Arg(0))
 	}
+	speech, err := voiceProgram(fs, *voice, voiceArgs)
+	if err != nil {
+		return err
+	}
 	var access *watch.PublicAccess
 	if *public != "" || *team != "" || *audience != "" {
 		if lan.on {
 			return errors.New("--public and --lan cannot be used together")
 		}
-		var err error
+		if speech != nil {
+			return errors.New("--public and --voice cannot be used together: the local voice is for this computer's browser only")
+		}
 		access, err = watch.ParsePublicAccess(*public, *team, *audience)
 		if err != nil {
 			return err
@@ -66,6 +75,7 @@ func cmdWatch(args []string) error {
 	}
 	lns, opt := []net.Listener{ln}, watchOptions(access)
 	opt.OwnerEmails = ownerEmails
+	opt.Voice = speech
 	if lan.on {
 		_, port, _ := net.SplitHostPort(ln.Addr().String())
 		more, eps, err := watch.ListenLAN(port, lan.only)
@@ -116,6 +126,28 @@ func (f *stringListFlag) Set(value string) error {
 	}
 	*f = append(*f, value)
 	return nil
+}
+
+// argListFlag repeats, keeping each value as given.
+type argListFlag []string
+
+func (f *argListFlag) String() string { return strings.Join(*f, " ") }
+func (f *argListFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
+// An explicitly empty --voice is refused rather than read as no voice.
+func voiceProgram(fs *flag.FlagSet, path string, args []string) (*watch.VoiceProgram, error) {
+	set := false
+	fs.Visit(func(f *flag.Flag) { set = set || f.Name == "voice" })
+	if !set {
+		if len(args) > 0 {
+			return nil, errors.New("--voice-arg needs --voice, the speech program it is passed to")
+		}
+		return nil, nil
+	}
+	return watch.NewVoiceProgram(path, args)
 }
 
 func watchOptions(access *watch.PublicAccess) watch.Options {

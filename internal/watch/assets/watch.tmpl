@@ -273,7 +273,7 @@
 {{template "foot" .}}{{end}}
 
 {{define "bot"}}{{template "head" .}}
-<section class="card bot" aria-labelledby="bot-h">
+<section class="card bot" aria-labelledby="bot-h"{{if .LocalVoice}} data-local-voice{{end}}>
 <div class="bot-head">
 {{template "ada"}}
 <div>

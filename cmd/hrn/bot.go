@@ -31,6 +31,9 @@ func cmdBot(args []string) error {
 	}
 	fs := flag.NewFlagSet("bot", flag.ContinueOnError)
 	addr := fs.String("addr", watch.DefaultAddr, "")
+	voice := fs.String("voice", "", "")
+	var voiceArgs argListFlag
+	fs.Var(&voiceArgs, "voice-arg", "")
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -40,6 +43,10 @@ func cmdBot(args []string) error {
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected argument %q; the address is set with --addr", fs.Arg(0))
+	}
+	speech, err := voiceProgram(fs, *voice, voiceArgs)
+	if err != nil {
+		return err
 	}
 	bind, err := watch.LoopbackAddr(*addr)
 	if err != nil {
@@ -56,6 +63,9 @@ func cmdBot(args []string) error {
 			return err
 		}
 		fmt.Printf("hrn bot: hrn watch already serves http://%s; opening its bot\n", bind)
+		if speech != nil {
+			fmt.Fprintln(os.Stderr, "hrn bot: --voice is not used; the running hrn watch speaks with its own settings")
+		}
 		return openWindow(url)
 	}
 	url := "http://" + ln.Addr().String() + "/bot"
@@ -65,7 +75,7 @@ func cmdBot(args []string) error {
 	if err := openWindow(url); err != nil {
 		fmt.Fprintf(os.Stderr, "hrn bot: no window opened (%v); open %s in a browser\n", err, url)
 	}
-	return watch.Serve(ctx, watch.Options{}, ln)
+	return watch.Serve(ctx, watch.Options{Voice: speech}, ln)
 }
 
 func cmdBotStats(args []string) error {

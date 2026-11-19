@@ -22,6 +22,9 @@
   const line = $('bot-line');
   const log = $('bot-log');
   const synth = window.speechSynthesis;
+  // A speech program on this computer, run by hrn watch; offered only when the page says so.
+  const localVoice = 'localVoice' in card.dataset;
+  const LOCAL = 'hrn:local';
 
   // Which kinds are spoken and which notified: one checkbox each.
   const boxes = [...document.querySelectorAll('input[data-kind]')];
@@ -44,11 +47,21 @@
   const british = (v) => v.lang.toLowerCase().replace('_', '-') === 'en-gb';
   const woman = (v) => /\b(hazel|susan|sonia|libby|maisie|mia|abbi|bella|hollie|olivia|zira|aria|jenny|michelle|emma|amy|kate|serena|fiona|moira|karen|samantha|victoria|tessa|ava|allison|catherine|sara|natasha|linda|heather|eva|female)\b/i.test(v.name);
   const score = (v) => (v.localService ? 4 : 0) + (british(v) ? 2 : 0) + (woman(v) ? 1 : 0);
+  let hasBritish = false;
+  const showNoUK = () => { $('bot-no-uk').hidden = hasBritish || voiceSel.value === LOCAL; };
   const fillVoices = () => {
-    const voices = synth.getVoices().filter((v) => v.lang.toLowerCase().startsWith('en')).sort((a, b) => score(b) - score(a));
-    if (!voices.length) return;
-    $('bot-no-uk').hidden = voices.some((v) => v.localService && british(v));
+    const voices = (synth ? synth.getVoices() : []).filter((v) => v.lang.toLowerCase().startsWith('en')).sort((a, b) => score(b) - score(a));
+    if (!voices.length && !localVoice) return;
+    hasBritish = voices.some((v) => v.localService && british(v));
+    $('bot-no-uk').hidden = hasBritish;
     voiceSel.textContent = '';
+    if (localVoice) {
+      const o = document.createElement('option');
+      o.value = LOCAL;
+      o.textContent = 'Local voice (on this computer)';
+      voiceSel.append(o);
+      voiceSel.value = LOCAL;
+    }
     for (const v of voices) {
       const o = document.createElement('option');
       o.value = v.voiceURI;
@@ -57,8 +70,13 @@
     }
     const saved = store.get('voice', '');
     if (voices.some((v) => v.voiceURI === saved)) voiceSel.value = saved;
+    if (localVoice) showNoUK();
   };
-  voiceSel.addEventListener('change', () => store.set('voice', voiceSel.value));
+  voiceSel.addEventListener('change', () => {
+    store.set('voice', voiceSel.value);
+    if (localVoice) showNoUK();
+    skip(); // defined below; never two voices at once
+  });
 
   // The face shows talking while any sentence is queued or spoken: the set
   // of utterances not yet ended, since speechSynthesis.speaking can still be
@@ -67,8 +85,7 @@
   // events of what it cancelled cannot end the next sentence's talking.
   let lastSpoken = '';
   let inFlight = new Set();
-  const speak = (text) => {
-    if (!synth || !text) return;
+  const speakInBrowser = (text, after) => {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'en-GB';
     const v = synth.getVoices().find((x) => x.voiceURI === voiceSel.value);
@@ -78,15 +95,98 @@
     u.onend = u.onerror = () => {
       mine.delete(u);
       card.classList.toggle('talking', inFlight.size > 0);
+      if (after) after();
     };
     mine.add(u);
     card.classList.add('talking');
     synth.speak(u);
+  };
+
+  // The local voice: sentences play in turn, fetched at most one ahead, as
+  // the server makes one at a time and each fetch holds one of the browser's
+  // few connections to hrn. A sentence it cannot say goes to the browser's voice.
+  let queue = [];
+  let playing = null;
+  const fetchSound = (item) => {
+    item.ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    item.sound = fetch('/bot/voice?q=' + encodeURIComponent(item.text), { mode: 'same-origin', headers: { 'X-Hrn-Voice': '1' }, signal: item.ctl ? item.ctl.signal : undefined })
+      .then((r) => { if (!r.ok) throw new Error('local voice unavailable'); return r.blob(); });
+    const mine = inFlight;
+    const settled = () => {
+      item.settled = true;
+      if (mine === inFlight) prefetch();
+    };
+    item.sound.then(settled, settled); // a failure is handled when its turn comes
+  };
+  const prefetch = () => {
+    for (const item of queue.slice(0, 2)) {
+      if (!item.sound) { fetchSound(item); return; }
+      if (!item.settled) return;
+    }
+  };
+  const playLocal = (mine) => {
+    const item = queue[0];
+    if (!item) return;
+    prefetch();
+    const next = () => {
+      if (mine !== inFlight) return;
+      mine.delete(item);
+      queue.shift();
+      card.classList.toggle('talking', inFlight.size > 0);
+      playLocal(mine);
+    };
+    const fallback = () => {
+      if (mine !== inFlight) return;
+      if (synth) speakInBrowser(item.text, next); else next();
+    };
+    item.sound.then((blob) => {
+      if (mine !== inFlight) return;
+      const url = URL.createObjectURL(blob);
+      const a = new Audio(url);
+      a.playbackRate = Number(rate.value) || 1;
+      playing = { a, url };
+      let over = false;
+      const end = (ok) => {
+        if (over) return;
+        over = true;
+        URL.revokeObjectURL(url);
+        if (playing && playing.a === a) playing = null;
+        if (ok) next(); else fallback();
+      };
+      a.onended = () => end(true);
+      a.onerror = () => end(false);
+      const started = a.play();
+      if (started && started.catch) started.catch(() => end(false));
+    }, fallback);
+  };
+  const speakLocal = (text) => {
+    const item = { text };
+    inFlight.add(item);
+    card.classList.add('talking');
+    queue.push(item);
+    if (queue.length === 1) playLocal(inFlight); else prefetch();
+  };
+
+  const speak = (text) => {
+    if (localVoice && text && voiceSel.value === LOCAL) {
+      speakLocal(text);
+      lastSpoken = text;
+      return;
+    }
+    if (!synth || !text) return;
+    speakInBrowser(text);
     lastSpoken = text;
   };
   const skip = () => {
     inFlight = new Set();
     card.classList.remove('talking');
+    for (const item of queue) if (item.ctl) item.ctl.abort();
+    queue = [];
+    if (playing) {
+      playing.a.pause();
+      URL.revokeObjectURL(playing.url);
+      playing = null;
+    }
     if (synth) synth.cancel();
   };
 
@@ -205,12 +305,12 @@
     line.textContent = text;
     speak(text);
   };
-  if (!synth) {
+  if (!synth && !localVoice) {
     wake.textContent = 'This browser cannot speak';
     wake.disabled = true;
   } else {
     fillVoices();
-    synth.addEventListener('voiceschanged', fillVoices);
+    if (synth) synth.addEventListener('voiceschanged', fillVoices);
     wake.addEventListener('click', () => {
       wake.hidden = true;
       reply(lastStatus);

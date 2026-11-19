@@ -429,6 +429,33 @@ while it listens. The microphone is allowed on Ada's page and the voice page bel
 Opened over `--lan`, Ada speaks, but the browser allows neither notifications nor the
 microphone on a plain network address.
 
+#### A local voice
+
+`hrn watch --voice PROGRAM` (and `hrn bot --voice PROGRAM`) lets Ada speak through a speech
+program installed on this computer; hrn bundles and downloads none and only runs the one
+named. `--voice` takes the program's full path; `--voice-arg ARG`, repeated, gives its
+arguments in order. A `--voice-arg` without `--voice`, a relative path or a path that is not
+a file stops hrn before it listens, and `--public` cannot be combined with `--voice`.
+
+The program is started with exactly the given arguments, never through a shell, in its own
+folder and with a small environment (the search path, the home and temporary folders, the
+locale and, on Windows, the system folders), so no API key or token reaches it. It reads one
+sentence, ended by a newline, on standard input and writes a WAV file to standard output.
+It has 30 seconds per sentence and at most 16 MiB of output; what it writes to standard error
+is discarded. One sentence is made at a time, and each one made is kept in memory (never on
+disk, at most 64 sentences and 32 MiB, oldest dropped first) for as long as hrn watch runs.
+An engine with another command line is wrapped in a small script. On Windows `--voice` names
+an `.exe` file: `.bat` and `.cmd` files run through the command interpreter, and for a name
+without an extension Windows may run `speak.bat` beside `speak`. A wrapper there is a program, or a script run
+by naming its interpreter as `--voice` and the script as `--voice-arg`.
+
+The page fetches each sentence from `/bot/voice`, which answers this computer's browser only:
+a phone over `--lan` keeps the browser's voices. Only Ada's own page can ask for a sentence:
+another page or site open in the same browser cannot start the program. With a program set,
+Ada's voice list starts with Local voice (on this computer), chosen unless another voice was
+saved; the speed applies to it. A sentence the program cannot say (it fails, takes too long
+or writes no WAV file) is spoken with the browser's voice instead.
+
 #### Recording Ada's voice
 
 `/voice` (linked from Ada's page on this computer) is where someone records the voice Ada
