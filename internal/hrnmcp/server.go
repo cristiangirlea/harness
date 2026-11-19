@@ -765,13 +765,17 @@ func backendsTool() mcp.Tool {
 				if name == def {
 					state += " (default)"
 				}
+				provider := ""
+				if target := p.ProviderTarget(name); target != "" {
+					provider = " (provider: " + target + ")"
+				}
 				src, err := followup.Detect(name)
 				var entry map[string]any
 				if err != nil {
-					fmt.Fprintf(&b, "✗ %-9s %s: %s\n", name, state, err)
+					fmt.Fprintf(&b, "✗ %-9s %s: %s%s\n", name, state, err, provider)
 					entry = map[string]any{"name": name, "available": false, "detail": err.Error()}
 				} else {
-					fmt.Fprintf(&b, "✓ %-9s %s: %s\n", name, state, src)
+					fmt.Fprintf(&b, "✓ %-9s %s: %s%s\n", name, state, src, provider)
 					entry = map[string]any{"name": name, "available": true, "detail": src}
 				}
 				if s := limits.Status(name, now); s != "" {

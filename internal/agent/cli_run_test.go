@@ -79,7 +79,15 @@ func TestHelperCLIError(t *testing.T) {
 		msg, _ := json.Marshal(os.Getenv("HRN_CLI_LIMIT_MSG"))
 		fmt.Printf(`{"type":"result","subtype":"success","is_error":true,"num_turns":1,"result":%s}`+"\n", msg)
 		os.Exit(1)
+	case "env-all":
+		env, _ := json.Marshal(os.Environ())
+		out, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "result": string(env)})
+		fmt.Println(string(out))
+		os.Exit(0)
 	case "env":
+		if os.Getenv("HRN_CLI_HELPER_KEY_SOURCE") == "helper" {
+			fmt.Println(`{"type":"system","subtype":"init","apiKeySource":"apiKeyHelper"}`)
+		}
 		// What the CLI was started with, as its final answer.
 		report := fmt.Sprintf("GH_TOKEN=%s;GH_CONFIG_DIR=%s;GIT_CONFIG_COUNT=%s;ANTHROPIC_API_KEY=%s;CLAUDE_CODE_OAUTH_TOKEN=%s;HRN_GUARDED=%s;GIT_DIR=%s;GIT_INDEX_FILE=%s;GIT_WORK_TREE=%s;OPERATOR_SETTING=%s;PATH_SET=%t;AGY_ACCOUNT=%s;GOOGLE_APPLICATION_CREDENTIALS=%s",
 			os.Getenv("GH_TOKEN"), os.Getenv("GH_CONFIG_DIR"), os.Getenv("GIT_CONFIG_COUNT"), os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),

@@ -23,11 +23,16 @@ type Prefs struct {
 	EnabledNames    []string `json:"enabled,omitempty"`
 	DefaultName     string   `json:"default,omitempty"`
 
-	Billing           string  `json:"billing,omitempty"`
-	BillingMaxCostUSD float64 `json:"billing_max_cost_usd,omitempty"`
+	Billing           string              `json:"billing,omitempty"`
+	BillingMaxCostUSD float64             `json:"billing_max_cost_usd,omitempty"`
+	Providers         map[string]Provider `json:"providers,omitempty"`
 
 	// LocalAPI opts an unmetered api endpoint in as the last carry-on partner.
 	LocalAPI string `json:"local_api,omitempty"`
+}
+
+type Provider struct {
+	Target string `json:"target,omitempty"`
 }
 
 var errBillingCeiling = errors.New("billing_max_cost_usd: want a finite positive amount")
@@ -37,6 +42,14 @@ func (p Prefs) Enabled(name string) bool {
 }
 func (p Prefs) Default() string { return p.DefaultName }
 func (p Prefs) Metered() bool   { return p.Billing == "metered" }
+
+func (p Prefs) ProviderTarget(backend string) string {
+	target := p.Providers[backend].Target
+	if target == "plan" {
+		return ""
+	}
+	return target
+}
 
 func (p Prefs) BillingSummary() string {
 	if !p.Metered() {
@@ -85,6 +98,20 @@ func (p Prefs) validate() error {
 		}
 		if n < 0 || math.IsNaN(n) || math.IsInf(n, 0) {
 			return errBillingCeiling
+		}
+	}
+	for backend, provider := range p.Providers {
+		if backend != "claude" {
+			return fmt.Errorf("providers: backend %s does not support a declared target", backend)
+		}
+		switch provider.Target {
+		case "", "plan":
+		case "bedrock", "vertex", "foundry", "gateway":
+			if !p.Metered() {
+				return fmt.Errorf("providers: claude target %s bills per token and needs billing metered", provider.Target)
+			}
+		default:
+			return fmt.Errorf("providers: unknown claude target %q", provider.Target)
 		}
 	}
 	if p.LocalAPI != "" {

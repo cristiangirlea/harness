@@ -108,7 +108,7 @@ reported only if an event names one.
 
 These are agy's permission modes; `plan` is not a filesystem sandbox.
 
-The `claude` backend uses the plan login only. If Claude Code's init line reports an
+By default, the `claude` backend uses the plan login. If Claude Code's init line reports an
 `apiKeySource` other than `none`, hrn stops the worker as soon as that init line arrives
 and ends the run with an error. Claude Code may already have sent its first request.
 Older CLI versions that omit the field keep their existing behaviour.
@@ -272,6 +272,9 @@ yours as a whole (#411). They get:
   `CommonProgramFiles` and `ProgramData` family, `ALLUSERSPROFILE`, `PUBLIC`, `OS`,
   `COMPUTERNAME`, `USERDOMAIN`, `PROCESSOR_ARCHITECTURE`, `NUMBER_OF_PROCESSORS`,
   `PSModulePath` and `CLAUDE_CODE_GIT_BASH_PATH`.
+
+A declared claude provider adds its [per-target names](#provider-for-the-claude-cli)
+to the allowlist.
 
 Anything else stays out: `GH_*`, `GIT_CONFIG_GLOBAL` and your own `GIT_CONFIG_*`
 entries, `SSH_AUTH_SOCK`, a `DATABASE_URL`, editor and tool settings. A name that says it
@@ -571,6 +574,44 @@ agent CLI spends. The provider's own budget applies.
 `hrn backends set` without `--billing` returns to the plan policy and clears the ceiling.
 The watch Backends card keeps both settings when it saves. The local API opt-in
 keeps its own rule under either policy.
+
+#### Provider for the claude CLI
+
+Use `hrn backends set --only claude --billing metered --provider claude=bedrock` to
+declare a provider in `backends.json`. The targets are `plan` (the default), `bedrock`,
+`vertex`, `foundry` and `gateway`. Any target other than `plan` needs `--billing metered`.
+Omitting `--provider` from `backends set` or running `backends reset` clears it.
+The watch Backends card keeps the target when it saves.
+
+| Target | Switch set by hrn | Environment names passed when set |
+| --- | --- | --- |
+| `plan` | | |
+| `bedrock` | `CLAUDE_CODE_USE_BEDROCK=1` | `AWS_REGION`, `AWS_DEFAULT_REGION`, `AWS_PROFILE`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `ANTHROPIC_BEDROCK_BASE_URL` |
+| `vertex` | `CLAUDE_CODE_USE_VERTEX=1` | `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`, `ANTHROPIC_VERTEX_BASE_URL` |
+| `foundry` | `CLAUDE_CODE_USE_FOUNDRY=1` | `ANTHROPIC_FOUNDRY_RESOURCE`, `ANTHROPIC_FOUNDRY_BASE_URL` |
+| `gateway` | | `ANTHROPIC_BASE_URL` |
+
+All four metered targets also pass `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`,
+`ANTHROPIC_DEFAULT_SONNET_MODEL` and `ANTHROPIC_DEFAULT_HAIKU_MODEL` when set.
+With a metered target, hrn replaces the caller's provider switches and withholds the plan
+login token (`CLAUDE_CODE_OAUTH_TOKEN`), even with `--inherit-env`. It accepts HTTP and
+HTTPS base URLs and removes usernames, passwords, queries and fragments before passing
+them to the worker.
+
+| Target | Default guard | With `--allow-dangerous` |
+| --- | --- | --- |
+| `plan` | Claude plan login | Claude plan login |
+| `bedrock` | Instance or task role only | Also a named profile or single sign-on |
+| `vertex` | Application Default Credentials from the cloud CLI's login are expected in the user's profile. This was not verified against a live account. | A service-account key file needs both `--allow-dangerous` and `--inherit-env` because hrn does not pass `GOOGLE_APPLICATION_CREDENTIALS` by name. |
+| `foundry` | Managed identity only | Also the cloud CLI's login |
+| `gateway` | Key helper in the Claude CLI's own settings | Key helper in the Claude CLI's own settings |
+
+For Bedrock, Vertex and Foundry, the CLI's provider switch selects the cloud account.
+Gateway always requires `apiKeyHelper` in the Claude CLI's own settings. hrn reacts to
+the CLI's first lines and refuses the run unless the first stream message is an init
+that reports `apiKeyHelper`, so an init reporting the plan login on disk is refused.
+A run with no init line is refused too. Claude Code may already have sent its first request.
+Codex names its providers in its own config.
 
 #### A local model as the last partner
 

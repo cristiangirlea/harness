@@ -958,3 +958,30 @@ func TestMCPFlowFiltersTaskAndStatusInStructuredContent(t *testing.T) {
 		t.Fatalf("structured content carried a control character: %s", data)
 	}
 }
+
+func TestBackendsListsDeclaredClaudeProvider(t *testing.T) {
+	s := connect(t, t.TempDir())
+	for _, target := range []string{"foundry", "plan", ""} {
+		p := prefs.Prefs{Billing: "metered"}
+		if target != "" {
+			p.Providers = map[string]prefs.Provider{"claude": {Target: target}}
+		}
+		if err := prefs.Save(runlog.Home(), p); err != nil {
+			t.Fatal(err)
+		}
+		result := s.call(t, "backends", `{}`)
+		found := false
+		for _, line := range strings.Split(result.Text(), "\n") {
+			if !strings.Contains(line, "(provider:") {
+				continue
+			}
+			if target != "foundry" || found || !strings.Contains(line, " claude ") || !strings.Contains(line, "(provider: foundry)") {
+				t.Errorf("target %q: unexpected row %q", target, line)
+			}
+			found = true
+		}
+		if result.IsError || found != (target == "foundry") {
+			t.Errorf("target %q: listing %q", target, result.Text())
+		}
+	}
+}

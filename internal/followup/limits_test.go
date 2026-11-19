@@ -10,6 +10,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/limits"
+	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -361,6 +362,33 @@ func TestPickAndChooseExplainWhyAMeteredPartnerWasSkipped(t *testing.T) {
 		}
 		if strings.Contains(reason, "fake-secret-value") {
 			t.Error("Choose exposed the key value")
+		}
+	}
+}
+
+func TestBackendUsesDeclaredClaudeProviderOnACopy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	registered, err := agent.Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"bedrock", "plan", ""} {
+		p := prefs.Prefs{Billing: "metered"}
+		if target != "" {
+			p.Providers = map[string]prefs.Provider{"claude": {Target: target}}
+		}
+		if err := prefs.Save(home, p); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Backend("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := p.ProviderTarget("claude")
+		if (got == registered) != (want == "") || got.(*agent.CLIBackend).ProviderTarget != want ||
+			registered.(*agent.CLIBackend).ProviderTarget != "" {
+			t.Fatalf("target %q: configured %p, registered %p", target, got, registered)
 		}
 	}
 }

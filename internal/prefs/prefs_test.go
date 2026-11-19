@@ -227,3 +227,40 @@ func TestALocalAPIEndpointMustBeLoopbackOrPrivate(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderPreferences(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "backends.json"), []byte(`{"enabled":["claude"],"default":"claude"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old, err := Load(home)
+	if err != nil || old.Providers != nil || old.ProviderTarget("claude") != "" || old.Default() != "claude" {
+		t.Fatalf("load old preferences: %+v, %v", old, err)
+	}
+	for _, target := range []string{"", "plan", "bedrock", "vertex", "foundry", "gateway"} {
+		t.Run(target, func(t *testing.T) {
+			want := Prefs{Billing: "metered", Providers: map[string]Provider{"claude": {Target: target}}}
+			if err := Save(home, want); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Load(home)
+			active := target
+			if target == "plan" {
+				active = ""
+			}
+			if err != nil || !reflect.DeepEqual(got, want) || got.ProviderTarget("claude") != active || got.ProviderTarget("codex") != "" {
+				t.Fatalf("round trip: %+v, %v", got, err)
+			}
+		})
+	}
+	for _, tc := range []struct{ backend, target, billing, message string }{
+		{"claude", "other", "metered", "providers:"},
+		{"codex", "plan", "metered", "providers:"},
+		{"claude", "bedrock", "plan", "providers: claude target bedrock bills per token and needs billing metered"},
+	} {
+		p := Prefs{Billing: tc.billing, Providers: map[string]Provider{tc.backend: {Target: tc.target}}}
+		if err := Save(home, p); err == nil || !strings.Contains(err.Error(), tc.message) {
+			t.Errorf("save %+v: %v", p, err)
+		}
+	}
+}

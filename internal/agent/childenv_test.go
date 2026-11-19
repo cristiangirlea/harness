@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -284,4 +287,183 @@ func sameSet(a, b []string) bool {
 	slices.Sort(a)
 	slices.Sort(b)
 	return slices.Equal(a, b)
+}
+
+func TestDeclaredClaudeProviderEnvironment(t *testing.T) {
+	for _, tc := range []struct {
+		target, selected string
+		names            []string
+	}{
+		{"bedrock", "CLAUDE_CODE_USE_BEDROCK", []string{"AWS_REGION", "AWS_DEFAULT_REGION", "AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "ANTHROPIC_BEDROCK_BASE_URL"}},
+		{"vertex", "CLAUDE_CODE_USE_VERTEX", []string{"CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID", "ANTHROPIC_VERTEX_BASE_URL"}},
+		{"foundry", "CLAUDE_CODE_USE_FOUNDRY", []string{"ANTHROPIC_FOUNDRY_RESOURCE", "ANTHROPIC_FOUNDRY_BASE_URL"}},
+		{"gateway", "", []string{"ANTHROPIC_BASE_URL"}},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			names := append(slices.Clone(tc.names), "ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL")
+			switches := []string{"CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"}
+			secrets := []string{"AWS_SECRET_ACCESS_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"}
+			t.Setenv("HRN_CLI_HELPER", "env")
+			t.Setenv("HRN_CLI_HELPER_KEY_SOURCE", "helper")
+			t.Setenv("HRN_CLI_HELPER_VARS", strings.Join(slices.Concat(names, switches, secrets), ","))
+			for _, key := range names {
+				value := "from-caller"
+				if strings.HasSuffix(key, "_BASE_URL") {
+					value = "https://user:pass@provider.example:8443/v1/@endpoint?api_key=fixture#fragment"
+				}
+				t.Setenv(key, value)
+			}
+			for _, key := range slices.Concat(switches, secrets) {
+				t.Setenv(key, "from-caller")
+			}
+			b := NewClaudeBackend()
+			b.ProviderTarget = tc.target
+			b.candidates = func() []string { return []string{os.Args[0]} }
+			t.Setenv("PATH", t.TempDir())
+			b.args = helperCLI(nil).args
+			b.env = func(Task) ([]string, error) {
+				return []string{"CLAUDE_CODE_USE_VERTEX=from-extra", "CLAUDE_CODE_OAUTH_TOKEN=from-extra", "ANTHROPIC_API_KEY=from-extra"}, nil
+			}
+			for _, opts := range []Options{{}, {InheritEnv: true}, {AllowDangerous: true}, {InheritEnv: true, AllowDangerous: true}} {
+				var providerInfo []string
+				res := b.Run(context.Background(), Task{
+					Prompt: "go", Dir: t.TempDir(), Options: opts,
+					ChildEnv: []string{"claude_code_use_bedrock=from-task", "CLAUDE_CODE_USE_FOUNDRY=from-task", "CLAUDE_CODE_OAUTH_TOKEN=from-task", "ANTHROPIC_API_KEY=from-task"},
+				}, func(e Event) {
+					if e.Kind == EventInfo && strings.HasPrefix(e.Text, "provider:") {
+						providerInfo = append(providerInfo, e.Text)
+					}
+				})
+				wantInfo := []string{"provider: " + tc.target + ", declared in backends.json"}
+				if !opts.AllowDangerous && (tc.target == "bedrock" || tc.target == "foundry") {
+					wantInfo = append(wantInfo, "provider: "+tc.target+" under the guard cannot read the cloud CLI's login files; it signs in only through an instance or managed role, or with --allow-dangerous")
+				}
+				if res.Status != StatusOK || res.Provider != tc.target || !slices.Equal(providerInfo, wantInfo) {
+					t.Fatalf("inherit=%v lifted=%v: status %s, error %q, provider %q, info %q", opts.InheritEnv, opts.AllowDangerous, res.Status, res.Error, res.Provider, providerInfo)
+				}
+				got := map[string]string{}
+				for _, kv := range strings.Split(res.Final, ";") {
+					k, v, _ := strings.Cut(kv, "=")
+					got[k] = v
+				}
+				for _, key := range names {
+					want := "from-caller"
+					if strings.HasSuffix(key, "_BASE_URL") {
+						want = "https://provider.example:8443/v1/@endpoint"
+					}
+					if !opts.AllowDangerous && (key == "AWS_CONFIG_FILE" || key == "AWS_SHARED_CREDENTIALS_FILE") {
+						if got[key] == "" || got[key] == want {
+							t.Errorf("guard did not redirect %s", key)
+						}
+					} else if got[key] != want {
+						t.Errorf("inherit=%v lifted=%v: wrong value for %s", opts.InheritEnv, opts.AllowDangerous, key)
+					}
+				}
+				for _, key := range switches {
+					want := ""
+					if key == tc.selected {
+						want = "1"
+					}
+					if got[key] != want {
+						t.Errorf("inherit=%v lifted=%v: wrong switch %s", opts.InheritEnv, opts.AllowDangerous, key)
+					}
+				}
+				for i, key := range secrets {
+					want := ""
+					// Other secrets pass only when both the guard and the allowlist are off.
+					if opts.AllowDangerous && opts.InheritEnv && i < 2 {
+						want = "from-caller"
+					}
+					if got[key] != want {
+						t.Errorf("inherit=%v lifted=%v: wrong value for %s", opts.InheritEnv, opts.AllowDangerous, key)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDeclaredClaudeProviderDropsInvalidBaseURLs(t *testing.T) {
+	for _, provider := range claudeProviders {
+		for _, name := range provider.names {
+			if !strings.HasSuffix(name, "_BASE_URL") {
+				continue
+			}
+			for _, value := range []string{"https://%zz/v1", "ftp://provider.example/v1", "https:///v1"} {
+				for _, kv := range provider.apply([]string{name + "=" + value}) {
+					if strings.HasPrefix(kv, name+"=") {
+						t.Errorf("%s kept invalid URL %q", name, value)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestDefaultClaudeProviderKeepsLegacyChildEnvironment(t *testing.T) {
+	if os.Getenv("HRN_CLI_HELPER") != "env-all" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestDefaultClaudeProviderKeepsLegacyChildEnvironment$")
+		tmp := t.TempDir()
+		cmd.Env = []string{"HRN_CLI_HELPER=env-all", "AWS_PROFILE=unlisted-profile", "CLAUDE_CODE_OAUTH_TOKEN=plan-login",
+			"TMPDIR=" + tmp, "TEMP=" + tmp, "TMP=" + tmp}
+		if runtime.GOOS == "windows" {
+			cmd.Env = append(cmd.Env, "SystemRoot="+os.Getenv("SystemRoot"))
+		}
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("controlled environment: %v\n%s", err, out)
+		}
+		return
+	}
+	t.Setenv("PATH", t.TempDir())
+	b := NewClaudeBackend()
+	b.candidates = func() []string { return []string{os.Args[0]} }
+	b.args = helperCLI(nil).args
+	dir := t.TempDir()
+	run := func(target string, opts Options) []string {
+		b.ProviderTarget = target
+		res := b.Run(context.Background(), Task{Prompt: "go", Dir: dir, Options: opts}, func(e Event) {
+			if e.Kind == EventInfo && strings.HasPrefix(e.Text, "provider:") {
+				t.Error("a plan run emitted a provider event")
+			}
+		})
+		var env []string
+		if res.Status != StatusOK || res.Provider != "" {
+			t.Fatalf("target %q: status %s, provider %q, error %q", target, res.Status, res.Provider, res.Error)
+		}
+		if err := json.Unmarshal([]byte(res.Final), &env); err != nil {
+			t.Fatal(err)
+		}
+		if !opts.AllowDangerous {
+			for _, kv := range env {
+				if value, ok := strings.CutPrefix(kv, "DOCKER_CONFIG="); ok {
+					guardDir := filepath.Dir(value)
+					for i, entry := range env {
+						env[i] = strings.ReplaceAll(entry, guardDir, "<guard>")
+					}
+					break
+				}
+			}
+		}
+		return env
+	}
+	for _, opts := range []Options{{}, {InheritEnv: true}, {AllowDangerous: true}, {AllowDangerous: true, InheritEnv: true}} {
+		legacy, plan := run("", opts), run("plan", opts)
+		if !sameSet(legacy, plan) {
+			t.Errorf("inherit=%v lifted=%v: explicit plan differs from the default child environment", opts.InheritEnv, opts.AllowDangerous)
+		}
+		if opts.AllowDangerous && !opts.InheritEnv {
+			var names []string
+			for _, kv := range legacy {
+				name, _, _ := strings.Cut(kv, "=")
+				names = append(names, strings.ToUpper(name))
+			}
+			want := []string{"HRN_CLI_HELPER", "HRN_HOME", "CLAUDE_CODE_OAUTH_TOKEN", "PATH", "TMPDIR", "TEMP", "TMP"}
+			if runtime.GOOS == "windows" {
+				want = append(want, "SYSTEMROOT")
+			}
+			if !sameSet(names, want) {
+				t.Errorf("legacy environment names: got %v, want %v", names, want)
+			}
+		}
+	}
 }

@@ -340,3 +340,57 @@ func TestBackendsSetsShowsAndResetsTheLocalAPI(t *testing.T) {
 		t.Fatalf("reset: %+v %v", p, err)
 	}
 }
+
+func TestBackendsSetsListsAndClearsProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	off := false
+	if err := prefs.Save(home, prefs.Prefs{WorkMapGitHub: &off}); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) string {
+		t.Helper()
+		out, err := captureStdout(t, func() error { return cmdBackends(args) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	set := []string{"set", "--only", "claude", "--billing", "metered", "--provider", "claude=bedrock"}
+	for _, clear := range [][]string{{"set", "--only", "claude", "--billing", "metered"}, {"reset"}} {
+		if out := run(set...); !strings.Contains(out, "(provider: bedrock)") {
+			t.Fatalf("set listing: %q", out)
+		}
+		if out := run(); !strings.Contains(out, "(provider: bedrock)") {
+			t.Fatalf("saved listing: %q", out)
+		}
+		before, err := prefs.Raw(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = cmdBackends([]string{"set", "--only", "claude", "--provider", "claude=bedrock"})
+		if err == nil || err.Error() != "providers: claude target bedrock bills per token and needs billing metered" {
+			t.Fatalf("want billing validation error, got %v", err)
+		}
+		for _, provider := range []string{"", "claude", "codex=plan", "claude=unknown"} {
+			if err := cmdBackends([]string{"set", "--only", "claude", "--billing", "metered", "--provider", provider}); err == nil {
+				t.Errorf("accepted --provider %q", provider)
+			}
+		}
+		if after, err := prefs.Raw(home); err != nil || string(after) != string(before) {
+			t.Fatalf("invalid set changed preferences: %s, %v", after, err)
+		}
+		if out := run(clear...); strings.Contains(out, "(provider:") {
+			t.Fatalf("cleared listing: %q", out)
+		}
+		if p, err := prefs.Load(home); err != nil || p.WorkMapGitHub == nil {
+			t.Fatalf("clear lost work map setting: %+v, %v", p, err)
+		}
+		if raw, err := prefs.Raw(home); err != nil || strings.Contains(string(raw), "providers") {
+			t.Fatalf("clear left providers in preferences: %s, %v", raw, err)
+		}
+	}
+	if out := run("set", "--only", "claude", "--provider", "claude=plan"); strings.Contains(out, "(provider:") {
+		t.Fatalf("plan listing: %q", out)
+	}
+}

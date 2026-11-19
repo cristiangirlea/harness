@@ -17,21 +17,104 @@ func TestHelperClaudeKeySource(t *testing.T) {
 	if source == "" {
 		return
 	}
+	if source == "empty" {
+		os.Exit(0)
+	}
+	if source == "crash" {
+		fmt.Fprintln(os.Stderr, "boom: settings could not be read")
+		os.Exit(3)
+	}
+	if source == "helper-then-none" {
+		fmt.Println(`{"type":"system","subtype":"init","apiKeySource":"apiKeyHelper"}`)
+		source = "wait-none"
+	}
 	if source == "second" {
 		fmt.Println(`{"type":"system","subtype":"init","apiKeySource":"none"}`)
 		source = "apiKeyHelper"
 	}
-	init := `{"type":"system","subtype":"init"}`
-	if source != "missing" {
-		init = fmt.Sprintf(`{"type":"system","subtype":"init","apiKeySource":%q}`, source)
+	const answer = `{"type":"assistant","message":{"content":[{"type":"text","text":"answer"}]}}`
+	block := source != "none" && source != "missing"
+	switch source {
+	case "wait-none":
+		source, block = "none", true
+	case "fast-helper":
+		source, block = "apiKeyHelper", false
 	}
-	fmt.Println(init)
-	if source != "none" && source != "missing" {
+	switch source {
+	case "assistant", "wait-assistant":
+		fmt.Println(answer)
+		block = source == "wait-assistant"
+	case "missing":
+		fmt.Println(`{"type":"system","subtype":"init"}`)
+	default:
+		fmt.Printf("{\"type\":\"system\",\"subtype\":\"init\",\"apiKeySource\":%q}\n", source)
+		if source == "apiKeyHelper" && !block {
+			fmt.Println(answer)
+		}
+	}
+	if block {
 		time.Sleep(5 * time.Second)
 		fmt.Println(`{"type":"assistant","message":{"content":[{"type":"text","text":"paid turn"}]}}`)
 	}
 	fmt.Println(`{"type":"result","subtype":"success","result":"done"}`)
 	os.Exit(0)
+}
+
+func TestClaudeProviderChecksInitKeySource(t *testing.T) {
+	const refusal = "provider gateway: the claude CLI has no key helper configured, so it would send its plan login to the gateway; set apiKeyHelper in the CLI's settings"
+	for _, tc := range []struct {
+		target, source string
+		refuse         bool
+		wantText       []string
+	}{
+		{"gateway", "wait-none", true, nil},
+		{"gateway", "missing", true, nil},
+		{"gateway", "ANTHROPIC_API_KEY", true, nil},
+		{"gateway", "oauth", true, nil},
+		{"gateway", "unknown", true, nil},
+		{"gateway", "wait-assistant", true, nil},
+		{"gateway", "empty", true, nil},
+		{"gateway", "helper-then-none", true, nil},
+		{"gateway", "fast-helper", false, []string{"answer"}},
+		{"bedrock", "none", false, nil},
+		{"bedrock", "assistant", false, []string{"answer"}},
+	} {
+		t.Run(tc.target+"/"+tc.source, func(t *testing.T) {
+			t.Setenv("HRN_CLAUDE_KEY_SOURCE_TEST", tc.source)
+			b := NewClaudeBackend()
+			b.ProviderTarget = tc.target
+			b.candidates = func() []string { return []string{os.Args[0]} }
+			t.Setenv("PATH", t.TempDir())
+			b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperClaudeKeySource$", "--"} }
+			task := Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Timeout: Duration(2 * time.Second)}}
+			var text []string
+			res := b.Run(context.Background(), task, func(e Event) {
+				if e.Kind == EventText {
+					text = append(text, e.Text)
+				}
+			})
+			if tc.refuse {
+				if res.Status != StatusError || res.Error != refusal || len(text) != 0 || res.Final != "" {
+					t.Fatalf("want the CLI run refused before using output: status %s, error %q, text %q, final %q", res.Status, res.Error, text, res.Final)
+				}
+			} else if res.Status != StatusOK || res.Final != "done" || !slices.Equal(text, tc.wantText) {
+				t.Fatalf("want the run to finish with text %q: status %s, error %q, text %q, final %q", tc.wantText, res.Status, res.Error, text, res.Final)
+			}
+		})
+	}
+}
+
+func TestClaudeGatewayReportsTheCLIsOwnErrorBeforeTheRefusal(t *testing.T) {
+	t.Setenv("HRN_CLAUDE_KEY_SOURCE_TEST", "crash")
+	b := NewClaudeBackend()
+	b.ProviderTarget = "gateway"
+	b.candidates = func() []string { return []string{os.Args[0]} }
+	t.Setenv("PATH", t.TempDir())
+	b.args = func(Task, string) []string { return []string{"-test.run=^TestHelperClaudeKeySource$", "--"} }
+	res := b.Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Timeout: Duration(20 * time.Second)}}, func(Event) {})
+	if res.Status != StatusError || !strings.Contains(res.Error, "boom: settings could not be read") {
+		t.Fatalf("want the CLI's own error: status %s, error %q", res.Status, res.Error)
+	}
 }
 
 func TestClaudeRefusesPerTokenBillingAtInit(t *testing.T) {

@@ -135,13 +135,26 @@ func localAPI(p prefs.Prefs) (string, error) {
 	return p.LocalAPI, nil
 }
 
-// Backend applies the opted-in local endpoint or metered ceiling to api.
+// Backend applies the declared claude provider or the api endpoint and ceiling.
 func Backend(name string) (agent.Backend, error) {
 	b, err := agent.Get(name)
-	if err != nil || name != "api" {
+	if err != nil || (name != "api" && name != "claude") {
 		return b, err
 	}
 	p, err := resolve.BackendPreferences(runlog.Home())
+	if name == "claude" {
+		if err != nil {
+			return nil, err
+		}
+		if cli, ok := b.(*agent.CLIBackend); ok {
+			if target := p.ProviderTarget(name); target != "" {
+				configured := *cli
+				configured.ProviderTarget = target
+				return &configured, nil
+			}
+		}
+		return b, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("local api: %w", err)
 	}

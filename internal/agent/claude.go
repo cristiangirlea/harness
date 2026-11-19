@@ -16,6 +16,7 @@ import (
 )
 
 const perTokenRefusal = "claude would bill per token"
+const gatewayRefusal = "provider gateway: the claude CLI has no key helper configured, so it would send its plan login to the gateway; set apiKeyHelper in the CLI's settings"
 
 const appendSystemPromptFlag = "--append-system-prompt"
 
@@ -88,7 +89,7 @@ func NewClaudeBackend() *CLIBackend {
 			return "gate: Bash and PowerShell commands run through " + gate + "; MCP servers' tools are not routed"
 		},
 		stopWhen: func(r *Result) bool {
-			return strings.HasPrefix(r.Error, perTokenRefusal) || strings.HasPrefix(r.Error, gateUnrouted)
+			return strings.HasPrefix(r.Error, perTokenRefusal) || r.Error == gatewayRefusal || strings.HasPrefix(r.Error, gateUnrouted)
 		},
 		forks:            true,
 		mapsEffort:       true,
@@ -193,19 +194,16 @@ type claudeLine struct {
 func newClaudeParse() func([]byte, func(Event), *Result) bool {
 	m := &claudeMessage{seen: map[string]bool{}, tools: map[string]string{}}
 	return func(line []byte, emit func(Event), res *Result) bool {
-		if line == nil {
-			m.flush(emit)
-			return false
-		}
 		return parseClaudeLine(line, emit, res, m)
 	}
 }
 
 type claudeMessage struct {
-	id      string
-	pending *Event
-	seen    map[string]bool
-	tools   map[string]string
+	id               string
+	pending          *Event
+	seen             map[string]bool
+	tools            map[string]string
+	gatewayConfirmed bool
 }
 
 func (m *claudeMessage) flush(emit func(Event)) {
@@ -221,9 +219,30 @@ func parseClaudeStream(line []byte, emit func(Event), res *Result) bool {
 
 func parseClaudeLine(line []byte, emit func(Event), res *Result, m *claudeMessage) bool {
 	var l claudeLine
-	// Permission-denied lines may mistype message; keep other decoded fields.
-	var mistyped *json.UnmarshalTypeError
-	if err := json.Unmarshal(line, &l); (err != nil && !errors.As(err, &mistyped)) || l.Type == "" {
+	if line != nil {
+		// Permission-denied lines may mistype message; keep other decoded fields.
+		var mistyped *json.UnmarshalTypeError
+		if err := json.Unmarshal(line, &l); (err != nil && !errors.As(err, &mistyped)) || l.Type == "" {
+			return false
+		}
+	}
+	if res.Provider == "gateway" {
+		init := l.Type == "system" && l.Subtype == "init"
+		if init || m == nil || !m.gatewayConfirmed {
+			if !init || l.APIKeySource != "apiKeyHelper" {
+				res.Status = StatusError
+				res.Error = gatewayRefusal
+				return line != nil
+			}
+			if m != nil {
+				m.gatewayConfirmed = true
+			}
+		}
+	}
+	if line == nil {
+		if m != nil {
+			m.flush(emit)
+		}
 		return false
 	}
 	mainLoop := l.Type == "assistant" && l.ParentToolUseID == nil
@@ -236,14 +255,20 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, m *claudeMessag
 	now := time.Now()
 	switch l.Type {
 	case "system":
-		if l.Subtype == "init" && l.APIKeySource != "" && l.APIKeySource != "none" {
-			res.Status = StatusError
-			res.Error = perTokenRefusal + " (apiKeySource " + strconv.Quote(l.APIKeySource) + "): refused; hrn runs claude on the plan login only"
-			return true
-		}
-		if l.Subtype == "init" && l.Model != "" {
-			res.Model = l.Model
-			res.ModelReported = true
+		if l.Subtype == "init" {
+			switch res.Provider {
+			case "bedrock", "vertex", "foundry", "gateway":
+			default:
+				if l.APIKeySource != "" && l.APIKeySource != "none" {
+					res.Status = StatusError
+					res.Error = perTokenRefusal + " (apiKeySource " + strconv.Quote(l.APIKeySource) + "): refused; hrn runs claude on the plan login only"
+					return true
+				}
+			}
+			if l.Model != "" {
+				res.Model = l.Model
+				res.ModelReported = true
+			}
 		}
 		if l.Subtype == "compact_boundary" {
 			emit(Event{Time: now, Kind: EventCompaction, Text: l.CompactMetadata.Trigger,
