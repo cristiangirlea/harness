@@ -53,6 +53,13 @@ func run() error {
 	if len(operator) < 32 || len(scaler) < 32 || operator == scaler {
 		return errors.New("independent operator and scaler tokens of at least 32 characters are required")
 	}
+	metrics, err := platform.SecretEnv("HRN_METRICS_TOKEN")
+	if err != nil {
+		return err
+	}
+	if metrics != "" && (len(metrics) < 32 || metrics == operator || metrics == scaler) {
+		return errors.New("HRN_METRICS_TOKEN must be at least 32 characters and differ from the operator and scaler tokens")
+	}
 	address := os.Getenv("HRN_LISTEN")
 	if address == "" {
 		address = "127.0.0.1:8088"
@@ -80,7 +87,7 @@ func run() error {
 	}
 	defer store.Close()
 	server := &http.Server{Addr: address, Handler: (&platform.HTTPServer{
-		Store: store, OperatorToken: operator, ScalerToken: scaler, OIDC: oidc, MaxCostUSDPerJob: maxCost, RequireTenantBudget: budgetRequired,
+		Store: store, OperatorToken: operator, ScalerToken: scaler, MetricsToken: metrics, OIDC: oidc, MaxCostUSDPerJob: maxCost, RequireTenantBudget: budgetRequired,
 	}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second, MaxHeaderBytes: 16 * 1024}
 	go func() {

@@ -24,11 +24,18 @@ type HTTPServer struct {
 	Store                *Store
 	OperatorToken        string
 	ScalerToken          string
+	MetricsToken         string
 	OIDC                 *OIDCVerifier
 	MaxCostUSDPerJob     float64
 	RequireTenantBudget  bool
 	submissionAuthorized func(context.Context, string, string) (bool, error)
+	tenantAuthorized     func(context.Context, string, string) (bool, error)
+	submitJob            func(context.Context, Submission, bool) (Job, bool, error)
 	workerAuthorized     func(context.Context, string, string) (bool, error)
+	readMetrics          func(context.Context) (StoreMetrics, error)
+	metricsNow           func() time.Time
+	metricsCache         metricsCache
+	counters             processCounters
 	eventStreams         eventStreams
 	eventStreamDuration  time.Duration // Zero uses the production maximum.
 }
@@ -70,6 +77,7 @@ func (h *HTTPServer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	h.knowledgeRoutes(mux)
 	mux.HandleFunc("GET /healthz", h.health)
+	mux.HandleFunc("GET /metrics", h.metrics)
 	mux.HandleFunc("POST /v1/tenants", h.tenants)
 	mux.HandleFunc("PUT /v1/tenants/{tenant}/budget", h.setTenantBudget)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/budget", h.tenantBudget)
@@ -85,7 +93,7 @@ func (h *HTTPServer) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/jobs/{job}/finish", h.finish)
 	mux.HandleFunc("GET /internal/projects/{project}/jobs/{job}/checkpoint", h.latestCheckpoint)
 	mux.HandleFunc("GET /internal/scaling/projects/{project}", h.scaling)
-	return mux
+	return h.countRequests(mux)
 }
 
 func token(r *http.Request) string {
@@ -130,7 +138,11 @@ func (h *HTTPServer) tenantIdentity(w http.ResponseWriter, r *http.Request, id s
 	if allowOperator && sameToken(token(r), h.OperatorToken) {
 		return Identity{}, true
 	}
-	allowed, err := h.Store.TenantAuthorized(r.Context(), id, token(r))
+	authorize := h.tenantAuthorized
+	if authorize == nil {
+		authorize = h.Store.TenantAuthorized
+	}
+	allowed, err := authorize(r.Context(), id, token(r))
 	if err != nil {
 		failure(w, 500, "storage_error", "authorization storage unavailable")
 		return Identity{}, false
@@ -156,8 +168,15 @@ func (h *HTTPServer) signedToken(candidate string) bool {
 
 func (h *HTTPServer) signedIdentity(r *http.Request) Identity {
 	if candidate := token(r); h.signedToken(candidate) {
-		if identity, err := h.OIDC.Verify(r.Context(), candidate); err == nil {
+		identity, err := h.OIDC.Verify(r.Context(), candidate)
+		switch {
+		case err == nil:
+			h.counters.oidcAccepted.Add(1)
 			return identity
+		case errors.Is(err, ErrOIDCUnavailable):
+			h.counters.oidcUnavailable.Add(1)
+		default:
+			h.counters.oidcRefused.Add(1)
 		}
 	}
 	return Identity{}
@@ -426,13 +445,17 @@ func (h *HTTPServer) submit(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !existing {
-			invalid(w, err)
+			h.submissionRefused(w, err)
 			return
 		}
 	}
-	job, reused, err := h.Store.submit(r.Context(), input, h.RequireTenantBudget)
+	submit := h.submitJob
+	if submit == nil {
+		submit = h.Store.submit
+	}
+	job, reused, err := submit(r.Context(), input, h.RequireTenantBudget)
 	if err != nil {
-		invalid(w, err)
+		h.submissionRefused(w, err)
 		return
 	}
 	code := 201

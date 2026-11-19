@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -330,6 +331,59 @@ func TestHTTPClientDisconnectControlRestartAndWorkerCompletion(t *testing.T) {
 	streamResp.Body.Close()
 	if err != nil || !strings.HasPrefix(line, "id: ") {
 		t.Fatalf("SSE event: %q %v", line, err)
+	}
+	recorded := httptest.NewRecorder()
+	handler.ServeHTTP(recorded, streamReq.Clone(context.Background()))
+	if recorded.Code != 200 || !recorded.Flushed {
+		t.Fatalf("wrapped event stream returned %d, flushed = %t", recorded.Code, recorded.Flushed)
+	}
+}
+
+func TestStoreMetrics(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	empty, err := store.Metrics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.OldestQueuedSeconds != 0 {
+		t.Fatalf("empty queue age = %v, want 0", empty.OldestQueuedSeconds)
+	}
+	project, _ := testProject(t, store)
+	if _, _, err := store.CreateTenant(ctx, "metrics-tenant"); err != nil {
+		t.Fatal(err)
+	}
+	for i, state := range []State{Queued, Queued, Succeeded, RecoveryRequired} {
+		job, _, err := store.Submit(ctx, testSubmission(project, "", "inspect"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case i == 0:
+			if _, err := store.db.Exec(ctx, "UPDATE jobs SET created_at=now()-interval '90 seconds' WHERE id=$1", job.ID); err != nil {
+				t.Fatal(err)
+			}
+		case state != Queued:
+			if _, err := store.db.Exec(ctx, "UPDATE jobs SET state=$2, created_at=now()-interval '1 hour' WHERE id=$1", job.ID, state); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	got, err := store.Metrics(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int64{"admitted": 0, "canceled": 0, "failed": 0, "queued": 2,
+		"recovery_required": 1, "running": 0, "succeeded": 1, "waiting_approval": 0}
+	if !maps.Equal(got.Jobs, want) {
+		t.Errorf("job counts = %v, want %v", got.Jobs, want)
+	}
+	if got.OldestQueuedSeconds < 89 || got.OldestQueuedSeconds > 100 {
+		t.Errorf("oldest queued age = %v, want about 90 seconds", got.OldestQueuedSeconds)
+	}
+	if got.Tenants != 2 || got.Projects != 1 || got.SchemaVersion != 7 {
+		t.Errorf("tenants = %d, projects = %d, schema = %d, want 2, 1, 7",
+			got.Tenants, got.Projects, got.SchemaVersion)
 	}
 }
 

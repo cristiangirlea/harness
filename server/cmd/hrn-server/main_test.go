@@ -195,6 +195,42 @@ func TestServeChecksScalerTokenFromFileBeforeOpeningDatabase(t *testing.T) {
 	}
 }
 
+func TestServeChecksMetricsTokenBeforeOpeningDatabase(t *testing.T) {
+	args := os.Args
+	os.Args = []string{"hrn-server", "serve"}
+	t.Cleanup(func() { os.Args = args })
+	operator, scaler := strings.Repeat("o", 32), strings.Repeat("s", 32)
+	t.Setenv("HRN_DATABASE_URL", "://invalid")
+	t.Setenv("HRN_DATABASE_URL_FILE", "")
+	t.Setenv("HRN_OPERATOR_TOKEN", operator)
+	t.Setenv("HRN_OPERATOR_TOKEN_FILE", "")
+	t.Setenv("HRN_SCALER_TOKEN", scaler)
+	t.Setenv("HRN_SCALER_TOKEN_FILE", "")
+	t.Setenv("HRN_LISTEN", ":8080")
+	t.Setenv("HRN_TLS_CERT_FILE", "")
+	t.Setenv("HRN_TLS_KEY_FILE", "")
+	path := filepath.Join(t.TempDir(), "metrics-token")
+	if err := os.WriteFile(path, []byte(strings.Repeat("m", 32)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, token, file, want string }{
+		{"short", "short", "", "HRN_METRICS_TOKEN"},
+		{"operator", operator, "", "HRN_METRICS_TOKEN"},
+		{"scaler", scaler, "", "HRN_METRICS_TOKEN"},
+		{"unset", "", "", "HRN_LISTEN"},
+		{"file", "", path, "HRN_LISTEN"},
+		{"both", strings.Repeat("m", 32), path, "HRN_METRICS_TOKEN_FILE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_METRICS_TOKEN", tc.token)
+			t.Setenv("HRN_METRICS_TOKEN_FILE", tc.file)
+			if err := run(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run() = %v, want %s configuration error", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestMaxCostPerJobParsesThePerJobLimit(t *testing.T) {
 	if limit, err := maxCostPerJob(""); err != nil || limit != 0 {
 		t.Fatalf("unset = %v, %v; want no limit", limit, err)
