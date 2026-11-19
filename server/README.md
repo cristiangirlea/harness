@@ -172,6 +172,32 @@ terminal job with no events after the cursor closes immediately. States such as
 30 minutes; reconnect with the last received cursor to continue without replaying
 earlier events.
 
+## Metrics
+
+`GET /metrics` serves plain text metrics to callers with the optional metrics
+bearer token or an operator bearer token, including a signed operator token
+when OpenID Connect is configured. Set `HRN_METRICS_TOKEN` or
+`HRN_METRICS_TOKEN_FILE` to enable the metrics-only credential. It must have at
+least 32 characters and differ from both the operator and scaler tokens.
+
+- `hrn_jobs{state}` counts jobs in each of the eight states, including empty states.
+- `hrn_jobs_oldest_queued_seconds` gives the age of the oldest queued job in seconds, or zero for an empty queue.
+- `hrn_tenants` counts registered tenants.
+- `hrn_projects` counts registered projects.
+- `hrn_schema_version` reports the latest applied database schema version.
+- `hrn_metrics_database_up` is one when database metrics are available and zero when the read fails.
+- `hrn_http_requests_total{route,method,code}` counts completed HTTP requests by registered route pattern, method, and status.
+- `hrn_submissions_refused_total{reason}` counts submissions refused for `cost_limit` or `tenant_budget`.
+- `hrn_oidc_tokens_total{result}` counts signed-token verifications as `accepted`, `refused`, or `unavailable`.
+- `hrn_event_streams_open` counts currently open event streams.
+- `hrn_build_info{version}` identifies the control service version with a value of one.
+
+Labels never contain a tenant or an actual request path. The service caches
+successful database reads for five seconds. If a database read fails, the
+endpoint still returns HTTP 200 with process metrics and
+`hrn_metrics_database_up 0`. It omits the other database metrics and retries
+the read on the next scrape.
+
 ## Schema and recovery
 
 Migration 001 creates the control schema. Migration 002 snapshots the project
