@@ -43,7 +43,7 @@ while IFS= read -r -d '' file; do
   [[ $file != scripts/testdata/* ]] || continue
   name=${file#scripts/}
   if [[ $name == .* || $name == */.* || $name == */*/* ]] ||
-    [[ $name == */* && $name != *.go ]] || [[ $name != */* && ! $name =~ \.(sh|go|txt)$ ]]; then
+    [[ $name == */* && $name != *.go ]] || [[ $name != */* && ! $name =~ \.(sh|ps1|go|txt)$ ]]; then
     error "unsupported file: $file"; status=1
   fi
 done < <(find scripts -type f -print0)

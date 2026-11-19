@@ -47,7 +47,7 @@ Nested Go files (`scripts/*/*.go`) are hashed, but their examples run through
 their entry script `scripts/<dir>.sh` when it exists, whose own example must run
 `go test` on that directory. Without an entry script, the verifier runs each example itself. Failed examples are reported, omitted
 from the index and cause a non-zero exit. Header errors also fail, and so does
-any other file: in `scripts/` only `.sh`, `.go` and `.txt` data (such as the
+any other file: in `scripts/` only `.sh`, `.ps1`, `.go` and `.txt` data (such as the
 comment baseline) are allowed, one directory down only `.go`;
 `scripts/testdata/` is not checked. Shell scripts are mode 100755 but are
 always run through `bash`.

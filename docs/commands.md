@@ -269,6 +269,33 @@ lines: hrn sends `hello` first, then accepts one `start`, streams complete event
 and ends with `result`. Closing stdin or interrupting hrn cancels the run. See
 [the v1 protocol](exec-protocol.md) for messages, capabilities, limits and exit codes.
 
+### Installing from a release
+
+Run this command on Linux or macOS.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cristiangirlea/harness/main/scripts/install.sh | sh
+```
+
+Run this command in PowerShell on Windows.
+
+```powershell
+irm https://raw.githubusercontent.com/cristiangirlea/harness/main/scripts/install.ps1 | iex
+```
+
+The installers fetch the newest release and check the download against its
+`SHA256SUMS` before installing. Set `HRN_INSTALL_VERSION` to a tag such as
+`v0.2.0` to pin a release. Set `HRN_INSTALL_DIR` to choose another directory.
+The defaults are `$HOME/.local/bin/hrn` on Linux and macOS and
+`$env:LOCALAPPDATA\hrn\hrn.exe` on Windows. If the directory is outside
+`PATH`, the installer prints how to add it.
+
+`HRN_INSTALL_API` and `HRN_INSTALL_ARCH` are test overrides.
+`HRN_INSTALL_OS` is a test override for the shell installer.
+`HRN_INSTALL_API` accepts HTTPS or HTTP on a loopback IP literal.
+
+These need a published release; until one exists, install with `go install`.
+
 ### hrn update
 
 `hrn update` moves every hrn on this computer to another build in one step, the routine
