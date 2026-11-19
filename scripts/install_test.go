@@ -3,7 +3,7 @@
 // effects: read, exec, network
 // parameters: none
 // example: go test -count=1 ./scripts -run '^TestInstall$/./^invalid_api$'
-// hash: 74ad4188e4a169f47550e1bebb757855aabd276b26322ae14405f2c7df7143c0
+// hash: 6a98f4ff743ef976dab02cde89c437d1a253957689c3d36c75868f275dfd1e9f
 package main
 
 import (
@@ -406,7 +406,10 @@ func TestInstall(t *testing.T) {
 						defer cancel()
 						runArgs := args
 						if piped {
-							runArgs = []string{"-NoProfile", "-Command", `
+							// A caller's own script sets $PSCommandPath, which must not make the installer exit it.
+							caller := filepath.Join(home, "caller.ps1")
+							runArgs = []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-File", caller}
+							if err := os.WriteFile(caller, []byte(`
 if ($PSVersionTable.PSVersion.Major -eq 5) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls11
 }
@@ -418,7 +421,9 @@ if ($PSVersionTable.PSVersion.Major -eq 5 -and
     [Net.ServicePointManager]::SecurityProtocol -ne ([Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12)) {
     exit 98
 }
-exit $code`}
+exit $code`), 0o600); err != nil {
+								t.Fatal(err)
+							}
 						}
 						cmd := exec.CommandContext(ctx, shell, runArgs...)
 						cmd.Env = []string{"PATH=" + path, "HOME=" + home, "LOCALAPPDATA=" + home,
