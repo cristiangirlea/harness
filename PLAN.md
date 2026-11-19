@@ -287,6 +287,55 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-19: organisation and user layers for backend preferences (#938, PR #943). An
+  organisation file on the system volume (`/etc/hrn/backends.json`, or `ProgramData\hrn` on
+  Windows) sets preferences and can lock six groups; the merge runs where preferences are
+  resolved, so nothing written earlier or later widens a lock. Deviations from the first plan:
+  the project layer was split off (#941), since preferences are resolved by home directory in
+  about thirty places with no workspace; the Windows path comes from the system directory call,
+  because the folder lookup followed the environment in a fresh process; and the file must be
+  owned by an administrator account, a regular file with one name, checked on the handle it is
+  read from. A file of unknown origin stops runs instead of counting as no policy: a maintainer's
+  choice to confirm.
+- 2026-11-19: the control chart mounts a metrics token and admits a collector (#940, PR #942).
+  `secrets.metricsName` and `metrics.scrapeFrom`; the default render is pinned.
+- 2026-11-19: named accounts per CLI backend, used in order while the low ones are spared (#931,
+  PR #934). An account is a name and that CLI's own config home. A new run takes the first
+  account not at a remembered limit and not under `account_reserve_percent` in any known quota
+  window; limits are kept per account; a continued session stays on its account. The path is
+  never printed: the review found it in the watch action audit, which now stores names. Batch
+  tasks use the automatic choice. Known limits: the watch card shows backend-level quota only,
+  and `hrn exec` and `hrn feed` do not remember limits.
+- 2026-11-19: the bearer token test in `internal/update` names its error (#933, PR #939). It
+  failed once under load with no request recorded; the cause is unconfirmed and the issue stays
+  open. Test only.
+- 2026-11-19: a metrics endpoint for the control service (#932, PR #937). `GET /metrics` in the
+  text exposition format, standard library only; every label value is from a fixed set, so no
+  series names a tenant or a request path. The database read is shared by concurrent scrapes and
+  runs on its own bounded context.
+- 2026-11-19: the project worker chart can name a runtime class and require one (#935, PR #936).
+  The chart cannot check that a runtime class isolates anything, and the development worker is
+  still not an isolation boundary; the guide says so.
+- 2026-11-19: OpenID Connect sign-in for the control service's operator and tenant routes (#927,
+  PR #929). Signed tokens are verified with the standard library (`RS256` and `ES256` only, keys
+  from the issuer's published set, never from the token); static tokens stay for machines and
+  are the only credential on worker and scaler routes; job events carry who acted. The token's
+  type is not checked beyond issuer, audience and claims: use an audience issued only for this
+  service.
+- 2026-11-19: the provider the claude CLI runs on is declared in `backends.json` (#923, PR #928).
+  `plan`, `bedrock`, `vertex`, `foundry` or `gateway`; hrn sets the switch and passes the
+  target's non-secret settings. A gateway runs only when the CLI's first line confirms a key
+  helper, so the plan login on disk is not sent to it. The guard is unchanged, so a guarded
+  bedrock or foundry worker on a workstation signs in only through an instance or managed role;
+  whether a declared target may read the provider's profile settings is open (#930).
+- 2026-11-18: tenant spending budgets in the control service (#925, PR #926). A budget is a total
+  an operator raises, not a period. A job counts its reservation until it ends, then its known
+  spend, clamped to the reservation since the worker reports it. Admission locks the tenant row
+  in the transaction that inserts the job. Migration 007 upgrades a database that holds jobs.
+- 2026-11-18: the billing policy is a setting (#922, PR #924). `billing: "metered"` lets a
+  backend billed per token stand in at a usage limit; `billing_max_cost_usd` caps `api` runs,
+  and without it `api` is not an automatic partner. The default `plan` policy is unchanged. The
+  ceiling is an estimate checked between turns, and hrn cannot cap what an agent CLI spends.
 - 2026-11-16: a `hide` list keeps named files out of a task's worktree while its agent runs (#917,
   PR #918). `protect` caught an agent that changed the files its gates rely on; nothing stopped it
   reading them, and in hrn-evals 5 to 8 of twenty first attempts opened a hidden check file. Same
