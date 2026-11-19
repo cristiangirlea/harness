@@ -573,9 +573,14 @@ func TestRunOnANamedNearlySpentBackendWarnsAndStays(t *testing.T) {
 	nearlySpentCodex(t)
 	cmdRun([]string{"-b", "codex", "-C", t.TempDir(), "fix", "it"})
 	recs, _ := runlog.List(5)
-	first := recs[len(recs)-1]
+	var first runlog.Record
+	for _, r := range recs {
+		if r.Continues == "" {
+			first = r
+		}
+	}
 	if first.Backend != "codex" {
-		t.Fatalf("first run on %s, want codex as named", first.Backend)
+		t.Fatalf("first run on %q, want codex as named", first.Backend)
 	}
 	if !saidInfo(t, first.ID, "running on codex as named") {
 		t.Error("the run does not warn that codex is nearly spent")
@@ -597,9 +602,15 @@ func TestContinuingANearlySpentBackendGoesToTheOtherOne(t *testing.T) {
 	if code, err := cmdRun([]string{"--continue", rec.ID(), "again"}); code != 0 || err != nil {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
+	// Runs started in one second do not sort by start, so the follow-up is found by what it continues.
 	recs, _ := runlog.List(5)
-	follow := recs[0]
-	if follow.Backend != "claude" || follow.Continues != rec.ID() {
+	var follow runlog.Record
+	for _, r := range recs {
+		if r.Continues == rec.ID() {
+			follow = r
+		}
+	}
+	if follow.Backend != "claude" {
 		t.Fatalf("follow-up on %s continuing %q, want claude continuing %s", follow.Backend, follow.Continues, rec.ID())
 	}
 	if !saidInfo(t, follow.ID, "codex has 2.0% of its 5h window left") {

@@ -436,11 +436,11 @@ func when(t time.Time) string { return t.Local().Format("Jan 2 15:04") }
 
 // Pick returns backend unless it is limited or nearly spent and its partner is ready; bothOut means pick stays backend.
 func Pick(backend string, now time.Time, spent Spent) (pick, why string, bothOut bool) {
-	return pickFor(backend, now, spent, false)
+	return PickKeeping(backend, now, spent, "")
 }
 
-// A named backend that is nearly spent is only warned about: it still works, and was asked for.
-func pickFor(backend string, now time.Time, spent Spent, named bool) (pick, why string, bothOut bool) {
+// PickKeeping is Pick for work that a nearly spent plan must not move; keep says why ("as named"), and "" allows the move.
+func PickKeeping(backend string, now time.Time, spent Spent, keep string) (pick, why string, bothOut bool) {
 	p, _ := resolve.BackendPreferences(runlog.Home())
 	if gone := backendOut(p, backend, now, spent); gone != "" {
 		return pickPartner(p, backend, gone, now, spent)
@@ -449,8 +449,8 @@ func pickFor(backend string, now time.Time, spent Spent, named bool) (pick, why 
 	switch {
 	case low == "":
 		return backend, "", false
-	case named:
-		return backend, low + "; running on " + backend + " as named", false
+	case keep != "":
+		return backend, low + "; running on " + backend + " " + keep, false
 	}
 	other := Partner(backend, now, spent)
 	if other == "" || other == backend {
@@ -478,11 +478,13 @@ func quotaLow(p prefs.Prefs, backend string, now time.Time) string {
 		return ""
 	}
 	q := planQuota(backend, now)
+	// A reset further off than its window can last is a misread figure.
 	for _, w := range []struct {
 		label string
 		w     *quota.Window
-	}{{"5h", q.FiveHour}, {"weekly", q.Week}} {
-		if w.w == nil || !w.w.ResetsAt.After(now) || w.w.ResetsAt.After(now.Add(kernel.MaxLimitWindow)) {
+		span  time.Duration
+	}{{"5h", q.FiveHour, 6 * time.Hour}, {"weekly", q.Week, kernel.MaxLimitWindow}} {
+		if w.w == nil || !w.w.ResetsAt.After(now) || w.w.ResetsAt.After(now.Add(w.span)) {
 			continue
 		}
 		if w.w.Left < lowQuotaPercent {
@@ -510,6 +512,30 @@ func pickPartner(p prefs.Prefs, backend, gone string, now time.Time, spent Spent
 func Choose(backend, continueID string) (string, string) {
 	pick, why, _ := ChooseContinuation(Request{Backend: backend, RunID: continueID}, false, "")
 	return pick, why
+}
+
+// keep says why a nearly spent plan must not move this run, or "".
+func (req Request) keep() string {
+	if req.Named {
+		return "as named"
+	}
+	if req.RunID == "" || req.Retrieval == "off" {
+		return ""
+	}
+	chain, _, err := runlog.Chain(req.RunID)
+	if err != nil {
+		return ""
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		if chain[i].Result.Retrieval != nil {
+			return "to keep its retrieval pin"
+		}
+		// A fresh hand-over left the pins before it behind.
+		if chain[i].ContinueRoute == runlog.RouteFreshHandover {
+			break
+		}
+	}
+	return ""
 }
 
 // ChooseFor is Choose for a new run; named says the caller typed the backend, so a nearly spent plan only warns.
@@ -559,7 +585,7 @@ func ChooseContinuation(req Request, noSwitch bool, freshField string) (string, 
 		return req.Backend, why, nil
 	}
 	if !noSwitch && req.Account == "" {
-		pick, why, _ := pickFor(meant, now, nil, req.Named)
+		pick, why, _ := PickKeeping(meant, now, nil, req.keep())
 		if pick != meant {
 			return pick, why, nil
 		}

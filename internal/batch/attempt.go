@@ -289,7 +289,11 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			carry = nil
 		}
 		if !opts.NoSwitch {
-			pick, why, bothOut := followup.Pick(name, time.Now(), spent)
+			keep := ""
+			if retrievalOn(opts) {
+				keep = "to keep its retrieval pin"
+			}
+			pick, why, bothOut := followup.PickKeeping(name, time.Now(), spent, keep)
 			if bothOut {
 				outOfPlans = why
 				text := "skipping an attempt on " + name + ": " + why

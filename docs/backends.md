@@ -553,6 +553,11 @@ the message gives one. Then:
   last one a run reported, and the name is the caller's choice. The info event warns
   ("running on codex as named"). A remembered limit still moves a named backend, since
   that run would fail at once; `--no-switch` keeps either from moving it.
+  A batch's backends (`-b`, a spec's or task's `backend`, its retries) are not named in
+  this sense: an attempt moves as it would at a limit. A continuation or a batch with
+  retrieval on stays too, since a move would break its retrieval pin ("running on codex
+  to keep its retrieval pin"). A reset further off than its window can last (6 hours for
+  the 5h window, 8 days for the weekly one) is taken as a misread figure and ignored.
 - Under the plan policy, nothing moves automatically to `api`, which is billed per token, unless its endpoint is
   opted in as local (below). Without preferences, gemini, opencode and agy are not partners either.
   Under the plan policy, with a preference, the enabled installed plan backends stand in,

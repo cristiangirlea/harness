@@ -582,3 +582,40 @@ func TestRunToolWarnsAboutANamedNearlySpentBackend(t *testing.T) {
 		t.Error("the run does not warn that codex is nearly spent")
 	}
 }
+
+func TestRunToolContinuesOnANamedNearlySpentBackend(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	dir := filepath.Join(home, "sessions", "2026", "01", "01")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	line := fmt.Sprintf(`{"timestamp":%q,"payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":98,"window_minutes":300,"resets_at":%d}}}}`,
+		time.Now().Format(time.RFC3339), time.Now().Add(time.Hour).Unix())
+	if err := os.WriteFile(filepath.Join(dir, "rollout.jsonl"), []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(agent.Result{Backend: "codex", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	res := s.call(t, "run", fmt.Sprintf(`{"prompt":"again","backend":"codex","continue_run_id":%q}`, rec.ID()))
+	id, _ := res.StructuredContent.(map[string]any)["limited_run_id"].(string)
+	follow, _ := runlog.Load(id)
+	if follow.Backend != "codex" || follow.Continues != rec.ID() {
+		t.Fatalf("follow-up on %q continuing %q, want codex continuing %s: %s", follow.Backend, follow.Continues, rec.ID(), res.Text())
+	}
+	events, _ := runlog.Events(id)
+	said := false
+	for _, e := range events {
+		said = said || e.Kind == agent.EventInfo && strings.Contains(e.Text, "running on codex as named")
+	}
+	if !said {
+		t.Error("the follow-up does not warn that codex is nearly spent")
+	}
+}

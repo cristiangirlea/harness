@@ -221,3 +221,27 @@ func TestRetrievalBatchSkipsTheSwitchBeforeTheFirstAttempt(t *testing.T) {
 		t.Fatalf("reason = %q", tr.Error)
 	}
 }
+
+func TestRetrievalBatchStaysOnANearlySpentBackend(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	retrievalServer(t, nil)
+	nearlySpent(t, "CODEX_HOME")
+	codex, err := agent.Get("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Register(stub{"codex", func(_ context.Context, task agent.Task) agent.Result {
+		return agent.Result{Backend: "codex", Status: agent.StatusOK, Final: "finished"}
+	}})
+	t.Cleanup(func() { agent.Register(codex) })
+	opts := agent.Options{Model: "fixture", Retrieval: "required", RetrievalTenant: "t_fixture", RetrievalProject: "p_fixture", RetrievalRevision: strings.Repeat("a", 40)}
+	res, events := run(t, Spec{Dir: dir, Backend: "codex", Options: opts, Tasks: []Task{{ID: "pinned", Prompt: "answer"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 1 || tr.Attempts[0].Backend != "codex" {
+		t.Fatalf("task = %+v", tr)
+	}
+	if s := eventTexts(events, "info"); !strings.Contains(s, "to keep its retrieval pin") {
+		t.Errorf("info events = %q, want the warning", s)
+	}
+}

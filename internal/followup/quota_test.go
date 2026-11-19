@@ -1,6 +1,7 @@
 package followup
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/quota"
+	"github.com/cristiangirlea/harness/internal/retrieval"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -54,11 +56,12 @@ func TestPickMovesANearlySpentBackendToItsPartner(t *testing.T) {
 func TestPickIgnoresUnknownOrStaleQuota(t *testing.T) {
 	now := time.Now()
 	for name, q := range map[string]quota.Quota{
-		"unknown":       {},
-		"stale":         {FiveHour: window(0, now.Add(-time.Minute)), Week: window(1, now.Add(-time.Hour))},
-		"plenty":        {FiveHour: window(40, now.Add(time.Hour)), Week: window(5, now.Add(48*time.Hour))},
-		"implausible":   {Week: window(0, now.Add(kernel.MaxLimitWindow+time.Hour))},
-		"reset exactly": {FiveHour: window(0, now)},
+		"unknown":           {},
+		"stale":             {FiveHour: window(0, now.Add(-time.Minute)), Week: window(1, now.Add(-time.Hour))},
+		"plenty":            {FiveHour: window(40, now.Add(time.Hour)), Week: window(5, now.Add(48*time.Hour))},
+		"implausible":       {Week: window(0, now.Add(kernel.MaxLimitWindow+time.Hour))},
+		"reset exactly":     {FiveHour: window(0, now)},
+		"5h reset days off": {FiveHour: window(0, now.Add(7*time.Hour))},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("HRN_HOME", t.TempDir())
@@ -159,5 +162,38 @@ func TestAccountsKeepTheirOwnReserve(t *testing.T) {
 	fakeQuota(t, map[string]quota.Quota{"codex": {FiveHour: window(1, now.Add(time.Hour))}})
 	if pick, why, _ := Pick("codex", now, nil); pick != "codex" || why != "" {
 		t.Errorf("Pick = %q, %q; a backend with accounts chooses among them instead", pick, why)
+	}
+}
+
+func TestAContinuationKeepsItsRetrievalPinOverALowQuota(t *testing.T) {
+	for _, mode := range []string{"", "off"} {
+		t.Run(fmt.Sprintf("retrieval %q", mode), func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			standIn(t, true, true)
+			now := time.Now()
+			fakeQuota(t, map[string]quota.Quota{"codex": {FiveHour: window(2, now.Add(time.Hour))}})
+			rec, err := runlog.Create("codex", agent.Task{Prompt: "p", Dir: t.TempDir()}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := agent.Result{Backend: "codex", Status: agent.StatusOK,
+				Retrieval: &retrieval.Record{Mode: "required", Packet: &retrieval.Packet{VersionID: "kv-7"}}}
+			if err := rec.Close(res); err != nil {
+				t.Fatal(err)
+			}
+			pick, why, err := ChooseContinuation(Request{RunID: rec.ID(), Retrieval: mode}, false, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "off" {
+				if pick != "claude" {
+					t.Errorf("retrieval off: pick = %q, want claude", pick)
+				}
+				return
+			}
+			if pick != "" || !strings.Contains(why, "to keep its retrieval pin") {
+				t.Errorf("pinned: pick = %q, %q; want it left on codex with a warning", pick, why)
+			}
+		})
 	}
 }
