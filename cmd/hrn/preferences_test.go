@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
@@ -392,5 +393,60 @@ func TestBackendsSetsListsAndClearsProvider(t *testing.T) {
 	}
 	if out := run("set", "--only", "claude", "--provider", "claude=plan"); strings.Contains(out, "(provider:") {
 		t.Fatalf("plan listing: %q", out)
+	}
+}
+
+func TestBackendsAccountFlagsAndRunRefusal(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	orig, _ := agent.Get("claude")
+	agent.Register(recorder{name: "claude"})
+	t.Cleanup(func() { agent.Register(orig) })
+	home := t.TempDir()
+	for _, want := range []string{"has no named accounts", "unknown claude account"} {
+		if want == "unknown claude account" {
+			out, err := captureStdout(t, func() error {
+				return cmdBackends([]string{"set", "--only", "claude", "--account", "claude=team-a:" + home, "--account", "claude=team-b:" + home, "--account-reserve", "0"})
+			})
+			if err != nil || !strings.Contains(string(out), "    team-a: usage unknown\n    team-b: usage unknown\n") || strings.Contains(string(out), home) {
+				t.Fatalf("listing: %s, %v", out, err)
+			}
+			p, err := prefs.Load(runlog.Home())
+			if err != nil || p.Reserve() != 0 || len(p.AccountsFor("claude")) != 2 {
+				t.Fatalf("saved: %+v, %v", p, err)
+			}
+		}
+		code, err := cmdRun([]string{"--backend", "claude", "--account", "missing", "hello"})
+		if code != 2 || err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("run = %d, %v; want %s", code, err, want)
+		}
+	}
+
+	if err := limits.NoteAccount("claude", "team-b", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdBackends(nil) })
+	if err != nil || !strings.Contains(string(out), "    team-b: usage unknown, at its usage limit until ") || strings.Contains(string(out), home) {
+		t.Fatalf("limit listing: %s, %v", out, err)
+	}
+	account, backend, err := parseBackendAccount(`claude=team-a:C:\x`)
+	if err != nil || backend != "claude" || account.Name != "team-a" || account.Home != `C:\x` {
+		t.Fatalf("drive path: %+v, %s, %v", account, backend, err)
+	}
+	records, err := runlog.List(0)
+	if err != nil || len(records) != 0 {
+		t.Fatalf("recorded a refused run: %v, %v", records, err)
+	}
+	for _, clear := range [][]string{{"set", "--only", "claude"}, {"reset"}} {
+		set := []string{"set", "--only", "claude", "--account", "claude=team-a:" + home, "--account-reserve", "25"}
+		if _, err := captureStdout(t, func() error { return cmdBackends(set) }); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := captureStdout(t, func() error { return cmdBackends(clear) }); err != nil {
+			t.Fatal(err)
+		}
+		p, err := prefs.Load(runlog.Home())
+		if err != nil || len(p.Accounts) != 0 || p.AccountReservePercent != nil {
+			t.Fatalf("clear: %+v, %v", p, err)
+		}
 	}
 }

@@ -82,7 +82,7 @@ func NewCodexBackend() *CLIBackend {
 // codexReportModel takes the model from the session's rollout file: exec --json names none.
 // It also adds the tool calls the stream never showed, when the rollout's tool items match the stream's.
 func codexReportModel(t Task, started time.Time, res *Result, emit func(Event), streamed int) {
-	r := codexRollout(codexHomeDir(t.Dir), res.Session, started, time.Now())
+	r := codexRollout(codexHomeDir(t), res.Session, started, time.Now())
 	res.CLIVersion = r.version
 	if r.counted == streamed {
 		for _, e := range r.calls {

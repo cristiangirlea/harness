@@ -42,12 +42,12 @@ import (
 const usage = `hrn — personal agent harness
 
 Usage:
-  hrn run [flags] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
+  hrn run [flags] [--account NAME] <prompt...>     run a task (prompt from args, or stdin when omitted or "-")
   hrn feed -b BACKEND --task TEXT [flags]
                                  process JSONL items as parallel read-only runs
   hrn exec --protocol v1          run one recorded task over the supervisor JSONL protocol
   hrn backends                    show enabled backends, default, availability and limits
-  hrn backends set --only NAMES [--default NAME] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET]
+  hrn backends set --only NAMES [--default NAME] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET] [--account BACKEND=NAME:PATH]... [--account-reserve N]
                                   replace the backend preference (comma-separated names)
   hrn backends reset              remove the backend preference
   hrn remote submit|show|events|cancel [flags]
@@ -287,6 +287,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	fs.BoolVar(&jsonOut, "json", false, "")
 	fs.BoolVar(&thinking, "thinking", false, "")
+	account := fs.String("account", "", "named account for the selected backend")
 	continueID := fs.String("continue", "", "")
 	fresh := fs.Bool("fresh", false, "")
 	retrievalRefresh := fs.Bool("retrieval-refresh", false, "")
@@ -306,6 +307,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if set["account"] && *account == "" {
+		return 2, errors.New("run: --account wants an account name")
+	}
 	if set["purpose"] && !purpose.Valid(*declared) {
 		return 2, fmt.Errorf("run: --purpose %s: one of %s", *declared, strings.Join(purpose.Declarable(), ", "))
 	}
@@ -325,23 +329,23 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 
 	// Resolve replacement before continuation planning; the requested model belongs to the original backend.
 	var routed string
-	if !opts.NoSwitch && *continueID != "" {
-		meant := backend
-		if backend, routed = followup.Choose(backend, *continueID); backend != meant {
+	plan := followup.Plan{Account: *account}
+	if *continueID != "" {
+		req := followup.Request{RunID: *continueID, Backend: backend, Account: *account, Retrieval: opts.Retrieval, RetrievalRevision: opts.RetrievalRevision, RetrievalTenant: opts.RetrievalTenant, RetrievalProject: opts.RetrievalProject, RetrievalVersion: opts.RetrievalVersion, RetrievalRefresh: *retrievalRefresh, Fresh: *fresh, Resume: *resume || (set["fresh"] && !*fresh)}
+		chosen, reason, err := followup.ChooseContinuation(req, opts.NoSwitch, "--fresh")
+		if err != nil {
+			return 2, err
+		}
+		if chosen != backend {
 			opts.Model = ""
 		}
-	}
-
-	var plan followup.Plan
-	if *continueID != "" {
-		req := followup.Request{RunID: *continueID, Backend: backend, Retrieval: opts.Retrieval, RetrievalRevision: opts.RetrievalRevision, RetrievalTenant: opts.RetrievalTenant, RetrievalProject: opts.RetrievalProject, RetrievalVersion: opts.RetrievalVersion, RetrievalRefresh: *retrievalRefresh, Fresh: *fresh, Resume: *resume || (set["fresh"] && !*fresh)}
+		req.Backend, routed = chosen, reason
 		if set["C"] || set["dir"] {
 			req.Dir = dir
 		}
 		if set["m"] || set["model"] {
 			req.Model = opts.Model
 		}
-		var err error
 		if plan, err = followup.Make(req); err != nil {
 			return 2, err
 		}
@@ -394,7 +398,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if *continueID != "" {
 		routeNote = agent.ContinuationNote(*continueID, routed)
 	}
-	if !opts.NoSwitch && *continueID == "" {
+	if !opts.NoSwitch && *account == "" && *continueID == "" {
 		meant := backend
 		if backend, routed = followup.Choose(backend, ""); backend != meant {
 			if routedBy != nil {
@@ -412,7 +416,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if err := preference.Check(backend); err != nil {
 		return 2, fmt.Errorf("run: %w", err)
 	}
-	b, err := followup.Backend(backend)
+	b, err := plan.BackendFor(backend)
 	if err != nil {
 		return 2, err
 	}
@@ -441,7 +445,8 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 
 	routeNote = plan.RetrievalNote(routeNote)
-	rec, err := runlog.CreateRouted(backend, task, agent.ResolveSetup(backend, task), *continueID, plan.Route(), routedBy, routeNote)
+	setup := agent.ResolveBackendSetup(b, &task)
+	rec, err := runlog.CreateRouted(backend, task, setup, *continueID, plan.Route(), routedBy, routeNote)
 	if err != nil {
 		return 1, fmt.Errorf("creating run record: %w", err)
 	}
@@ -522,11 +527,12 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 			next.Task.Purpose = purpose.Inherited(task.Purpose, prompt)
 		}
 		nextDefault := resolve.ApplyTurnDefault(&next.Task, next.To)
-		nb, err := followup.Backend(next.To)
+		nb, err := next.Plan.BackendFor(next.To)
 		if err != nil {
 			return 1, err
 		}
-		nrec, err := runlog.CreateContinuing(next.To, next.Task, agent.ResolveSetup(next.To, next.Task), rec.ID())
+		setup := agent.ResolveBackendSetup(nb, &next.Task)
+		nrec, err := runlog.CreateContinuingRoute(next.To, next.Task, setup, rec.ID(), next.Route())
 		if err != nil {
 			return 1, fmt.Errorf("creating run record: %w", err)
 		}
@@ -564,17 +570,25 @@ func cmdBackends(args []string) error {
 			localAPI := fs.String("local-api", "", "loopback or private-network api URL, the last carry-on partner; needs api in --only")
 			billing := fs.String("billing", "", "automatic carry-on billing policy: plan or metered")
 			maxCost := fs.Float64("max-cost", 0, "cost ceiling in USD for api runs; needs --billing metered")
+
+			var accountFlags []string
+			fs.Func("account", "named CLI account, BACKEND=NAME:PATH (repeatable)", func(raw string) error {
+				accountFlags = append(accountFlags, raw)
+				return nil
+			})
+			reserve := fs.Int("account-reserve", 10, "minimum percent left for automatic account selection")
 			provider := fs.String("provider", "", "claude provider: claude=plan|bedrock|vertex|foundry|gateway")
 			if err := fs.Parse(args[1:]); err != nil {
 				return err
 			}
 			if *only == "" || fs.NArg() != 0 {
-				return errors.New("usage: hrn backends set --only claude,codex [--default claude] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET]")
+				return errors.New("usage: hrn backends set --only claude,codex [--default claude] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET] [--account BACKEND=NAME:PATH]... [--account-reserve N]")
 			}
-			var maxCostSet, providerSet bool
+			var maxCostSet, providerSet, reserveSet bool
 			fs.Visit(func(f *flag.Flag) {
 				maxCostSet = maxCostSet || f.Name == "max-cost"
 				providerSet = providerSet || f.Name == "provider"
+				reserveSet = reserveSet || f.Name == "account-reserve"
 			})
 			if maxCostSet && (*maxCost <= 0 || math.IsNaN(*maxCost) || math.IsInf(*maxCost, 0)) {
 				return errors.New("backends set: --max-cost wants a positive amount")
@@ -587,7 +601,22 @@ func cmdBackends(args []string) error {
 			p.DefaultName = *def
 			p.LocalAPI = *localAPI
 			p.Billing, p.BillingMaxCostUSD = *billing, *maxCost
+
 			p.Providers = nil
+			p.Accounts, p.AccountReservePercent = nil, nil
+			if reserveSet {
+				p.AccountReservePercent = reserve
+			}
+			if len(accountFlags) > 0 {
+				p.Accounts = map[string][]prefs.Account{}
+				for _, raw := range accountFlags {
+					a, backend, err := parseBackendAccount(raw)
+					if err != nil {
+						return err
+					}
+					p.Accounts[backend] = append(p.Accounts[backend], a)
+				}
+			}
 			if providerSet {
 				name, target, ok := strings.Cut(*provider, "=")
 				if !ok || name == "" {
@@ -628,12 +657,13 @@ func cmdBackends(args []string) error {
 				p.LocalAPI = ""
 				p.Billing, p.BillingMaxCostUSD = "", 0
 				p.Providers = nil
+				p.Accounts, p.AccountReservePercent = nil, nil
 				if err := prefs.Save(runlog.Home(), p); err != nil {
 					return err
 				}
 			}
 		default:
-			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET] | reset]")
+			return errors.New("usage: hrn backends [set --only NAMES [--default NAME] [--local-api URL] [--billing plan|metered] [--max-cost USD] [--provider NAME=TARGET] [--account BACKEND=NAME:PATH]... [--account-reserve N] | reset]")
 		}
 	}
 	p, err := resolve.BackendPreferences(runlog.Home())
@@ -665,15 +695,33 @@ func cmdBackends(args []string) error {
 			fmt.Printf("  ✗ %-9s %s: %s%s\n", name, state, err, provider)
 		} else {
 			fmt.Printf("  ✓ %-9s %s: %s%s\n", name, state, src, provider)
-			if q := quota.For(name, now).String(now); q != "" {
-				fmt.Printf("    %-9s %s\n", "", q)
+
+			if len(p.AccountsFor(name)) == 0 {
+				if q := quota.For(name, now).String(now); q != "" {
+					fmt.Printf("    %-9s %s\n", "", q)
+				}
 			}
 		}
-		if s := limits.Status(name, now); s != "" {
+
+		if accounts := p.AccountsFor(name); len(accounts) > 0 {
+			for _, a := range accounts {
+				line, _, _ := followup.AccountStatus(name, a, now)
+				fmt.Println("    " + line)
+			}
+		} else if s := limits.Status(name, now); s != "" {
 			fmt.Printf("    %-9s %s\n", "", s)
 		}
 	}
 	return nil
+}
+
+func parseBackendAccount(raw string) (prefs.Account, string, error) {
+	backend, spec, ok := strings.Cut(raw, "=")
+	name, home, split := strings.Cut(spec, ":")
+	if !ok || !split || backend == "" || name == "" || home == "" {
+		return prefs.Account{}, "", errors.New("backends set: --account wants BACKEND=NAME:PATH")
+	}
+	return prefs.Account{Name: name, Home: home}, backend, nil
 }
 
 func cmdRuns(args []string) error {

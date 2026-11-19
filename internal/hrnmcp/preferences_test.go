@@ -9,8 +9,11 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
+	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mcp"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -122,5 +125,97 @@ func TestRunToolOffersEveryBackendWithoutAPreferenceFile(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("enum %v, want %v", got, want)
+	}
+}
+
+func TestRunAndBackendsToolsHandleNamedAccounts(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	home := t.TempDir()
+	orig, _ := agent.Get("claude")
+	agent.Register(installStub{"claude", true})
+	t.Cleanup(func() { agent.Register(orig) })
+	pref := prefs.Prefs{Accounts: map[string][]prefs.Account{"claude": {{Name: "team-a", Home: home}}}}
+	if err := prefs.Save(runlog.Home(), pref); err != nil {
+		t.Fatal(err)
+	}
+	tool := runTool(t.TempDir(), false)
+	if tool.InputSchema["properties"].(map[string]any)["account"] == nil {
+		t.Fatal("missing account schema")
+	}
+	_, err := tool.Handler(t.Context(), mcp.Call{Arguments: json.RawMessage(`{"prompt":"hello","backend":"claude","account":"missing"}`)})
+	if err == nil || !strings.Contains(err.Error(), "unknown claude account") {
+		t.Fatalf("invalid account = %v", err)
+	}
+	records, err := runlog.List(0)
+	if err != nil || len(records) != 0 {
+		t.Fatalf("recorded a refused run: %v, %v", records, err)
+	}
+	result, err := backendsTool().Handler(t.Context(), mcp.Call{})
+	if err != nil || len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "    team-a: usage unknown") || strings.Contains(result.Content[0].Text, home) {
+		t.Fatalf("listing: %+v, %v", result, err)
+	}
+}
+
+func TestBackendsToolStructuresAccountQuotaAndLimits(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	home := t.TempDir()
+	p := prefs.Prefs{Accounts: map[string][]prefs.Account{"claude": {
+		{Name: "team-a", Home: home}, {Name: "team-b", Home: home},
+	}}}
+	if err := prefs.Save(runlog.Home(), p); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := runlog.Create("claude", agent.Task{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	until := now.Add(time.Hour).Truncate(time.Second)
+	rec.Event(agent.Event{Time: now, Kind: agent.EventQuota, Quota: &kernel.Quota{FiveHour: &kernel.QuotaWindow{UsedPercent: 20, ResetsAt: until.Unix()}}})
+	if err := rec.Close(agent.Result{Backend: "claude", Account: "team-a", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	limited := agent.Result{Status: agent.StatusLimited, LimitResets: until}
+	if err := limits.NoteAccount("claude", "team-a", limited); err != nil {
+		t.Fatal(err)
+	}
+	if err := limits.Note("codex", limited); err != nil {
+		t.Fatal(err)
+	}
+	res, err := backendsTool().Handler(t.Context(), mcp.Call{})
+	if err != nil || res.IsError {
+		t.Fatalf("backends: %v", err)
+	}
+	raw, err := json.Marshal(res.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data struct {
+		Backends []struct {
+			Name         string
+			Accounts     []map[string]string
+			LimitedUntil time.Time `json:"limited_until"`
+		}
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range data.Backends {
+		switch entry.Name {
+		case "claude":
+			if len(entry.Accounts) != 2 {
+				t.Fatalf("accounts: %v", entry.Accounts)
+			}
+			a, b := entry.Accounts[0], entry.Accounts[1]
+			if len(a) != 3 || a["name"] != "team-a" || !strings.HasPrefix(a["quota"], "5h: 80% left") ||
+				a["limited_until"] != until.UTC().Format(time.RFC3339) || !strings.Contains(res.Text(), "team-a: "+a["quota"]) ||
+				!reflect.DeepEqual(b, map[string]string{"name": "team-b", "quota": "usage unknown"}) {
+				t.Error("account names, quota or limit did not match")
+			}
+		case "codex":
+			if entry.Accounts != nil || !entry.LimitedUntil.Equal(until) {
+				t.Error("legacy backend limit changed")
+			}
+		}
 	}
 }

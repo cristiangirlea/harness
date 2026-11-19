@@ -32,6 +32,18 @@ const (
 	fileOutsideTree = "outside"
 )
 
+// BindBackendAccount records the selected name while keeping its config home in memory.
+func BindBackendAccount(b Backend, task *Task) {
+	if cli, ok := b.(*CLIBackend); ok {
+		task.Account, task.AccountHome = cli.Account, cli.AccountHome
+	}
+}
+
+func ResolveBackendSetup(b Backend, task *Task) *Setup {
+	BindBackendAccount(b, task)
+	return ResolveSetup(b.Name(), *task)
+}
+
 // ResolveSetup records unreadable inputs without failing.
 func ResolveSetup(backend string, task Task) *Setup {
 	s := &setupScan{files: map[string]string{}}
@@ -42,6 +54,10 @@ func ResolveSetup(backend string, task Task) *Setup {
 	project := newSetupTree(dir, "")
 	home, _ := setupHome()
 	user := func(rel, env, prefix string) setupTree {
+
+		if task.AccountHome != "" && env == accountHomeEnv(backend) {
+			return newSetupTree(task.AccountHome, "$"+env+"/")
+		}
 		if d := os.Getenv(env); env != "" && d != "" {
 			if !filepath.IsAbs(d) {
 				d = filepath.Join(dir, d)
@@ -80,7 +96,7 @@ func ResolveSetup(backend string, task Task) *Setup {
 		// Later files override earlier ones, as in Claude Code.
 		s.plugins(claudeDir.file("settings.json"), project.file(".claude/settings.json"), project.file(".claude/settings.local.json"))
 		s.mcpConfigs(append([]string{filepath.Join(dir, ".mcp.json")}, task.MCP...), true)
-		s.claudeUserMCP(claudeDir, home, dir, project.real)
+		s.claudeUserMCP(claudeDir, home, task.AccountHome != "" || os.Getenv("CLAUDE_CONFIG_DIR") != "", dir, project.real)
 	case "codex":
 		s.file(project, "AGENTS.override.md", "AGENTS.md")
 		s.file(user(".codex", "CODEX_HOME", "~/.codex/"), "AGENTS.override.md", "AGENTS.md")
@@ -366,10 +382,10 @@ func (s *setupScan) plugins(paths ...string) {
 }
 
 // claudeUserMCP reads only server names: entries may hold secrets.
-func (s *setupScan) claudeUserMCP(claudeDir setupTree, home string, projects ...string) {
+func (s *setupScan) claudeUserMCP(claudeDir setupTree, home string, configOverride bool, projects ...string) {
 	path := ""
 	switch {
-	case os.Getenv("CLAUDE_CONFIG_DIR") != "":
+	case configOverride:
 		path = claudeDir.file(".claude.json")
 	case home != "":
 		path = filepath.Join(home, ".claude.json")

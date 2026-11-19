@@ -16,6 +16,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/prefs"
+	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/tools"
 	"github.com/cristiangirlea/harness/internal/ws"
@@ -25,6 +27,7 @@ import (
 type Request struct {
 	RunID   string
 	Backend string
+	Account string
 	Dir     string
 	Model   string
 	// Retrieval is the follow-up's mode; only off can discard a pin on a backend switch.
@@ -41,11 +44,17 @@ type Request struct {
 	Resume bool
 }
 
+func (req Request) freshFor(previous, backend string) bool {
+	return req.Fresh || (!req.Resume && previous == "codex" && backend == "codex")
+}
+
 // Plan is how a follow-up run starts.
 type Plan struct {
 	// Prev is the predecessor; Backend, absolute Dir and Model describe the follow-up.
 	Prev               runlog.Record
 	Backend            string
+	Account            string
+	defaultAccount     bool
 	Dir                string
 	Model              string
 	RetrievalVersion   string
@@ -134,7 +143,13 @@ func Make(req Request) (Plan, error) {
 	if err := checkRetrievalPin(chain, p.Backend, req.Retrieval, req.Exec); err != nil {
 		return Plan{}, err
 	}
-	fresh := req.Fresh || (!req.Resume && prev.Backend == "codex" && p.Backend == "codex")
+	fresh := req.freshFor(prev.Backend, p.Backend)
+
+	if !fresh && p.Backend == prev.Backend {
+		if err := p.pinAccount(prev, req.Account); err != nil {
+			return Plan{}, err
+		}
+	}
 	if req.RetrievalRefresh {
 		if !fresh {
 			return Plan{}, errors.New("retrieval refresh requires a fresh continuation")
@@ -154,6 +169,9 @@ func Make(req Request) (Plan, error) {
 		p.Notes = append(p.Notes, fmt.Sprintf("run %s continues %s, which is gone, so the chain starts at %[1]s", chain[0].ID, missing))
 	}
 	if fresh {
+		if err := p.chooseFreshAccount(req.Account); err != nil {
+			return Plan{}, err
+		}
 		p.Fresh = true
 		if req.Retrieval != "off" {
 			for i := len(chain) - 1; i >= 0; i-- {
@@ -206,7 +224,7 @@ func Make(req Request) (Plan, error) {
 	var elsewhere string
 	for i := len(chain) - 1; i >= 0 && from < 0; i-- {
 		r := chain[i]
-		if r.Backend != p.Backend {
+		if r.Backend != p.Backend || (p.Backend == prev.Backend && r.Result.Account != p.Account) {
 			continue
 		}
 		if _, c, err := runlog.LoadConversation(r.ID); err == nil {
@@ -229,6 +247,17 @@ func Make(req Request) (Plan, error) {
 			msg += fmt.Sprintf(" in %s; its session belongs to %s", p.Dir, elsewhere)
 		}
 		return Plan{}, fmt.Errorf("%s. Continue it on another backend to hand its transcript over", msg)
+	}
+
+	if p.Backend != prev.Backend {
+		if from >= 0 {
+			err = p.pinAccount(chain[from], req.Account)
+		} else {
+			err = p.chooseFreshAccount(req.Account)
+		}
+		if err != nil {
+			return Plan{}, err
+		}
 	}
 	if from >= 0 {
 		p.carried = &chain[from]
@@ -264,7 +293,7 @@ func Make(req Request) (Plan, error) {
 	}
 	if p.ForkSession != "" && agent.BackendCapabilities(b).Sessions == "resume" {
 		// Resumed in place, the conversation is shared by every run on it.
-		release, err := lockConversation(p.Backend, p.ForkSession)
+		release, err := lockConversation(accountLabel(p.Backend, p.Account), p.ForkSession)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -281,6 +310,39 @@ func Make(req Request) (Plan, error) {
 		p.Notes = append(p.Notes, fmt.Sprintf("handing %d earlier %s to %s as a transcript: requests and final answers, not tool calls or reasoning", n, turns, p.Backend))
 	}
 	return p, nil
+}
+
+func (p *Plan) chooseFreshAccount(asked string) error {
+	a, configured, why := Account(p.Backend, asked, time.Now(), nil)
+	if why != "" {
+		if asked != "" || !configured || a.Name == "" {
+			return errors.New(why)
+		}
+		p.Notes = append(p.Notes, why)
+	}
+	p.Account = a.Name
+	return nil
+}
+
+func (p *Plan) pinAccount(prev runlog.Record, asked string) error {
+	p.Account = prev.Result.Account
+	if p.Account != "" {
+		pref, err := resolve.BackendPreferences(runlog.Home())
+		if err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(pref.AccountsFor(p.Backend), func(a prefs.Account) bool { return a.Name == p.Account }) {
+			return fmt.Errorf("run %s ran on account %s, which is no longer declared", prev.ID, p.Account)
+		}
+	}
+	if asked != "" && asked != p.Account {
+		if p.Account == "" {
+			return errors.New("a continued session stays on its original config home; use --fresh to start a new session on another account")
+		}
+		return fmt.Errorf("a continued session stays on account %s; use --fresh to start a new session on another account", p.Account)
+	}
+	p.defaultAccount = p.Account == ""
+	return nil
 }
 
 var conversationID = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*$`)
@@ -312,7 +374,7 @@ func laterOn(backend, id string, carried runlog.Record, chain []runlog.Record) s
 	}
 	for _, r := range recs {
 		// The chain's own runs are not later ones, even when the clock gave them the same start.
-		if !slices.ContainsFunc(chain, func(c runlog.Record) bool { return c.ID == r.ID }) && r.Backend == backend && !r.Started.Before(carried.Started) &&
+		if !slices.ContainsFunc(chain, func(c runlog.Record) bool { return c.ID == r.ID }) && r.Backend == backend && r.Result.Account == carried.Result.Account && !r.Started.Before(carried.Started) &&
 			(r.Result.Session == id || r.Task.ForkSession == id) {
 			return r.ID
 		}

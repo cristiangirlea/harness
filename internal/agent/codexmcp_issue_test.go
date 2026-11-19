@@ -36,10 +36,10 @@ func TestCodexTrustProjectRoots(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			key = strings.ToLower(key[:1]) + key[1:]
 		}
-		if err := os.WriteFile(codexConfigPath(run), []byte("[projects.'"+key+"']\ntrust_level='trusted'\n"), 0600); err != nil {
+		if err := os.WriteFile(codexConfigPath(Task{Dir: run}), []byte("[projects.'"+key+"']\ntrust_level='trusted'\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		got := codexLoadedConfigServers(run)
+		got := codexLoadedConfigServers(Task{Dir: run})
 		if !slices.Contains(got, "root") || !slices.Contains(got, "run") {
 			t.Errorf("trusted %s: %v", trusted, got)
 		}
@@ -61,11 +61,11 @@ func TestCodexTrustNoGitOnlyRunConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	codexHome(t, "[projects.'"+run+"']\ntrust_level='trusted'\n")
-	got := codexLoadedConfigServers(run)
+	got := codexLoadedConfigServers(Task{Dir: run})
 	if !slices.Contains(got, "run") || slices.Contains(got, "parent") {
 		t.Errorf("loaded: %v", got)
 	}
-	if !slices.Contains(codexAllConfigServers(run), "parent") {
+	if !slices.Contains(codexAllConfigServers(Task{Dir: run}), "parent") {
 		t.Error("parent collision missing")
 	}
 }
@@ -138,7 +138,7 @@ func TestCodexMCPProjectAndCollision(t *testing.T) {
 	}
 	task.MCP = nil
 	config := "[mcp_servers.home]\ncommand='x'\n[projects." + tomlString(dir) + "]\ntrust_level='trusted'\n"
-	if err := os.WriteFile(codexConfigPath(nested), []byte(config), 0600); err != nil {
+	if err := os.WriteFile(codexConfigPath(Task{Dir: nested}), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(codexMCPArgs(task), " "); !strings.Contains(got, "mcp_servers.project.enabled=false") {

@@ -488,3 +488,54 @@ func TestRunCarriesOnOnTheLocalAPIWhenEveryPlanIsLimited(t *testing.T) {
 		t.Fatalf("ANTHROPIC_BASE_URL got %d requests", n)
 	}
 }
+
+func TestRunRoutesOrRefusesALimitedContinuationAccount(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t)
+	agent.Register(scripted{"codex", func(agent.Task) agent.Result {
+		return agent.Result{Status: agent.StatusOK, Final: "finished"}
+	}})
+	p := prefs.Prefs{Accounts: map[string][]prefs.Account{"claude": {
+		{Name: "team-a", Home: t.TempDir()}, {Name: "team-b", Home: t.TempDir()},
+	}}}
+	if err := prefs.Save(runlog.Home(), p); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := runlog.Create("claude", agent.Task{Dir: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(agent.Result{Backend: "claude", Session: "saved", Account: "team-a", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	limited := agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}
+	if err := limits.NoteAccount("claude", "team-a", limited); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--continue", rec.ID(), "finish"}
+	if code, err := cmdRun(args); code != 0 || err != nil {
+		t.Fatalf("routed continuation: %d, %v", code, err)
+	}
+	recs, err := runlog.List(5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, run := range recs {
+		if run.Continues == rec.ID() {
+			found = run.Backend == "codex" && run.ContinueRoute == "transcript_transfer" &&
+				strings.Contains(run.RouteNote, "claude@team-a is at its usage limit")
+		}
+	}
+	if !found {
+		t.Error("missing codex hand-over with the account limit reason")
+	}
+	if err := limits.Note("codex", limited); err != nil {
+		t.Fatal(err)
+	}
+	code, err := cmdRun(args)
+	if code != 2 || err == nil || !strings.Contains(err.Error(), "claude@team-a is at its usage limit") ||
+		!strings.HasSuffix(err.Error(), "; use --fresh to continue on another account") {
+		t.Fatalf("refused continuation: %d, %v", code, err)
+	}
+}

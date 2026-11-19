@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/followup"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/retrieval"
@@ -877,6 +878,7 @@ func TestExecRefusesToDropAPinOnBackendSwitch(t *testing.T) {
 }
 
 func TestNonWorkerBackendUsesDeclaredClaudeProviderOnACopy(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
 	original, err := agent.Get("claude")
 	if err != nil {
 		t.Fatal(err)
@@ -889,11 +891,29 @@ func TestNonWorkerBackendUsesDeclaredClaudeProviderOnACopy(t *testing.T) {
 		if target != "" {
 			p.Providers = map[string]prefs.Provider{"claude": {Target: target}}
 		}
-		got := nonWorkerBackend(registered, p)
+		got, err := nonWorkerBackend(registered, p, followup.Plan{})
+		if err != nil {
+			t.Fatal(err)
+		}
 		want := p.ProviderTarget("claude")
 		if (got == registered) != (want == "") || got.(*agent.CLIBackend).ProviderTarget != want ||
 			registered.ProviderTarget != "" {
 			t.Fatalf("target %q: configured %p, registered %p", target, got, registered)
 		}
+	}
+	home := t.TempDir()
+	p := prefs.Prefs{
+		Billing:   "metered",
+		Providers: map[string]prefs.Provider{"claude": {Target: "vertex"}},
+		Accounts:  map[string][]prefs.Account{"claude": {{Name: "first", Home: t.TempDir()}, {Name: "second", Home: home}}},
+	}
+	got, err := nonWorkerBackend(registered, p, followup.Plan{Account: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := got.(*agent.CLIBackend)
+	if cli == registered || cli.Account != "second" || cli.AccountHome != home || cli.ProviderTarget != "vertex" ||
+		registered.Account != "" || registered.AccountHome != "" {
+		t.Fatal("non-worker startup must use the planned account and provider on the copy")
 	}
 }

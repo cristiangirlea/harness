@@ -123,6 +123,23 @@ func For(backend string, now time.Time) Quota {
 	return Quota{}
 }
 
+func ForAccount(backend, account, home string, now time.Time) Quota {
+	if account == "" {
+		return For(backend, now)
+	}
+	switch backend {
+	case "codex":
+		if home != "" {
+			root := filepath.Join(home, "sessions")
+			return cachedRead("codex\x00"+root+"\x00"+account, now, func() Quota { return codexFrom(root) })
+		}
+	case "claude":
+		root := runlog.Root()
+		return cachedRead("claude\x00"+root+"\x00"+account, now, func() Quota { return claudeFromAccount(root, account) })
+	}
+	return Quota{}
+}
+
 // cachedRead answers from the cache under key, refreshing it with read once it
 // is older than cacheFor; the lock is never held while read runs.
 func cachedRead(key string, now time.Time, read func() Quota) Quota {
@@ -382,27 +399,38 @@ func digits(name string, depth int) bool {
 	return len(name) == want && strings.Trim(name, "0123456789") == ""
 }
 
-// maxClaudeRuns bounds a reading: the newest runs, by id.
-const maxClaudeRuns = 40
+const (
+	maxClaudeRuns = 40
+	maxClaudeDirs = 400
+)
 
 // claudeFrom reads the quota events of the newest claude runs under root and
 // keeps each window's latest report: the quota is the account's and runs overlap.
 func claudeFrom(root string) Quota {
+	return claudeFromAccount(root, "")
+}
+
+func claudeFromAccount(root, account string) Quota {
 	var q Quota
 	entries := readDir(root)
 	slices.Reverse(entries) // run ids start with when they started
-	runs := 0
+	scanLimit := maxClaudeDirs
+	if account == "" {
+		scanLimit = maxClaudeRuns
+	}
+	dirs, runs := 0, 0
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		if runs++; runs > maxClaudeRuns {
+		if dirs++; dirs > scanLimit || runs >= maxClaudeRuns {
 			break
 		}
 		dir := filepath.Join(root, e.Name())
-		if !claudeRun(dir) {
+		if !claudeRun(dir, account) {
 			continue
 		}
+		runs++
 		data, partial, err := tail(filepath.Join(dir, "events.jsonl"))
 		if err != nil {
 			continue
@@ -428,8 +456,7 @@ func claudeFrom(root string) Quota {
 	return q
 }
 
-// claudeRun reports whether the run in dir ran on claude, from its task.json.
-func claudeRun(dir string) bool {
+func claudeRun(dir, account string) bool {
 	f, _, err := openRegular(filepath.Join(dir, "task.json"))
 	if err != nil {
 		return false
@@ -437,6 +464,32 @@ func claudeRun(dir string) bool {
 	defer f.Close()
 	var rec struct {
 		Backend string `json:"backend"`
+		Task    struct {
+			Account string `json:"account"`
+		} `json:"task"`
 	}
-	return json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&rec) == nil && rec.Backend == "claude"
+	if json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&rec) != nil || rec.Backend != "claude" {
+		return false
+	}
+	if account == "" {
+		return true
+	}
+	if rec.Task.Account != "" {
+		return rec.Task.Account == account
+	}
+	return claudeAccount(dir, account)
+}
+
+func claudeAccount(dir, account string) bool {
+	f, _, err := openRegular(filepath.Join(dir, "result.json"))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var res struct {
+		Result struct {
+			Account string `json:"account"`
+		} `json:"result"`
+	}
+	return json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&res) == nil && res.Result.Account == account
 }

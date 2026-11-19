@@ -6,12 +6,12 @@
 
 | Command | What it does |
 |---|---|
-| `hrn run [flags] [--purpose CATEGORY] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`; optionally declare its purpose (see [Declared purpose](#declared-purpose)). |
+| `hrn run [flags] [--purpose CATEGORY] [--account NAME] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`; optionally declare its purpose (see [Declared purpose](#declared-purpose)). |
 | `hrn feed -b BACKEND --task TEXT [flags]` | Process JSONL text items as parallel read-only runs (see [Text feeds](feed.md)). |
 | `hrn exec --protocol v1 [--worker]` | Run one recorded task over the supervisor JSONL protocol; `--worker` applies the [worker restrictions](worker-protocol.md). |
 | `hrn backends` | Show enabled/disabled, default, availability, remembered limits and, under claude and codex when known, the plan's quota left per window (see [Backend preferences](backends.md#choosing-which-backends-hrn-may-use)). |
-| `hrn backends set --only NAMES [--default NAME] [--local-api URL] [--billing plan\|metered] [--max-cost USD] [--provider NAME=TARGET]` | Replace the preference with comma-separated registered backend names in preference order; the optional default must be among them. `--local-api` opts a loopback or private-network api endpoint in as the last carry-on partner at usage limits and needs `api` in `--only` ([backends](backends.md#a-local-model-as-the-last-partner)). `--billing` defaults to `plan`. `--max-cost` requires `--billing metered` and caps estimated cost per metered api run ([billing policy](backends.md#billing-policy)). `--provider` declares a [claude provider](backends.md#provider-for-the-claude-cli), for example `claude=bedrock`. Omitting it clears the declaration. |
-| `hrn backends reset` | Restore unrestricted backend selection, clearing `--local-api`, the billing policy, the ceiling and the provider declaration, while keeping the work map keys. |
+| `hrn backends set --only NAMES [--default NAME] [--local-api URL] [--billing plan\|metered] [--max-cost USD] [--provider NAME=TARGET] [--account BACKEND=NAME:PATH]... [--account-reserve N]` | Replace the preference with comma-separated registered backend names in preference order; the optional default must be among them. `--local-api` opts a loopback or private-network api endpoint in as the last carry-on partner at usage limits and needs `api` in `--only` ([backends](backends.md#a-local-model-as-the-last-partner)). `--billing` defaults to `plan`. `--max-cost` requires `--billing metered` and caps estimated cost per metered api run ([billing policy](backends.md#billing-policy)). `--provider` declares a [claude provider](backends.md#provider-for-the-claude-cli), for example `claude=bedrock`. Omitting it clears the declaration. |
+| `hrn backends reset` | Restore unrestricted backend selection, clearing `--local-api`, the billing policy, the ceiling, the provider declaration, named accounts and the account reserve, while keeping the work map keys. |
 | `hrn remote submit --tenant ID --project ID --base-ref COMMIT --key KEY --max-cost USD [--max-turns N] <prompt>` | Queue a read-only API job on a registered project (see [Remote development jobs](#remote-development-jobs)). |
 | `hrn remote show --tenant ID --project ID JOB_ID` | Show a remote job's state and result. |
 | `hrn remote events --tenant ID --project ID [--after EVENT_ID] [--watch] JOB_ID` | Read up to 100 events, or stream until the job ends and resume from the last durable event ID after a disconnect. |
@@ -132,6 +132,12 @@ discarded to keep it under 1 MiB. A started entry records planned actions before
 without a completed entry the outcome is uncertain. Errors appear in the log and watch's
 local index (and on watch's stderr); refresh the page to see the latest pass.
 `$HRN_HOME/gc-last` retains the last scheduled start independently of log rotation.
+
+`hrn run --account NAME` selects a declared account on the selected CLI backend.
+`hrn backends set --account BACKEND=NAME:PATH` can be repeated in preference order.
+`--account-reserve N` sets the minimum percent left for automatic account selection.
+`backends set` without these flags and `backends reset` clear both settings.
+See [Accounts](backends.md#accounts).
 
 For `--continue ID`, `--fresh` starts a bounded hand-over and `--resume` uses the saved session. A codex run continued on codex defaults to fresh; MCP and exec callers use explicit `fresh: false` to resume. See [Continuing a run](backends.md#continuing-a-run).
 

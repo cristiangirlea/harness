@@ -39,7 +39,7 @@ func codexGateRoute(_ context.Context, t Task, gate, policy string) ([]string, f
 	if err != nil {
 		return nil, nil, fmt.Errorf("gate: %w", err)
 	}
-	names := codexAllConfigServers(t.Dir)
+	names := codexAllConfigServers(t)
 	for _, s := range servers {
 		names = append(names, s.Name)
 	}

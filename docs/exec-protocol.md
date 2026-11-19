@@ -129,7 +129,7 @@ value sets the limit. When the default is applied, an `info` event announces it.
 A rejected start creates no run record. Codes: `bad_request` (malformed line, missing or unknown
 field, bad attempt id or bad model id), `unsupported` (a mode, effort or option the backend cannot
 honour, or a backend disabled by the worker's preference), `unavailable` (the backend's CLI or
-credentials are not found), `storage` (the run record could not be created or the worker's backend
+credentials are not found, or every eligible account of the backend is at its usage limit), `storage` (the run record could not be created or the worker's backend
 preference could not be loaded). Preference failure messages do not disclose local paths. The
 preference is checked again for the resolved backend at start. hrn exits 2 after `rejected`.
 

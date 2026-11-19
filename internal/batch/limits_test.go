@@ -555,3 +555,32 @@ func TestWithTheLocalAPIACarryOnGoesPastEveryLimitedPlan(t *testing.T) {
 		t.Errorf("attempt 4: continued %v, switched from %q", a.Continued, a.SwitchedFrom)
 	}
 }
+
+func TestALimitedAccountCarriesOnInABatchBeforeThePartner(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	pref := prefs.Prefs{Accounts: map[string][]prefs.Account{"codex": {{Name: "first", Home: t.TempDir()}, {Name: "second", Home: t.TempDir()}}}}
+	if err := prefs.Save(runlog.Home(), pref); err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	agent.Register(stub{"codex", func(_ context.Context, task agent.Task) agent.Result {
+		calls++
+		if calls == 1 {
+			return agent.Result{Backend: "codex", Account: "first", Status: agent.StatusLimited, Final: "half done"}
+		}
+		if !strings.Contains(task.Prompt, "half done") || task.ForkSession != "" {
+			t.Errorf("carry-on task: %+v", task)
+		}
+		return agent.Result{Backend: "codex", Account: "second", Status: agent.StatusOK}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{Prompt: "finish the work"}}})
+	tr := res.Tasks[0]
+	if calls != 2 || tr.Status != StatusPass || len(tr.Attempts) != 2 || tr.Attempts[1].Backend != "codex" {
+		t.Fatalf("attempts: %+v, calls %d", tr, calls)
+	}
+	rec, err := runlog.Load(tr.Attempts[1].RunID)
+	if err != nil || rec.ContinueRoute != runlog.RouteFreshHandover {
+		t.Fatalf("fresh carry-on record: %+v, %v", rec, err)
+	}
+}
