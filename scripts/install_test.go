@@ -3,7 +3,7 @@
 // effects: read, exec, network
 // parameters: none
 // example: go test -count=1 ./scripts -run '^TestInstall$/./^invalid_api$'
-// hash: 6a98f4ff743ef976dab02cde89c437d1a253957689c3d36c75868f275dfd1e9f
+// hash: 2e34ebec2b61fd0b726b15f82b1ae85f43d098a7bfe991dc658661dd13451212
 package main
 
 import (
@@ -402,7 +402,8 @@ func TestInstall(t *testing.T) {
 					}
 					run := func() {
 						t.Helper()
-						ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+						// A hosted Windows runner can take many seconds just to start PowerShell.
+						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 						defer cancel()
 						runArgs := args
 						if piped {
