@@ -110,6 +110,16 @@ order they are worth taking:
       records talk, saved as WAV with `metadata.csv` into a folder the speaker picks. Next in #83,
       each download approved by a maintainer first: a taste with Chatterbox, transcribing talk
       with Whisper, training with Piper, and Ada speaking with the voice.
+    - [x] Ada speaking through a local speech program
+      ([#950](https://github.com/cristiangirlea/harness/issues/950), the hrn side of #83).
+      Done: PR #954, 2026-11-19. `hrn watch` and `hrn bot` take `--voice PROGRAM` and
+      `--voice-arg`: the program is started without a shell with a small environment, reads one
+      sentence on standard input and writes a WAV file; `/bot/voice` serves it to this computer's
+      browser only, to Ada's own page only, cached in memory, and the page falls back to the
+      browser's voice. Deviations from the issue: on Windows the program must be an `.exe` (Go
+      resolves a name without an extension to a batch file beside it), and the route needs a
+      header only Ada's page sends, since it is the first GET route that starts a process. No
+      engine is bundled or chosen; the voice itself stays in #83.
     - Ada where the user works, after the map of #90 and behind the masking of
       [#304](https://github.com/cristiangirlea/harness/issues/304) (secrets masked in everything
       hrn watch, `hrn show`, the renderer and the bot display): a Claude Code side pane with Ada
