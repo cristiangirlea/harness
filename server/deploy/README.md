@@ -81,8 +81,9 @@ other namespace. Example render validation:
 
 `HELM_BIN` can point to a Helm 4.3.0 binary. The verifier checks the module
 download layer and unconditional CA wiring, runs Helm lint,
-renders all three charts, and checks scaling, storage, isolation, and credential
-references. It checks that the runtime class is omitted by default and changes
+renders all three charts, and checks scaling, storage, isolation, credential
+references, and optional control metrics wiring and validation. It checks that
+the runtime class is omitted by default and changes
 only the worker pod spec when set. It rejects unpinned images, missing required Secret
 names, malformed tenant/project IDs, control URLs with HTTP or a path, invalid
 runtime class names, a missing required runtime class, and a non-boolean
@@ -147,10 +148,25 @@ The tenant chart owns its Namespace, so install it as one Helm release per
 tenant without `--create-namespace` for that target. Install the control chart
 in a separately precreated `harness-system` namespace and the project chart in
 the tenant namespace. Values contain only Secret names, image digests, tenant
-and project IDs, storage class, runtime class settings, and endpoint
-configuration. Do not use Helm upgrade to replace an active worker without
+and project IDs, storage class, runtime class settings, collector labels, and
+endpoint configuration. Do not use Helm upgrade to replace an active worker without
 an explicit drain and checkpoint compatibility check.
 
+### Scraping metrics
+
+Set `secrets.metricsName` to the name of a dedicated Secret in
+`harness-system`. The Secret must hold a key named `token` with a value of at
+least 32 characters that differs from the operator and scaler tokens.
+Never put the token value in Helm values.
+
+Set both `metrics.scrapeFrom.namespaceLabels` and `metrics.scrapeFrom.podLabels`
+to admit collector pods that match the pod labels in namespaces that match the
+namespace labels. Setting only one of the two fails the render. Prefer
+`kubernetes.io/metadata.name: <the collector's namespace>` as the namespace
+label: the cluster sets it, so another namespace cannot claim it. Without
+`metrics.scrapeFrom`, the network policy adds no collector ingress. The collector must trust the control service's certificate
+authority and send the token as a bearer credential when requesting
+`GET /metrics` over HTTPS on port 8443.
 
 ## Disposable cluster evidence
 
