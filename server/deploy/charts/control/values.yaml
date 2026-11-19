@@ -7,7 +7,12 @@ secrets:
   authName: ""
   operatorKey: operator-token
   scalerKey: scaler-token
+  metricsName: ""
   tlsName: ""
+metrics:
+  scrapeFrom:
+    namespaceLabels: {}
+    podLabels: {}
 postgres:
   namespace: harness-system
   podLabelName: hrn-postgres

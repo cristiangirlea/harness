@@ -8,6 +8,39 @@
 {{- $_ := required "secrets.databaseName is required" .Values.secrets.databaseName -}}
 {{- $_ := required "secrets.authName is required" .Values.secrets.authName -}}
 {{- $_ := required "secrets.tlsName is required" .Values.secrets.tlsName -}}
+{{- $metricsName := .Values.secrets.metricsName -}}
+{{- if not (kindIs "string" $metricsName) -}}
+{{- fail "secrets.metricsName must be a string" -}}
+{{- end -}}
+{{- if $metricsName -}}
+{{- if or (gt (len $metricsName) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" $metricsName)) -}}
+{{- fail "secrets.metricsName must be a DNS subdomain of at most 253 characters" -}}
+{{- end -}}
+{{- if eq $metricsName (toString .Values.secrets.authName) -}}
+{{- fail "secrets.metricsName must name a Secret of its own" -}}
+{{- end -}}
+{{- end -}}
+{{- if not (kindIs "map" .Values.metrics) -}}
+{{- fail "metrics must be a map" -}}
+{{- end -}}
+{{- $scrapeFrom := .Values.metrics.scrapeFrom -}}
+{{- if not (kindIs "map" $scrapeFrom) -}}
+{{- fail "metrics.scrapeFrom must be a map" -}}
+{{- end -}}
+{{- range $selector := list "namespaceLabels" "podLabels" -}}
+{{- $labels := index $scrapeFrom $selector -}}
+{{- if not (kindIs "map" $labels) -}}
+{{- fail (printf "metrics.scrapeFrom.%s must be a map" $selector) -}}
+{{- end -}}
+{{- range $key, $value := $labels -}}
+{{- if or (eq $key "") (not (kindIs "string" $value)) -}}
+{{- fail (printf "metrics.scrapeFrom.%s must have non-empty keys and string values" $selector) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if ne (empty $scrapeFrom.namespaceLabels) (empty $scrapeFrom.podLabels) -}}
+{{- fail "metrics.scrapeFrom needs both namespaceLabels and podLabels" -}}
+{{- end -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -76,6 +109,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.authName | quote }}
                   key: {{ .Values.secrets.scalerKey | quote }}
+            {{- if $metricsName }}
+            - name: HRN_METRICS_TOKEN_FILE
+              value: /etc/hrn-metrics/token
+            {{- end }}
           ports:
             - name: https
               containerPort: 8443
@@ -96,6 +133,11 @@ spec:
             - name: tls
               mountPath: /etc/hrn-tls
               readOnly: true
+            {{- if $metricsName }}
+            - name: metrics-token
+              mountPath: /etc/hrn-metrics
+              readOnly: true
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -107,6 +149,14 @@ spec:
         - name: tls
           secret:
             secretName: {{ .Values.secrets.tlsName | quote }}
+        {{- if $metricsName }}
+        - name: metrics-token
+          secret:
+            secretName: {{ $metricsName | quote }}
+            items:
+              - key: token
+                path: token
+        {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -135,6 +185,18 @@ spec:
       ports:
         - protocol: TCP
           port: 8443
+    {{- if $scrapeFrom.namespaceLabels }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $scrapeFrom.namespaceLabels | nindent 14 }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $scrapeFrom.podLabels | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8443
+    {{- end }}
   egress:
     - to:
         - namespaceSelector:

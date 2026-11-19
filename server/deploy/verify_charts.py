@@ -1,4 +1,6 @@
 """Validate development image layering and charts. Requires Helm 4.3.0 and PyYAML 6.0.3."""
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -18,6 +20,15 @@ CONTROL_SETS = {
     "secrets.databaseName": "database-dsn",
     "secrets.authName": "control-auth",
     "secrets.tlsName": "control-tls",
+}
+METRICS_SECRET = "control-metrics"
+SCRAPE_SETS = {
+    r"metrics.scrapeFrom.namespaceLabels.app\.kubernetes\.io/part-of": "observability",
+    r"metrics.scrapeFrom.podLabels.app\.kubernetes\.io/name": "collector",
+}
+SCRAPE_FROM = {
+    "namespaceLabels": {"app.kubernetes.io/part-of": "observability"},
+    "podLabels": {"app.kubernetes.io/name": "collector"},
 }
 SETS = {
     "tenant.id": TENANT,
@@ -59,6 +70,77 @@ def has_runtime_class(value):
     if isinstance(value, list):
         return any(has_runtime_class(item) for item in value)
     return False
+
+
+def check_control_metrics(control):
+    pod = control["Deployment"]["spec"]["template"]["spec"]
+    env = pod["containers"][0]["env"]
+    assert not {"HRN_METRICS_TOKEN", "HRN_METRICS_TOKEN_FILE"}.intersection(
+        item["name"] for item in env), "default control must omit metrics env vars"
+    assert all(item["name"] != "metrics-token" for item in pod["volumes"]), (
+        "default control must omit the metrics volume")
+    # Pin all default document fields to the pre-metrics render.
+    assert hashlib.sha256(json.dumps(control, sort_keys=True).encode()).hexdigest() == (
+        "3ff95692c0b4bac4d621c4ba6799728716eadbc6359eaaa3b3da08b47ca4d8bf"
+    ), "default control documents must match the pre-metrics render"
+
+    configured = render("control", "harness-system", {
+        **CONTROL_SETS, "secrets.metricsName": METRICS_SECRET,
+    })
+    pod = configured["Deployment"]["spec"]["template"]["spec"]
+    container = pod["containers"][0]
+    assert container["name"] == "control", "metrics token must be on the control container"
+    assert all(item["name"] != "HRN_METRICS_TOKEN" for item in container["env"]), (
+        "configured control must omit the plain metrics env var")
+    assert pod["volumes"].pop() == {"name": "metrics-token", "secret": {
+        "secretName": METRICS_SECRET, "items": [{"key": "token", "path": "token"}],
+    }}, "metrics volume must project the named Secret's token key"
+    mount = container["volumeMounts"].pop()
+    assert mount == {"name": "metrics-token", "mountPath": "/etc/hrn-metrics", "readOnly": True}, (
+        "metrics volume must have a read-only mount")
+    assert container["env"].pop() == {
+        "name": "HRN_METRICS_TOKEN_FILE", "value": mount["mountPath"] + "/token",
+    }, "metrics env var must point to the mounted token file"
+    assert configured == control, "metrics Secret must only add the volume, mount and env var"
+
+    configured = render("control", "harness-system", {**CONTROL_SETS, **SCRAPE_SETS})
+    ingress = configured["NetworkPolicy"]["spec"]["ingress"]
+    assert len(ingress) == len(control["NetworkPolicy"]["spec"]["ingress"]) + 1, (
+        "scrape source must add exactly one ingress rule")
+    assert ingress.pop() == {
+        "from": [{"namespaceSelector": {"matchLabels": SCRAPE_FROM["namespaceLabels"]},
+                  "podSelector": {"matchLabels": SCRAPE_FROM["podLabels"]}}],
+        "ports": [{"protocol": "TCP", "port": control["Service"]["spec"]["ports"][0]["port"]}],
+    }, "scrape ingress must intersect namespace and pod selectors on the TLS port only"
+    assert configured == control, "scrape source must only add the ingress rule"
+
+
+def check_invalid_control_metrics():
+    cases = [
+        *(("secrets.metricsName", name, "secrets.metricsName must be a DNS subdomain of at most 253 characters")
+          for name in ("Metrics", "metrics-", "a" * 254)),
+        ("secrets.metricsName", "0", "secrets.metricsName must be a string"),
+        ("secrets.metricsName", CONTROL_SETS["secrets.authName"],
+         "secrets.metricsName must name a Secret of its own"),
+        *((f"metrics.scrapeFrom.{selector}.role", "collector",
+           "metrics.scrapeFrom needs both namespaceLabels and podLabels")
+          for selector in SCRAPE_FROM),
+        ("metrics", "false", "metrics must be a map"),
+        ("metrics.scrapeFrom", "false", "metrics.scrapeFrom must be a map"),
+        *((f"metrics.scrapeFrom.{selector}", "false",
+           f"metrics.scrapeFrom.{selector} must be a map") for selector in SCRAPE_FROM),
+        *((f"metrics.scrapeFrom.{selector}.role", "true",
+           f"metrics.scrapeFrom.{selector} must have non-empty keys and string values")
+          for selector in SCRAPE_FROM),
+    ]
+    for key, value, error in cases:
+        helm("template", "fixture", str(ROOT / "control"), "--namespace",
+             "harness-system", *set_args({**CONTROL_SETS, key: value}), ok=False, error=error)
+    for selector in SCRAPE_FROM:
+        helm("template", "fixture", str(ROOT / "control"), "--namespace",
+             "harness-system", *set_args(CONTROL_SETS), "--set-json",
+             f'metrics.scrapeFrom.{selector}={{"":"collector"}}', ok=False,
+             error=f"metrics.scrapeFrom.{selector} must have non-empty keys and string values")
 
 
 def main():
@@ -135,6 +217,7 @@ def main():
         }],
         "ports": [{"protocol": "TCP", "port": 5432}],
     }]
+    check_control_metrics(control)
     docs = render("project-worker", NAMESPACE, SETS)
     assert not has_runtime_class(docs), "default worker render must omit runtimeClassName"
     assert set(docs) == {"StatefulSet", "Service", "ScaledObject",
@@ -252,6 +335,7 @@ def main():
                        ("secrets.authName", ""), ("secrets.tlsName", "")):
         helm("template", "fixture", str(ROOT / "control"), "--namespace",
              "harness-system", *set_args({**CONTROL_SETS, key: value}), ok=False)
+    check_invalid_control_metrics()
     print("chart rendering, isolation, scaling and negative checks passed")
 
 
