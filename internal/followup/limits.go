@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cristiangirlea/harness/internal/agent"
+	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/quota"
@@ -433,10 +434,62 @@ func planReady(p prefs.Prefs, backend string, now time.Time, spent Spent) (bool,
 
 func when(t time.Time) string { return t.Local().Format("Jan 2 15:04") }
 
-// Pick returns backend unless it is limited and its partner is ready; bothOut means pick stays backend.
+// Pick returns backend unless it is limited or nearly spent and its partner is ready; bothOut means pick stays backend.
 func Pick(backend string, now time.Time, spent Spent) (pick, why string, bothOut bool) {
+	return pickFor(backend, now, spent, false)
+}
+
+// A named backend that is nearly spent is only warned about: it still works, and was asked for.
+func pickFor(backend string, now time.Time, spent Spent, named bool) (pick, why string, bothOut bool) {
 	p, _ := resolve.BackendPreferences(runlog.Home())
-	return pickPartner(p, backend, backendOut(p, backend, now, spent), now, spent)
+	if gone := backendOut(p, backend, now, spent); gone != "" {
+		return pickPartner(p, backend, gone, now, spent)
+	}
+	low := quotaLow(p, backend, now)
+	switch {
+	case low == "":
+		return backend, "", false
+	case named:
+		return backend, low + "; running on " + backend + " as named", false
+	}
+	other := Partner(backend, now, spent)
+	if other == "" || other == backend {
+		return backend, low + "; no partner to start on", false
+	}
+	if ok, reason := Ready(other, now, spent); !ok {
+		return backend, low + "; staying on " + backend + ": " + reason, false
+	}
+	if otherLow := quotaLow(p, other, now); otherLow != "" {
+		return backend, low + "; staying on " + backend + ": " + otherLow, false
+	}
+	return other, low + "; starting on " + other + " instead", false
+}
+
+// lowQuotaPercent: below this much left in a current window, a run starts on the partner.
+const lowQuotaPercent = 5
+
+// planQuota is quota.For, replaced in tests.
+var planQuota = quota.For
+
+// quotaLow says which current window of backend's plan is nearly spent, or "" when none is known to be.
+// Accounts choose among themselves by their reserve, and an unknown or stale window never counts.
+func quotaLow(p prefs.Prefs, backend string, now time.Time) string {
+	if len(p.AccountsFor(backend)) > 0 {
+		return ""
+	}
+	q := planQuota(backend, now)
+	for _, w := range []struct {
+		label string
+		w     *quota.Window
+	}{{"5h", q.FiveHour}, {"weekly", q.Week}} {
+		if w.w == nil || !w.w.ResetsAt.After(now) || w.w.ResetsAt.After(now.Add(kernel.MaxLimitWindow)) {
+			continue
+		}
+		if w.w.Left < lowQuotaPercent {
+			return fmt.Sprintf("%s has %.1f%% of its %s window left, under %d%%", backend, w.w.Left, w.label, lowQuotaPercent)
+		}
+	}
+	return ""
 }
 
 func pickPartner(p prefs.Prefs, backend, gone string, now time.Time, spent Spent) (pick, why string, bothOut bool) {
@@ -456,6 +509,12 @@ func pickPartner(p prefs.Prefs, backend, gone string, now time.Time, spent Spent
 // Choose returns backend as typed (even empty) unless a limit moves it; a continued run is planned after.
 func Choose(backend, continueID string) (string, string) {
 	pick, why, _ := ChooseContinuation(Request{Backend: backend, RunID: continueID}, false, "")
+	return pick, why
+}
+
+// ChooseFor is Choose for a new run; named says the caller typed the backend, so a nearly spent plan only warns.
+func ChooseFor(backend string, named bool) (string, string) {
+	pick, why, _ := ChooseContinuation(Request{Backend: backend, Named: named}, false, "")
 	return pick, why
 }
 
@@ -500,7 +559,7 @@ func ChooseContinuation(req Request, noSwitch bool, freshField string) (string, 
 		return req.Backend, why, nil
 	}
 	if !noSwitch && req.Account == "" {
-		pick, why, _ := Pick(meant, now, nil)
+		pick, why, _ := pickFor(meant, now, nil, req.Named)
 		if pick != meant {
 			return pick, why, nil
 		}

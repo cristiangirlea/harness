@@ -584,3 +584,30 @@ func TestALimitedAccountCarriesOnInABatchBeforeThePartner(t *testing.T) {
 		t.Fatalf("fresh carry-on record: %+v, %v", rec, err)
 	}
 }
+
+func TestAnAttemptMeantForANearlySpentBackendStartsOnItsPartner(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	sessions := filepath.Join(home, "sessions", "2026", "01", "01")
+	if err := os.MkdirAll(sessions, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	line := fmt.Sprintf(`{"timestamp":%q,"payload":{"type":"token_count","rate_limits":{"secondary":{"used_percent":97,"window_minutes":10080,"resets_at":%d}}}}`,
+		time.Now().Format(time.RFC3339), time.Now().Add(48*time.Hour).Unix())
+	if err := os.WriteFile(filepath.Join(sessions, "rollout.jsonl"), []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, events := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "moved", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 1 {
+		t.Fatalf("task = %+v", tr)
+	}
+	if a := tr.Attempts[0]; a.Backend != "claude" || a.SwitchedFrom != "codex" {
+		t.Errorf("attempt on %s switched from %q", a.Backend, a.SwitchedFrom)
+	}
+	if s := eventTexts(events, "switch"); !strings.Contains(s, "codex has 3.0% of its weekly window left") {
+		t.Errorf("switch events = %q", s)
+	}
+}
