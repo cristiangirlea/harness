@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,7 +30,13 @@ var fixtureCapabilities = []pluginproto.Capability{
 	{Name: "fail", Description: "Report a failure."},
 	{Name: "wait", Description: "Wait for cancellation."},
 	{Name: "noisy", Description: "Emit terminal control characters."},
+	{Name: "vanish", Description: "Exit without answering."},
+	{Name: "giveup", Description: "Cancel the call on its own."},
+	{Name: "fancy", Description: "Return output with characters a terminal may act on."},
 }
+
+// fancyOutput holds a raw C1 control sequence introducer and a right-to-left override, both valid in JSON.
+var fancyOutput = `{"text":"` + string(rune(0x9b)) + "31mred" + string(rune(0x202e)) + string(rune(0x061c)) + `"}`
 
 func fakePluginMain(name string) int {
 	scanner := bufio.NewScanner(os.Stdin)
@@ -117,6 +124,12 @@ func fakePluginCall(encoder *json.Encoder, seq *int64, call *pluginproto.Call) e
 		res.Error = &pluginproto.Problem{Code: pluginproto.CodeInternal, Message: "fixture failure"}
 	case "noisy":
 		eventText = "\x1b]0;x\x07bad"
+	case "vanish":
+		os.Exit(3)
+	case "giveup":
+		res.Status = pluginproto.StatusCanceled
+	case "fancy":
+		res.Output = json.RawMessage(fancyOutput)
 	default:
 		return fmt.Errorf("unexpected capability %q", call.Capability)
 	}
@@ -350,7 +363,8 @@ func TestPluginCallsRecordFailuresWithOrWithoutAReplyAndTimeout(t *testing.T) {
 		msg  string
 	}{
 		{"failure", []string{"fail"}, kernel.StatusError, "internal: fixture failure"},
-		{"no result", []string{"unknown"}, kernel.StatusError, `unknown capability "unknown"`},
+		{"no result", []string{"vanish"}, kernel.StatusError, "plugin exited before the result"},
+		{"plugin gave up", []string{"giveup"}, kernel.StatusCanceled, "plugin canceled the call"},
 		{"timeout", []string{"wait", "--timeout", "300ms"}, kernel.StatusTimeout, "timed out after 300ms"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -439,6 +453,97 @@ func TestPluginCallRejectsInvalidInputBeforeRecordingARun(t *testing.T) {
 		t.Fatalf("oversize input: %v", err)
 	}
 	requireNoPluginRuns(t)
+}
+
+func TestPluginCallRejectsAnUnknownCapabilityWithoutRecordingARun(t *testing.T) {
+	home := useEmptyPluginHome(t)
+	installCommandPlugin(t, home, "fixture")
+	_, log, err := runPluginCommand(t, "", 2, "call", "fixture", "unknown")
+	if err == nil || !strings.Contains(err.Error(), `no capability "unknown"`) || strings.Contains(log, "run ") {
+		t.Fatalf("unknown capability: stderr %q, err %v", log, err)
+	}
+	requireNoPluginRuns(t)
+}
+
+func TestPluginCallRejectsInputWhoseCallLineWouldPassTheLimit(t *testing.T) {
+	home := useEmptyPluginHome(t)
+	installCommandPlugin(t, home, "fixture")
+	// The input alone fits the limit; the call line around it does not. Whitespace would not
+	// do: the call line holds the input compacted.
+	input := `{"a":"` + strings.Repeat("x", pluginproto.MaxLine-20) + `"}`
+	_, log, err := runPluginCommand(t, "", 2, "call", "fixture", "echo", "--input", input)
+	if err == nil || !strings.Contains(err.Error(), "call line would be") || strings.Contains(log, "run ") {
+		t.Fatalf("framed size: stderr %q, err %v", log, err)
+	}
+	requireNoPluginRuns(t)
+}
+
+func TestPluginCallRecordsACanceledRunWhenInterrupted(t *testing.T) {
+	home := useEmptyPluginHome(t)
+	installCommandPlugin(t, home, "fixture")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out bytes.Buffer
+	// Interrupt once the run is recorded: a fixed delay could land during a slow handshake.
+	log := &cancelOnRunWriter{cancel: cancel}
+	code, err := cmdPluginContext(ctx, strings.NewReader(""), &out, log, []string{"call", "fixture", "wait", "--timeout", "0"})
+	if code != 1 || err != nil {
+		t.Fatalf("interrupted call: exit %d, err %v, stderr %q", code, err, log.String())
+	}
+	rec := loadCommandPluginRun(t, log.String())
+	if !rec.Done || rec.Result.Status != kernel.StatusCanceled {
+		t.Fatalf("result: %+v", rec.Result)
+	}
+}
+
+type cancelOnRunWriter struct {
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	cancel context.CancelFunc
+}
+
+func (w *cancelOnRunWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.buf.Write(p)
+	if strings.Contains(w.buf.String(), "run ") {
+		w.cancel()
+	}
+	return n, err
+}
+
+func (w *cancelOnRunWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
+func TestPluginCallEscapesCharactersATerminalMayActOnWithoutChangingTheData(t *testing.T) {
+	home := useEmptyPluginHome(t)
+	installCommandPlugin(t, home, "fixture")
+	var want map[string]string
+	if err := json.Unmarshal([]byte(fancyOutput), &want); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"call", "fixture", "fancy"}, {"call", "fixture", "fancy", "--json"}} {
+		out, _, err := runPluginCommand(t, "", 0, args...)
+		if err != nil || strings.ContainsRune(out, 0x9b) || strings.ContainsRune(out, 0x202e) || strings.ContainsRune(out, 0x061c) || !strings.Contains(out, `\u`+"009b") || !strings.Contains(out, `\u`+"202e") || !strings.Contains(out, `\u`+"061c") {
+			t.Fatalf("%v: stdout %q, err %v", args, out, err)
+		}
+		var got map[string]string
+		if len(args) == 3 {
+			err = json.Unmarshal([]byte(out), &got)
+		} else {
+			var envelope struct {
+				Output map[string]string `json:"output"`
+			}
+			err = json.Unmarshal([]byte(out), &envelope)
+			got = envelope.Output
+		}
+		if err != nil || got["text"] != want["text"] {
+			t.Fatalf("%v: decoded %q, %v; want %q", args, got, err, want)
+		}
+	}
 }
 
 func TestPluginCallDoesNotRecordMissingPluginsOrRefusedHandshakes(t *testing.T) {

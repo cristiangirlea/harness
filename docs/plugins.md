@@ -182,13 +182,19 @@ seconds to return a result. At close, hrn closes the input stream and gives the 
 three seconds to exit.
 
 `hrn plugin call <name> <capability>` accepts a JSON object via `--input` or `--input-file`.
-Use `--input-file -` to read standard input. Files and standard input are limited to
-4 MiB. The call deadline defaults to 10 minutes. Use `--timeout 0` to disable it.
-The command prints progress and the run ID on standard error. Successful output goes to
-standard output. All three commands accept `--json` for machine-readable output.
+Use `--input-file -` to read standard input. The whole `call` line, with the input compacted,
+must fit in 4 MiB, so the input must be a little smaller than that. The call deadline defaults
+to 10 minutes. Use `--timeout 0` to disable it. The command prints progress and the run ID on
+standard error. Successful output goes to standard output. All three commands accept `--json`
+for machine-readable output. In JSON printed by these commands, the control characters JSON
+allows raw (U+007F to U+009F) and the bidirectional controls (U+061C, U+200E, U+200F,
+U+202A to U+202E and U+2066 to U+2069) are written as `\u` escapes, so the data is unchanged
+and a terminal cannot act on them.
 
 After a successful handshake, `hrn plugin call` saves a [run record](run-records.md#plugin-calls)
-with backend `plugin`. Plugin calls cannot be continued.
+with backend `plugin`. Plugin calls cannot be continued. A missing plugin, a refused handshake,
+invalid or oversized input, or a capability the plugin does not offer stops the command with
+no run recorded.
 
 ## Using the Go package
 

@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -90,6 +91,11 @@ func cmdPluginContext(ctx context.Context, stdin io.Reader, stdout, stderr io.Wr
 	if err != nil {
 		return 2, fmt.Errorf("%w\n%s", err, pluginUsage)
 	}
+	if command == "call" {
+		if err := checkCallLineSize(args[1], raw, timeout); err != nil {
+			return 2, err
+		}
+	}
 	found, err := plugin.Find(args[0])
 	if err != nil {
 		return 1, err
@@ -115,7 +121,51 @@ func cmdPluginContext(ctx context.Context, stdin io.Reader, stdout, stderr io.Wr
 		}
 		return 0, nil
 	}
-	return callCommandPlugin(ctx, stdout, stderr, s, found.Installed, dir, args[1], raw, timeout, *jsonOut)
+	capability := args[1]
+	if !slices.ContainsFunc(s.Info().Capabilities, func(c pluginproto.Capability) bool { return c.Name == capability }) {
+		// A typo is the caller's mistake, so it leaves no run behind.
+		return 2, errors.Join(fmt.Errorf("plugin %s has no capability %q (hrn plugin info %s lists them)", found.Name, capability, found.Name), s.Close())
+	}
+	return callCommandPlugin(ctx, stdout, stderr, s, found.Installed, dir, capability, raw, timeout, *jsonOut)
+}
+
+// checkCallLineSize refuses input whose call line, framing included, would exceed the protocol's line limit.
+func checkCallLineSize(capability string, input json.RawMessage, timeout time.Duration) error {
+	call := pluginproto.Call{Type: pluginproto.TypeCall, ID: "c1", Capability: capability, Input: input}
+	if timeout > 0 {
+		call.TimeoutMS = max(1, timeout.Milliseconds())
+	}
+	line, err := json.Marshal(call)
+	if err != nil {
+		return fmt.Errorf("input: %w", err)
+	}
+	if len(line) > pluginproto.MaxLine {
+		return fmt.Errorf("input is too large: the call line would be %d bytes, over the %d-byte limit", len(line), pluginproto.MaxLine)
+	}
+	return nil
+}
+
+// writeTerminalSafeJSON escapes the characters JSON allows raw but a terminal may act on.
+// The result decodes to the same value, so scripts reading stdout see identical data.
+func writeTerminalSafeJSON(w io.Writer, data []byte) error {
+	var out bytes.Buffer
+	for _, r := range string(data) {
+		if r >= 0x7f && r <= 0x9f || r == 0x061c || r == 0x200e || r == 0x200f || r >= 0x202a && r <= 0x202e || r >= 0x2066 && r <= 0x2069 {
+			fmt.Fprintf(&out, `\u%04x`, r)
+			continue
+		}
+		out.WriteRune(r)
+	}
+	_, err := w.Write(out.Bytes())
+	return err
+}
+
+func encodeTerminalSafeJSON(w io.Writer, v any) error {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return writeTerminalSafeJSON(w, append(data, '\n'))
 }
 
 func listCommandPlugins(stdout io.Writer, jsonOut bool) error {
@@ -133,7 +183,7 @@ func listCommandPlugins(stdout io.Writer, jsonOut bool) error {
 		for _, p := range found {
 			rows = append(rows, row{Name: p.Name, Path: p.Path, Installed: p.Installed})
 		}
-		return json.NewEncoder(stdout).Encode(struct {
+		return encodeTerminalSafeJSON(stdout, struct {
 			Plugins []row `json:"plugins"`
 		}{Plugins: rows})
 	}
@@ -155,7 +205,7 @@ func listCommandPlugins(stdout io.Writer, jsonOut bool) error {
 
 func printCommandPluginInfo(stdout io.Writer, info plugin.Info, jsonOut bool) error {
 	if jsonOut {
-		return json.NewEncoder(stdout).Encode(struct {
+		return encodeTerminalSafeJSON(stdout, struct {
 			Name         string                   `json:"name"`
 			Version      string                   `json:"version"`
 			Protocol     string                   `json:"protocol"`
@@ -292,7 +342,7 @@ func commandPluginResult(reply *pluginproto.Result, callErr error, duration time
 
 func printCommandPluginResult(stdout, stderr io.Writer, id, name, version, capability string, result kernel.Result, reported []kernel.Evidence, jsonOut bool) error {
 	if jsonOut {
-		return json.NewEncoder(stdout).Encode(struct {
+		return encodeTerminalSafeJSON(stdout, struct {
 			RunID            string            `json:"run_id"`
 			Plugin           string            `json:"plugin"`
 			Version          string            `json:"version"`
@@ -315,6 +365,5 @@ func printCommandPluginResult(stdout, stderr io.Writer, id, name, version, capab
 	if err := json.Indent(&pretty, []byte(result.Final), "", "  "); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintln(stdout, pretty.String())
-	return err
+	return writeTerminalSafeJSON(stdout, append(pretty.Bytes(), '\n'))
 }
