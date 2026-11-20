@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -153,5 +154,325 @@ func TestGitEvidenceIgnoresRepositoryOverrides(t *testing.T) {
 	t.Setenv("GIT_DIR", filepath.Join(dir, "missing"))
 	if got := gitEvidence(context.Background(), dir, "rev-parse", "--is-inside-work-tree"); got != "true\n" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func familiarityRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init"}, {"config", "user.name", "Person"}, {"config", "user.email", "person@example.test"}, {"commit", "--allow-empty", "-m", "base"}} {
+		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	return dir
+}
+
+func stubGit(t *testing.T, fn func(context.Context, *exec.Cmd) ([]byte, error)) {
+	t.Helper()
+	old := runGit
+	runGit = fn
+	t.Cleanup(func() { runGit = old })
+}
+
+func hangingGit(ctx context.Context, _ *exec.Cmd) ([]byte, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestFamiliarityLeavesOutFoldersOutsideRepositories(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	var calls atomic.Int32
+	stubGit(t, func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+		calls.Add(1)
+		return cmd.Output()
+	})
+	plain := t.TempDir()
+	runs := []runlog.Record{
+		{Task: agent.Task{Dir: plain}, Result: agent.Result{ChangedFiles: []string{"answer.txt"}}},
+		{Task: agent.Task{Dir: filepath.Join(plain, "gone")}, Result: agent.Result{ChangedFiles: []string{"answer.txt"}}},
+	}
+	got, err := deriveFamiliarity(context.Background(), Records{Runs: runs, Batches: []batch.Result{{Dir: plain}}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Unseen) != 0 || len(got.Known) != 0 || got.Partial || calls.Load() != 0 {
+		t.Fatalf("got %+v after %d git calls", got, calls.Load())
+	}
+}
+
+func TestFamiliarityStopsAtItsDeadline(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	stubGit(t, hangingGit)
+	var runs []runlog.Record
+	for range 12 {
+		runs = append(runs, runlog.Record{Task: agent.Task{Dir: familiarityRepo(t)}, Result: agent.Result{ChangedFiles: []string{"area/file"}}})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	got, err := deriveFamiliarity(ctx, Records{Runs: runs}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("took %v", elapsed)
+	}
+	if !got.Partial || len(got.Unseen) != 0 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestReadFamiliarityKeepsToItsBudget(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	old := familiarityBudget
+	familiarityBudget = 200 * time.Millisecond
+	t.Cleanup(func() { familiarityBudget = old })
+	stubGit(t, hangingGit)
+	for range 3 {
+		w, err := runlog.Create("fake", agent.Task{Dir: familiarityRepo(t)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(agent.Result{ChangedFiles: []string{"area/file"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := time.Now()
+	got, err := ReadFamiliarity(context.Background(), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second || !got.Partial {
+		t.Fatalf("got %+v after %v", got, elapsed)
+	}
+}
+
+func TestFamiliarityKeepsGitReads(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := familiarityRepo(t)
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	write := func(file string) {
+		t.Helper()
+		p := filepath.Join(dir, filepath.FromSlash(file))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(file), 0644); err != nil {
+			t.Fatal(err)
+		}
+		git("add", file)
+		git("commit", "-m", file)
+	}
+	write("personarea/f")
+	base := git("rev-parse", "HEAD")
+	git("checkout", "-b", "hrn/task")
+	write("middlearea/f")
+	write("agentarea/f")
+	head := git("rev-parse", "HEAD")
+	records := Records{Batches: []batch.Result{{Dir: dir, Base: base, Tasks: []batch.TaskResult{{Branch: "hrn/task", Commit: head}}}}}
+	now := time.Now()
+	check := func(name string, got Familiarity, partial bool) {
+		t.Helper()
+		if partial {
+			if !got.Partial || len(got.Known) != 0 || len(got.Unseen) != 0 {
+				t.Fatalf("%s: %+v", name, got)
+			}
+			return
+		}
+		if got.Partial || len(got.Known) != 1 || got.Known[0].Area != "personarea" || len(got.Unseen) != 2 || got.Unseen[0].Area != "agentarea" || got.Unseen[1].Area != "middlearea" {
+			t.Fatalf("%s: %+v", name, got)
+		}
+	}
+	first, err := deriveFamiliarity(context.Background(), records, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("first", first, false)
+	var calls atomic.Int32
+	stubGit(t, func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+		calls.Add(1)
+		return cmd.Output()
+	})
+	second, err := deriveFamiliarity(context.Background(), records, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("second", second, false)
+	if calls.Load() != 0 {
+		t.Fatalf("second read ran git %d times", calls.Load())
+	}
+	stubGit(t, hangingGit)
+	hung := func(at time.Time) Familiarity {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		got, err := deriveFamiliarity(ctx, records, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	check("stale", hung(now.Add(time.Hour)), false)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	warm, err := deriveFamiliarity(cancelled, records, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("warm after the deadline", warm, false)
+	check("too old", hung(now.Add(25*time.Hour)), true)
+	kept := loadFamiliarityCache()
+	if len(kept.Batches) != 1 || len(kept.Repos) != 1 {
+		t.Fatalf("a timed-out read dropped kept reads: %+v", kept)
+	}
+	if _, err := deriveFamiliarity(context.Background(), Records{}, now); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(Dir(), "familiarity-cache.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), head) || strings.Contains(string(data), "personarea") {
+		t.Fatalf("unused reads kept: %s", data)
+	}
+}
+
+func TestFamiliarityLeavesOutGitEvidenceOfAHalfReadRepository(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := familiarityRepo(t)
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	base := git("rev-parse", "HEAD")
+	git("checkout", "-b", "hrn/task")
+	if err := os.WriteFile(filepath.Join(dir, "agentfile"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-m", "agent under the person's identity")
+	head := git("rev-parse", "HEAD")
+	now := time.Now()
+	runs := []runlog.Record{{Task: agent.Task{Dir: dir}}}
+	if _, err := deriveFamiliarity(context.Background(), Records{Runs: runs}, now); err != nil {
+		t.Fatal(err)
+	}
+	name := repoName(dir)
+	reps := filepath.Join(Dir(), "reps")
+	if err := os.MkdirAll(reps, 0700); err != nil {
+		t.Fatal(err)
+	}
+	rep := `{"date":"2026-10-30","daily":{"kind":"read","source":"` + name + `#1","material":"+++ b/docs/a.md\n","answered_at":"2026-10-30T12:00:00Z"}}`
+	if err := os.WriteFile(filepath.Join(reps, "2026-10-30.json"), []byte(rep), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stubGit(t, hangingGit)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	records := Records{Runs: runs, Batches: []batch.Result{{Dir: dir, Base: base, Tasks: []batch.TaskResult{{Branch: "hrn/task", Commit: head}}}}}
+	got, err := deriveFamiliarity(ctx, records, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Partial || len(got.Unseen) != 0 || len(got.Known) != 1 || got.Known[0].Area != "docs" {
+		t.Fatalf("got %+v", got)
+	}
+	data, err := os.ReadFile(filepath.Join(Dir(), "familiarity-cache.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "agentfile") {
+		t.Fatalf("cached repository read dropped: %s", data)
+	}
+}
+
+func TestFamiliarityTakesARepositoryWithoutIdentityAsRead(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	empty := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(empty, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", empty)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := familiarityRepo(t)
+	if out, err := exec.Command("git", "-C", dir, "config", "--unset", "user.email").CombinedOutput(); err != nil {
+		t.Fatalf("unset: %v: %s", err, out)
+	}
+	runs := []runlog.Record{{Task: agent.Task{Dir: dir}, Result: agent.Result{ChangedFiles: []string{"area/file"}}}}
+	got, err := deriveFamiliarity(context.Background(), Records{Runs: runs}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Partial || len(got.Unseen) != 1 || got.Unseen[0].Area != "area" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestFamiliarityGitReadsDoNotGrowWithRecords(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	var calls atomic.Int32
+	stubGit(t, func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+		calls.Add(1)
+		return cmd.Output()
+	})
+	dir := familiarityRepo(t)
+	gone := t.TempDir()
+	var runs []runlog.Record
+	for i := range 250 {
+		d := dir
+		if i%5 == 0 {
+			d = filepath.Join(gone, "eval", strings.Repeat("r", i%7+1), "work")
+		}
+		runs = append(runs, runlog.Record{Task: agent.Task{Dir: d}, Result: agent.Result{ChangedFiles: []string{"area/file"}}})
+	}
+	if _, err := deriveFamiliarity(context.Background(), Records{Runs: runs}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("%d git calls for 250 records in one repository", n)
+	}
+}
+
+func TestFamiliarityCacheRejectsWhatItCannotTrust(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := familiarityRepo(t)
+	if err := os.MkdirAll(Dir(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(Dir(), "familiarity-cache.json")
+	if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	runs := []runlog.Record{{Task: agent.Task{Dir: dir}}}
+	records := Records{Runs: runs, Batches: []batch.Result{{Dir: dir, Base: "HEAD", Tasks: []batch.TaskResult{{Branch: "hrn/task", Commit: "main"}}}}}
+	if _, err := deriveFamiliarity(context.Background(), records, now); err != nil {
+		t.Fatal(err)
+	}
+	c := loadFamiliarityCache()
+	if len(c.Batches) != 0 || len(c.Repos) != 1 {
+		t.Fatalf("cache: %+v", c)
+	}
+	root, _ := filepath.Abs(dir)
+	c.Repos[root] = repoEvidence{Checked: now.Add(time.Hour), Commits: []authored{{Hash: strings.Repeat("a", 40), At: now.Unix(), Areas: []string{"invented"}}}}
+	saveFamiliarityCache(c)
+	got, err := deriveFamiliarity(context.Background(), Records{Runs: runs}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Partial || len(got.Known) != 0 {
+		t.Fatalf("future-dated read was trusted: %+v", got)
 	}
 }
