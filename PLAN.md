@@ -297,6 +297,19 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-20: #880, the plugin protocol v1 and the contracts module (PR #958), the first code
+  slice of #878. `docs/plugins.md` is the contract: JSON lines, the host speaks first (`hello`,
+  then the plugin's `ready` with the version it chose), one call in flight per process,
+  `timeout_ms` as an integer, opaque `input` and `output`, evidence a plugin reports but does not
+  certify. `contracts/` is a nested standard-library module anyone can import;
+  `internal/pluginproto` is the root's byte-identical copy under an identity test, so the root
+  keeps no `require` (decision (b) of #878 as the spec recommends). The review found the page and
+  the parser apart in five places, fixed before the push: a repeated key is refused in every
+  object the protocol reads, `null` means absent for every optional field, and
+  `hello.limits.max_line` must equal 4194304. No fuzz target: the CI rule needs each one invoked
+  by path, which a nested module cannot be, so the parsers have one named case per rule. Checked
+  after the merge: another module fetches `contracts` alone at the merge commit and uses it; its
+  `go` line raises the importer's to 1.26.10, a choice left open. hrn starts no plugin yet (#881).
 - 2026-11-20: routing starts a run on the partner when a backend's plan quota is nearly spent
   (#952, PR #955). Before a run starts, a known 5h or weekly window under 5% left moves it to the
   partner, as a remembered limit does, and the info event names the window. An unknown, stale or
