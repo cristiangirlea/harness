@@ -105,8 +105,8 @@ early. A `cancel` for an `id` that is not in flight gets an `error` line with co
 `bad_request` that carries that `id`.
 
 A `cancel` can cross a `result` in the pipe: the plugin finishes, then reads a `cancel` for a
-call that is over, and answers with that `error` line. A host ignores an `error` line that names
-a call it has already finished.
+call that is over. It answers with that `error` line before it writes any line of the next call,
+and the host ignores that one line.
 
 ### `result` (plugin, last line of a call)
 

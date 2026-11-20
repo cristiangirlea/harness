@@ -71,6 +71,29 @@ func TestDiscoveryIgnoresCommandScriptsOnWindows(t *testing.T) {
 	}
 }
 
+func TestFindAndListAgreeWhenAnEarlierPathEntryHoldsALookalike(t *testing.T) {
+	pluginHome(t)
+	t.Setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+	real := t.TempDir()
+	exe := copyFake(t, real, "echo")
+	prependPath(t, real)
+	lookalike := t.TempDir()
+	if err := os.WriteFile(filepath.Join(lookalike, "hrn-echo.exe.bat"), []byte("@echo off\r\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prependPath(t, lookalike)
+	found, err := Find("echo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFound(t, found, "echo", exe, false)
+	listed, err := List()
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("List() = %+v, %v", listed, err)
+	}
+	assertFound(t, listed[0], "echo", exe, false)
+}
+
 func TestDiscoveryIgnoresFilesWithoutAnExecuteBitOnUnix(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not use Unix execute bits")

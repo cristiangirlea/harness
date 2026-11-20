@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -37,15 +36,19 @@ func Find(name string) (Found, error) {
 	if path := installedPath(root, name); isExecutable(path) {
 		return Found{Name: name, Path: path, Installed: true}, nil
 	}
-	path, err := exec.LookPath(executableName(name))
-	if err != nil || !filepath.IsAbs(path) || (runtime.GOOS == "windows" && !strings.EqualFold(filepath.Ext(path), ".exe")) {
-		return Found{}, fmt.Errorf("%w: %s (install it with: %s)", ErrNotFound, name, InstallHint(name))
+	// The same walk as List, so the two never disagree about what a plugin file is.
+	for _, dir := range pathDirs() {
+		if path := filepath.Join(dir, executableName(name)); isExecutable(path) {
+			return Found{Name: name, Path: path}, nil
+		}
 	}
-	path, err = filepath.Abs(path)
-	if err != nil {
-		return Found{}, fmt.Errorf("plugin %s: resolve executable path: %w", name, err)
-	}
-	return Found{Name: name, Path: path}, nil
+	return Found{}, fmt.Errorf("%w: %s (install it with: %s)", ErrNotFound, name, InstallHint(name))
+}
+
+func pathDirs() []string {
+	return slices.DeleteFunc(filepath.SplitList(os.Getenv("PATH")), func(dir string) bool {
+		return !filepath.IsAbs(dir)
+	})
 }
 
 // List returns plugins sorted by name, with installed plugins shadowing those on PATH.
@@ -65,10 +68,7 @@ func List() ([]Found, error) {
 			found[name] = Found{Name: name, Path: path, Installed: true}
 		}
 	}
-	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if !filepath.IsAbs(dir) {
-			continue
-		}
+	for _, dir := range pathDirs() {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
