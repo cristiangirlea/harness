@@ -79,11 +79,12 @@ func cmdBot(args []string) error {
 }
 
 func cmdBotStats(args []string) error {
-	if len(args) == 1 && args[0] == "--json" {
-		return cmdBotStatsJSON()
+	jsonOut, repo, err := botStatsArgs(args)
+	if err != nil {
+		return err
 	}
-	if len(args) > 0 {
-		return fmt.Errorf("unexpected argument %q: hrn bot stats takes none", args[0])
+	if jsonOut {
+		return cmdBotStatsJSON(repo)
 	}
 	if err := game.Rebuild(); err != nil {
 		var recordErr *game.PracticeRecordError
@@ -171,6 +172,53 @@ func printFamiliarity(w io.Writer, f game.Familiarity) {
 	}
 }
 
+// botStatsArgs reads --json and --repo OWNER/NAME, in any order, each at most once.
+func botStatsArgs(args []string) (jsonOut bool, repo string, err error) {
+	seenRepo := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		isRepo := arg == "--repo" || strings.HasPrefix(arg, "--repo=")
+		switch {
+		case arg == "--json" && !jsonOut:
+			jsonOut = true
+		case isRepo && seenRepo:
+			return false, "", errors.New("--repo is given once")
+		case isRepo:
+			seenRepo = true
+			if value, ok := strings.CutPrefix(arg, "--repo="); ok {
+				repo = value
+			} else if i+1 < len(args) {
+				i++
+				repo = args[i]
+			} else {
+				return false, "", errors.New("--repo needs a value: OWNER/NAME")
+			}
+		default:
+			return false, "", fmt.Errorf("unexpected argument %q: hrn bot stats takes only --json and --repo OWNER/NAME", arg)
+		}
+	}
+	if seenRepo && !game.RepoName(repo) {
+		return false, "", fmt.Errorf("--repo wants OWNER/NAME, got %q", repo)
+	}
+	if seenRepo && !jsonOut {
+		return false, "", errors.New("--repo needs --json")
+	}
+	return jsonOut, repo, nil
+}
+
+type statsRepo struct {
+	Name  string         `json:"name"`
+	Week  int            `json:"week"`
+	Days  []int          `json:"days"`
+	Kinds map[string]int `json:"kinds"`
+	Share float64        `json:"share"`
+}
+
+type statsTop struct {
+	Repo string `json:"repo"`
+	Week int    `json:"week"`
+}
+
 type statsAda struct {
 	Level      int `json:"level"`
 	XPThisWeek int `json:"xp_this_week"`
@@ -207,7 +255,8 @@ func jsonFamiliarity(f game.Familiarity) *statsFamiliarity {
 	return out
 }
 
-func cmdBotStatsJSON() error {
+// cmdBotStatsJSON prints the stats; given a repository it adds that repository's delivery and skips familiarity.
+func cmdBotStatsJSON(repo string) error {
 	settings, err := game.LoadSettings()
 	if err != nil {
 		return err
@@ -252,17 +301,9 @@ func cmdBotStatsJSON() error {
 		badges = append(badges, game.BadgeName(badge.Key))
 	}
 	var familiarity *statsFamiliarity
-	f, err := game.ReadFamiliarity(context.Background(), now)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "hrn bot stats: familiarity: %v\n", err)
-	} else {
-		if f.UnreadablePractice {
-			fmt.Fprintln(os.Stderr, "hrn bot stats: familiarity: practice records unreadable")
-		}
-		if f.Partial {
-			fmt.Fprintln(os.Stderr, "hrn bot stats: familiarity: time limit reached, some repositories were skipped")
-		}
-		familiarity = jsonFamiliarity(f)
+	// Familiarity walks every run record; a caller asking for one repository wants a quick answer.
+	if repo == "" {
+		familiarity = readStatsFamiliarity(now)
 	}
 	result := struct {
 		Version   int    `json:"version"`
@@ -280,10 +321,37 @@ func cmdBotStatsJSON() error {
 		Exercise    *statsExercise    `json:"exercise"`
 		Familiarity *statsFamiliarity `json:"familiarity"`
 		Ada         *statsAda         `json:"ada,omitempty"`
+		Repo        *statsRepo        `json:"repo,omitempty"`
+		Top         *[]statsTop       `json:"top,omitempty"`
 	}{Version: 1, Enabled: true, Level: game.Level(totals.Person), XP: totals.Person, WeekStart: week.Format("2006-01-02"), Streak: streakValue, Days: days, Badges: badges, Exercise: exercise, Familiarity: familiarity}
 	result.Ada = &statsAda{Level: totals.AdaLevel, XPThisWeek: weekly[game.TrackAda], XP: totals.XP[game.TrackAda]}
 	result.Week.Delivery, result.Week.Practice = weekly[game.TrackDelivery], weekly[game.TrackPractice]
+	if repo != "" {
+		d := totals.Repo(repo, now)
+		result.Repo = &statsRepo{Name: repo, Week: d.Week, Days: d.Days, Kinds: d.Kinds, Share: d.Share}
+		top := []statsTop{}
+		for _, r := range totals.TopRepos(week, 5) {
+			top = append(top, statsTop{Repo: r.Repo, Week: r.Week})
+		}
+		result.Top = &top
+	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+// readStatsFamiliarity is nil when familiarity cannot be read, with the reason on stderr.
+func readStatsFamiliarity(now time.Time) *statsFamiliarity {
+	f, err := game.ReadFamiliarity(context.Background(), now)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hrn bot stats: familiarity: %v\n", err)
+		return nil
+	}
+	if f.UnreadablePractice {
+		fmt.Fprintln(os.Stderr, "hrn bot stats: familiarity: practice records unreadable")
+	}
+	if f.Partial {
+		fmt.Fprintln(os.Stderr, "hrn bot stats: familiarity: time limit reached, some repositories were skipped")
+	}
+	return jsonFamiliarity(f)
 }
 
 // Verify bot support because another service or an older watch may own the port.
