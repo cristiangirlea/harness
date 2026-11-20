@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/egress"
 	"github.com/cristiangirlea/harness/internal/envpolicy"
 	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/nowindow"
@@ -337,6 +338,22 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		key := accountHomeEnv(c.name)
 		cmd.Env = append(withoutEnv(cmd.Env, key), key+"="+task.AccountHome)
 	}
+	// After the allowlist and before the guard: the operator's own proxy is replaced and the guard keeps these.
+	var egressLine string
+	if len(task.Egress) > 0 {
+		hosts := egressHosts(c.name, task.Egress)
+		refusals := &egressRefusals{}
+		proxy, err := egress.Start(ctx, egress.Options{Hosts: hosts, OnDeny: refusals.add})
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		defer func() {
+			proxy.Close()
+			refusals.report(emit)
+		}()
+		cmd.Env = withEgressProxy(cmd.Env, proxy.URL(), egressDefaults[c.name].node)
+		egressLine = fmt.Sprintf("egress: advisory; %d hosts allowed; a process that ignores proxy variables is not stopped", len(hosts))
+	}
 	guarded := !task.AllowDangerous
 	if guarded {
 		guardDir, err := os.MkdirTemp("", "hrn-guard-*")
@@ -376,6 +393,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: gateLine})
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: envLine})
+	if egressLine != "" {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: egressLine})
+	}
 	if task.AccountHome != "" {
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "account: " + c.Account})
 	}

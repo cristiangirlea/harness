@@ -290,6 +290,12 @@ they apply per attempt rather than per task, so a retry gets its own allowance. 
 may set its own value or change the spec's, but zero means inherit, so it cannot remove
 a limit the spec set.
 
+`egress` (a list of host names, spec or task field) gives each attempt's CLI agent its own
+allowlisting proxy, as `--egress` does for a run; see
+[Egress allowlist](permissions.md#egress-allowlist-advisory). A task's list replaces the
+spec's rather than adding to it; an empty list is refused, so a task cannot drop the
+spec's proxy. The gate commands do not go through the proxy.
+
 Each attempt gives its agent and gates a temporary folder under `.hrn-gate-tmp` outside
 the main checkout and any enclosing Git worktree. This keeps fixture discovery out of
 the checkout and avoids cross-volume renames. If that folder cannot be created on the

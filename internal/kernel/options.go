@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/egress"
 )
 
 // Options shares CLI, batch, and MCP configuration.
@@ -59,6 +61,9 @@ type Options struct {
 	// instead of the allowlisted one (sanitizedEnv); the guard still applies.
 	InheritEnv bool `json:"inherit_env,omitempty" flag:"inherit-env" desc:"Start agent CLIs with your whole environment instead of an allowlisted one; the guard still applies (CLI backends)."`
 
+	// Egress starts an allowlisting proxy for an agent CLI; the backend's own hosts are added to these.
+	Egress HostList `json:"egress,omitempty" desc:"Point agent CLIs at a proxy of the run's own that tunnels HTTPS only to these exact host names, plus the backend's own; advisory: a process that ignores proxy variables is not stopped (CLI backends; default off)."`
+
 	// Timeout ends the run when it passes; zero means no deadline.
 	Timeout Duration `json:"timeout,omitempty" desc:"Stop the run after this long, e.g. 20m."`
 
@@ -109,6 +114,13 @@ func (o Options) ValidateShape() error {
 		return fmt.Errorf("append_system_prompt holds a NUL byte, which no command line can carry")
 	}
 	if err := o.CompactWindow.Check(); err != nil {
+		return err
+	}
+	// An empty list in a batch task would quietly drop the spec's proxy.
+	if o.Egress != nil && len(o.Egress) == 0 {
+		return fmt.Errorf("egress is an empty list; leave it out to run without the proxy")
+	}
+	if err := egress.ValidateHosts(o.Egress); err != nil {
 		return err
 	}
 	if math.IsNaN(o.MaxCostUSD) || math.IsInf(o.MaxCostUSD, 0) {

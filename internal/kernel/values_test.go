@@ -54,3 +54,33 @@ func TestCompactWindowAcceptsTheSharedRangeAndAuto(t *testing.T) {
 		}
 	}
 }
+
+func TestTheEgressFlagTakesACommaListAndRepeats(t *testing.T) {
+	var h HostList
+	for _, v := range []string{"api.example.com, auth.example.com", "chat.example.com"} {
+		if err := h.Set(v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if want := "api.example.com,auth.example.com,chat.example.com"; h.String() != want {
+		t.Fatalf("hosts %q, want %q", h.String(), want)
+	}
+	data, err := json.Marshal(Options{Egress: h})
+	if err != nil || string(data) != `{"egress":["api.example.com","auth.example.com","chat.example.com"]}` {
+		t.Fatalf("json %s, %v", data, err)
+	}
+	if s := (Options{}).Schema()["egress"].(map[string]any); s["type"] != "array" {
+		t.Errorf("schema %v, want an array", s)
+	}
+}
+
+func TestEgressHostsAreCheckedBeforeARun(t *testing.T) {
+	if err := (Options{Egress: HostList{"api.example.com"}}).ValidateShape(); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []HostList{{"*.example.com"}, {"10.0.0.1"}, {"example.com:443"}, {"Example.com"}, {"example.com", "example.com"}, {""}, {}} {
+		if err := (Options{Egress: bad}).ValidateShape(); err == nil || !strings.Contains(err.Error(), "egress") {
+			t.Errorf("egress %q: %v, want an egress error", bad, err)
+		}
+	}
+}

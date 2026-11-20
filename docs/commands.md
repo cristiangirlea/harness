@@ -159,6 +159,9 @@ at most 16 KiB), `--no-skills` (claude: skills off; see
 [Harness variants](evaluations.md#harness-variants)),
 `--allow-dangerous`, `--inherit-env` (CLI backends: your whole environment; see
 [A clean environment for CLI workers](backends.md#a-clean-environment-for-cli-workers)),
+`--egress HOSTS` (CLI backends: a comma list, repeatable, of exact host names the run's
+proxy tunnels HTTPS to, besides the backend's own; advisory, see
+[Egress allowlist](permissions.md#egress-allowlist-advisory)),
 `--no-switch` and `--wait-limit D` (wait up to D, e.g. `2h`, for the soonest remembered reset
 when every eligible backend is at its usage limit, then start on that backend; default 0 ends
 the run `limited` as before; see
