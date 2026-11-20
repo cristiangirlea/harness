@@ -297,6 +297,15 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-20: routing starts a run on the partner when a backend's plan quota is nearly spent
+  (#952, PR #955). Before a run starts, a known 5h or weekly window under 5% left moves it to the
+  partner, as a remembered limit does, and the info event names the window. An unknown, stale or
+  implausible window (a reset further off than 6h or 8 days) never moves a run; a partner that is
+  not ready or is low too keeps it in place; backends with accounts keep `account_reserve_percent`.
+  A named `-b` or MCP `backend` stays with a warning, since the plan still answers until the limit
+  and the figure is the last one reported; a remembered limit still moves it. Retrieval-pinned
+  continuations and retrieval batches stay too. Limits: not tried against a real quota, and a
+  figure reported hours ago counts while its reset is ahead.
 - 2026-11-19: `hrn update` follows a redirected download only to the release's own hosts (#947,
   PR #948). Each hop passes the rule that judges the first address, at most five redirects, and
   the caller's own redirect check still runs. Found while reviewing the install scripts.
