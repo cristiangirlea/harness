@@ -158,8 +158,9 @@ func newClaudeGateParse(gate, policy string) func([]byte, func(Event), *Result) 
 		if line == nil {
 			if msg := g.unanswered(); msg != "" {
 				emit(Event{Time: time.Now(), Kind: EventError, Text: msg})
+				res.GateStop = true
 				if res.Status == "" || res.Status == StatusOK {
-					res.Status, res.Error, res.GateStop = StatusError, msg, true
+					res.Status, res.Error = StatusError, msg
 				}
 			}
 			return parsed

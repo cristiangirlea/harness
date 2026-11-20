@@ -719,3 +719,27 @@ func TestRunToolStartsNothingOnABackendDisabledDuringTheWait(t *testing.T) {
 		t.Fatalf("calls = %d, slept %d, error %v: %s", calls.Load(), slept, res.IsError, res.Text())
 	}
 }
+
+func TestRunToolDoesNotCarryOnOnABackendDisabledDuringTheWaitAfterALimit(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	var slept int
+	orig := followup.WaitSleep
+	followup.WaitSleep = func(context.Context, time.Duration) error {
+		slept++
+		return prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude"}})
+	}
+	t.Cleanup(func() { followup.WaitSleep = orig })
+	var calls atomic.Int32
+	agent.Register(scripted{"codex", func(agent.Task) agent.Result {
+		calls.Add(1)
+		return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(20 * time.Second)}
+	}})
+	if err := limits.Note("claude", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	res := s.call(t, "run", `{"prompt":"fix it","backend":"codex","mode":"auto","wait_limit":"1m"}`)
+	if calls.Load() != 1 || slept != 1 || !strings.Contains(res.Text(), "not carried on: not started after the wait: codex is no longer enabled") {
+		t.Fatalf("calls = %d, slept %d: %s", calls.Load(), slept, res.Text())
+	}
+}

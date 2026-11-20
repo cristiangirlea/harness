@@ -81,6 +81,7 @@ var gateStreams = map[string][]string{
 	"monitor":      {gateUse("a", "Monitor")},
 	"repl":         {gateUse("a", "REPL")},
 	"ended":        {gateUse("a", "Bash"), gateDone},
+	"endederror":   {gateUse("a", "Bash"), `{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":1,"result":"boom"}`},
 }
 
 // TestHelperCLIGate is not a test: the test binary acts as the claude CLI, records what it was
@@ -112,7 +113,7 @@ func TestHelperCLIGate(t *testing.T) {
 		l = strings.ReplaceAll(l, gatePlaceholder, os.Getenv("HRN_GATE_PATH"))
 		fmt.Println(strings.ReplaceAll(l, " '--script-b64'", " '--policy' '"+policy+"' '--script-b64'"))
 	}
-	if !strings.Contains(lines[len(lines)-1], `"type":"result"`) && stream != "ended" {
+	if !strings.Contains(lines[len(lines)-1], `"type":"result"`) && stream != "ended" && stream != "endederror" {
 		time.Sleep(30 * time.Second)
 	}
 	os.Exit(0)
@@ -438,6 +439,14 @@ func TestGatedClaudeRunThatEndsWithAnUnansweredCallFails(t *testing.T) {
 	res, _, _ := runGatedClaude(t, "ended", Options{Mode: ModeYolo, Gate: true})
 	if res.Status != StatusError || !strings.Contains(res.Error, "without the gate's answer") || !res.GateStop {
 		t.Fatalf("result = %s %q", res.Status, res.Error)
+	}
+}
+
+func TestGatedClaudeRunThatErrsWithAnUnansweredCallIsAGateStop(t *testing.T) {
+	installFakeGate(t)
+	res, _, _ := runGatedClaude(t, "endederror", Options{Mode: ModeYolo, Gate: true})
+	if res.Status != StatusError || !res.GateStop {
+		t.Fatalf("result = %s %q gate stop %v", res.Status, res.Error, res.GateStop)
 	}
 }
 

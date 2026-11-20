@@ -550,7 +550,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			s.tr.Error = fmt.Sprintf("gate %q: %s", g.Command, g.Outcome())
 			return taskEnd{StatusFail, s.tr.Error}
 		}
-		// Only an attempt that left nothing behind, was not refused before it started and was not stopped for running ungated is worth replaying.
+		// Replaying is worth it only for a clean failure: no work left, no refusal, no ungated command.
 		if att := out.att; att.Result.Status == agent.StatusError && len(att.Gates) == 0 && !s.spec.SingleAttempt && backoffs < maxBackoffs &&
 			out.noWork && !att.Result.StartRefusal && !att.Result.GateStop && installed(b) {
 			delay := min(backoffBase<<backoffs, backoffCap)

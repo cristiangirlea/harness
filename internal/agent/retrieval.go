@@ -151,7 +151,12 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 				return fail(fmt.Errorf("retrieval canceled"))
 			}
 			if state.Mode != "optional" || !errors.Is(err, retrieval.ErrUnavailable) {
-				return fail(fmt.Errorf("retrieval request rejected or unavailable: %w", err))
+				err = fmt.Errorf("retrieval request rejected or unavailable: %w", err)
+				// A replay that cannot search refuses every retry, so retrying it gains nothing.
+				if previous != nil {
+					return fail(retrievalRefusal{err})
+				}
+				return fail(err)
 			}
 			if previous == nil {
 				state.Packet = nil

@@ -270,7 +270,8 @@ list moves on. An attempt that left work, and a refusal before the agent started
 name that is not one, an option the backend does not support, claude refusing to bill per
 token), go to the `retry` list at once. Each retry records the delay
 it waited as `backoff`, which `hrn batch show` prints; cancelling the batch stops the wait. A
-failed gate, a `limited` run and the other statuses in the table above are never backed off.
+failed gate, a `limited` run, a gated run stopped because a command may have run ungated,
+and the other statuses in the table above are never backed off.
 
 A continued attempt commits as `<id>: <prompt> (attempt N)`, so the branch reads as a
 sequence of fixes. Each attempt records the prompt it was actually sent, whether it

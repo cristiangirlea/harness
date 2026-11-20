@@ -290,8 +290,8 @@ func TestRetrievalKeepsThePinThroughAFailedReplay(t *testing.T) {
 	task.RetrievalState, task.RunDir, task.RetrievalRepair = first.Retrieval, t.TempDir(), true
 	task.Prompt = "task\nGate failed: ERR_REAL_FAILURE"
 	second := Run(context.Background(), b, task, func(Event) {})
-	if second.Status != StatusError || !strings.Contains(second.Error, "retrieval request rejected or unavailable") || second.StartRefusal {
-		t.Fatal("repair search did not fail as one worth retrying", second)
+	if second.Status != StatusError || !strings.Contains(second.Error, "retrieval request rejected or unavailable") || !second.StartRefusal {
+		t.Fatal("repair search failure was not a refusal", second)
 	}
 	_, network = retrievalServer(t, 200, "verified fixture")
 	task.Knowledge = knowledgeFactory

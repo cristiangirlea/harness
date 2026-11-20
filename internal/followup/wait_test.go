@@ -416,3 +416,14 @@ func TestUsableRefusesAnAccountNoLongerDeclaredOrABackendThatWouldBillPerToken(t
 		t.Fatalf("per-token billing: %v", err)
 	}
 }
+
+func TestUsableRefusesWhenThePreferencesCannotBeRead(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "backends.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Usable("codex", ""); !errors.Is(err, ErrChanged) || !strings.Contains(err.Error(), "preferences could not be read") {
+		t.Fatalf("unreadable preferences: %v", err)
+	}
+}
