@@ -182,6 +182,9 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	if task.NoSkills {
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "no_skills: not enforced by the api backend"})
 	}
+	if len(task.Egress) > 0 {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "egress: not applied by the api backend; run_command children are not proxied"})
+	}
 	if err := CheckCompactWindow(b.Name(), task.CompactWindow); err != nil {
 		return fail(StatusError, err)
 	}
