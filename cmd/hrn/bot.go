@@ -146,6 +146,11 @@ func cmdBotStats(args []string) error {
 		fmt.Fprintf(os.Stderr, "hrn bot stats: familiarity: %v\n", err)
 		return nil
 	}
+	printFamiliarity(os.Stdout, familiarity)
+	return nil
+}
+
+func printFamiliarity(w io.Writer, f game.Familiarity) {
 	showAreas := func(label string, areas []game.AreaExposure) {
 		var names []string
 		for _, area := range areas {
@@ -158,11 +163,13 @@ func cmdBotStats(args []string) error {
 		if len(names) == 0 {
 			names = append(names, "none yet")
 		}
-		fmt.Printf("%s: %s\n", label, strings.Join(names, ", "))
+		fmt.Fprintf(w, "%s: %s\n", label, strings.Join(names, ", "))
 	}
-	showAreas("areas you know", familiarity.Known)
-	showAreas("areas agents changed you have not looked at", familiarity.Unseen)
-	return nil
+	showAreas("areas you know", f.Known)
+	showAreas("areas agents changed you have not looked at", f.Unseen)
+	if f.Partial {
+		fmt.Fprintln(w, "familiarity: time limit reached, some repositories were skipped")
+	}
 }
 
 // botStatsArgs reads --json and --repo OWNER/NAME, in any order, each at most once.
@@ -232,8 +239,20 @@ type statsArea struct {
 }
 
 type statsFamiliarity struct {
-	Known  []statsArea `json:"known"`
-	Unseen []statsArea `json:"unseen"`
+	Known   []statsArea `json:"known"`
+	Unseen  []statsArea `json:"unseen"`
+	Partial bool        `json:"partial"`
+}
+
+func jsonFamiliarity(f game.Familiarity) *statsFamiliarity {
+	out := &statsFamiliarity{Known: []statsArea{}, Unseen: []statsArea{}, Partial: f.Partial}
+	for _, a := range f.Known {
+		out.Known = append(out.Known, statsArea{a.Repo, a.Area, a.Count})
+	}
+	for _, a := range f.Unseen {
+		out.Unseen = append(out.Unseen, statsArea{a.Repo, a.Area, a.Count})
+	}
+	return out
 }
 
 // cmdBotStatsJSON prints the stats; given a repository it adds that repository's delivery and skips familiarity.
@@ -329,14 +348,10 @@ func readStatsFamiliarity(now time.Time) *statsFamiliarity {
 	if f.UnreadablePractice {
 		fmt.Fprintln(os.Stderr, "hrn bot stats: familiarity: practice records unreadable")
 	}
-	familiarity := &statsFamiliarity{Known: []statsArea{}, Unseen: []statsArea{}}
-	for _, a := range f.Known {
-		familiarity.Known = append(familiarity.Known, statsArea{a.Repo, a.Area, a.Count})
+	if f.Partial {
+		fmt.Fprintln(os.Stderr, "hrn bot stats: familiarity: time limit reached, some repositories were skipped")
 	}
-	for _, a := range f.Unseen {
-		familiarity.Unseen = append(familiarity.Unseen, statsArea{a.Repo, a.Area, a.Count})
-	}
-	return familiarity
+	return jsonFamiliarity(f)
 }
 
 // Verify bot support because another service or an older watch may own the port.

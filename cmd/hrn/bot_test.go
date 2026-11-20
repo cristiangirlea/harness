@@ -544,3 +544,31 @@ func TestBotStatsRefusesABadRepo(t *testing.T) {
 		}
 	}
 }
+
+func TestBotStatsSaysWhenFamiliarityWasCutShort(t *testing.T) {
+	f := game.Familiarity{Known: []game.AreaExposure{{Repo: "owner/repo", Area: "docs", Count: 2}}, Partial: true}
+	var text bytes.Buffer
+	printFamiliarity(&text, f)
+	if !strings.Contains(text.String(), "areas you know: owner/repo/docs (2)") || !strings.Contains(text.String(), "familiarity: time limit reached, some repositories were skipped") {
+		t.Fatalf("text: %s", text.String())
+	}
+	text.Reset()
+	printFamiliarity(&text, game.Familiarity{})
+	if strings.Contains(text.String(), "time limit") {
+		t.Fatalf("complete read: %s", text.String())
+	}
+	b, err := json.Marshal(jsonFamiliarity(f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"partial":true`) {
+		t.Fatalf("json: %s", b)
+	}
+	b, err = json.Marshal(jsonFamiliarity(game.Familiarity{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"partial":false`) {
+		t.Fatalf("json: %s", b)
+	}
+}
