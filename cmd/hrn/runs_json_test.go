@@ -124,6 +124,14 @@ func TestRunsJSONWithoutRepoListsEveryRepositoryAndAnEmptyListAsAnArray(t *testi
 	}
 }
 
+func TestRunsJSONAcceptsADotLedRepositoryName(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	id := writeRun(t, time.Hour, "aaaaaa", "github.com/example/.github", "", true)
+	if got, out := readRunsJSON(t, "--json", "--repo", "example/.github"); len(got.Runs) != 1 || got.Runs[0].ID != id {
+		t.Fatalf("runs = %s; want the run of example/.github", out)
+	}
+}
+
 func TestRunsRefusesABadRepo(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	for _, c := range []struct {
@@ -133,6 +141,7 @@ func TestRunsRefusesABadRepo(t *testing.T) {
 		{[]string{"--repo", "example/app"}, "--repo needs --json"},
 		{[]string{"--json", "--repo", "app"}, "OWNER/NAME"},
 		{[]string{"--json", "--repo", "../x"}, "OWNER/NAME"},
+		{[]string{"--json", "--repo", "example/.."}, "OWNER/NAME"},
 		{[]string{"--json", "--repo", "github.com/example/app"}, "OWNER/NAME"},
 		{[]string{"--json", "--repo="}, "OWNER/NAME"},
 		{[]string{"example/app", "--json"}, "unexpected argument"},

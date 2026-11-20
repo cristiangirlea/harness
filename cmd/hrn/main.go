@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"runtime/debug"
 	"slices"
 	"sort"
@@ -29,6 +28,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/followup"
+	"github.com/cristiangirlea/harness/internal/game"
 	"github.com/cristiangirlea/harness/internal/hrnmcp"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mask"
@@ -792,7 +792,7 @@ func cmdRuns(args []string) error {
 	}
 	repoSet := false
 	fs.Visit(func(f *flag.Flag) { repoSet = repoSet || f.Name == "repo" })
-	if repoSet && !runsRepoArg.MatchString(*repo) {
+	if repoSet && !game.RepoName(*repo) {
 		return fmt.Errorf("--repo wants OWNER/NAME, got %q", *repo)
 	}
 	if repoSet && !*jsonOut {
@@ -831,8 +831,6 @@ func cmdRuns(args []string) error {
 
 // runsRepoWindow is how far back hrn runs --repo looks.
 const runsRepoWindow = 14 * 24 * time.Hour
-
-var runsRepoArg = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$`)
 
 type runJSON struct {
 	ID         string    `json:"id"`
