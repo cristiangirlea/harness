@@ -254,8 +254,10 @@ carried on on the backend and account that reset; with `no_switch` only its own 
 and account's reset counts. A task with a retrieval pin waits only for its own backend, since
 it cannot move to the partner. A partner kept out by more than its limit is never waited
 for. `wait_limit` bounds all of a task's waits together, over every `retry` entry and
-carry-on: the bound starts at the first wait, later waits get what is left, and once it is
-spent the task never waits again. Each wait lasts 30 seconds past the reset, counted against
+carry-on: the bound is a deadline set at the first wait, so the agents' working time between
+waits counts against it too, later waits get what is left, and once it is spent the task never
+waits again (a 1h wait before the first attempt under a 2h `wait_limit`, then a 1h attempt
+that ends `limited`, leaves nothing to wait with). Each wait lasts 30 seconds past the reset, counted against
 the bound, and the preferences are read again after it: a backend disabled meanwhile, or one
 that would now bill per token, is not started. Eval cells neither wait nor back off: each
 stays one attempt.

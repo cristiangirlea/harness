@@ -128,7 +128,9 @@ func waitable(until time.Time, b *Budget, now time.Time) error {
 		return errors.New("waiting for a usage limit is off (wait_limit is 0)")
 	case until.IsZero():
 		return errors.New("no usage-limit reset is remembered to wait for")
-	case b.left(now) <= WaitMargin: // no reset fits in less than the margin
+	case b.max <= WaitMargin: // no reset fits in less than the margin
+		return fmt.Errorf("the wait limit of %s is too short for the %s margin past each reset", b.max, WaitMargin)
+	case b.left(now) <= WaitMargin:
 		return fmt.Errorf("the wait limit of %s is spent", b.max)
 	case until.Add(WaitMargin).Sub(now) > b.left(now):
 		if b.deadline.IsZero() {

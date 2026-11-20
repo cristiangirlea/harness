@@ -423,7 +423,7 @@ func TestGatedClaudeStopsARunWhoseCommandTheGateDidNotAnswer(t *testing.T) {
 		t.Run(stream, func(t *testing.T) {
 			started := time.Now()
 			res, _, _ := runGatedClaude(t, stream, Options{Mode: ModeYolo, Gate: true})
-			if res.Status != StatusError || !strings.Contains(res.Error, "ungated") {
+			if res.Status != StatusError || !strings.Contains(res.Error, "ungated") || !res.GateStop {
 				t.Fatalf("result = %s %q, want the run stopped", res.Status, res.Error)
 			}
 			if took := time.Since(started); took > 20*time.Second {
@@ -436,7 +436,7 @@ func TestGatedClaudeStopsARunWhoseCommandTheGateDidNotAnswer(t *testing.T) {
 func TestGatedClaudeRunThatEndsWithAnUnansweredCallFails(t *testing.T) {
 	installFakeGate(t)
 	res, _, _ := runGatedClaude(t, "ended", Options{Mode: ModeYolo, Gate: true})
-	if res.Status != StatusError || !strings.Contains(res.Error, "without the gate's answer") {
+	if res.Status != StatusError || !strings.Contains(res.Error, "without the gate's answer") || !res.GateStop {
 		t.Fatalf("result = %s %q", res.Status, res.Error)
 	}
 }

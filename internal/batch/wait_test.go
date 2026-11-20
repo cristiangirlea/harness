@@ -450,3 +450,41 @@ func TestABackoffRetryKeepsItsBackendPastRouting(t *testing.T) {
 		t.Fatalf("task = %s, backoffs %v, claude ran %d times, %d attempts; want the backoff retried on codex", tr.Status, *delays, claude.Load(), len(tr.Attempts))
 	}
 }
+
+func TestAGateSafetyStopIsNotBackedOff(t *testing.T) {
+	dir := initRepo(t)
+	delays := recordBackoff(t)
+	agent.Register(stub{"wb-ungated", func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: "wb-ungated", Status: agent.StatusError, Error: agent.GateStopped + "a Bash call came without the gate's answer", GateStop: true}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-ungated", Tasks: []Task{{ID: "ungated", Prompt: "write it"}}})
+	if tr := res.Tasks[0]; len(*delays) != 0 || len(tr.Attempts) != 1 {
+		t.Fatalf("backoffs %v, %d attempts: a run stopped for running ungated is not replayed", *delays, len(tr.Attempts))
+	}
+}
+
+func TestCleanTreeIgnoresHiddenUntrackedFilesButNotChanges(t *testing.T) {
+	dir := initRepo(t)
+	hide := []string{"secrets/**"}
+	if !cleanTree(t.Context(), dir, hide) {
+		t.Fatal("a fresh repository is not clean")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "secrets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "secrets", "key.txt"), []byte("hidden\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !cleanTree(t.Context(), dir, hide) {
+		t.Error("an untracked hidden file made the tree dirty")
+	}
+	if cleanTree(t.Context(), dir, nil) {
+		t.Error("an untracked file outside hide counted as clean")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if cleanTree(t.Context(), dir, hide) {
+		t.Error("a modified tracked file counted as clean")
+	}
+}

@@ -691,3 +691,31 @@ func TestRunToolWaitsBeforeStartingWhenBothPlansAreOut(t *testing.T) {
 		t.Fatalf("run %s: %v", id, err)
 	}
 }
+
+func TestRunToolStartsNothingOnABackendDisabledDuringTheWait(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	var slept int
+	orig := followup.WaitSleep
+	followup.WaitSleep = func(context.Context, time.Duration) error {
+		slept++
+		return prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude"}})
+	}
+	t.Cleanup(func() { followup.WaitSleep = orig })
+	var calls atomic.Int32
+	for _, name := range []string{"codex", "claude"} {
+		agent.Register(scripted{name, func(agent.Task) agent.Result {
+			calls.Add(1)
+			return agent.Result{Status: agent.StatusOK, Final: "finished", Turns: 1}
+		}})
+	}
+	for b, in := range map[string]time.Duration{"codex": 20 * time.Second, "claude": time.Hour} {
+		if err := limits.Note(b, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(in)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res := s.call(t, "run", `{"prompt":"fix it","backend":"codex","mode":"auto","wait_limit":"1m"}`)
+	if !res.IsError || calls.Load() != 0 || slept != 1 || !strings.Contains(res.Text(), "codex is no longer enabled") {
+		t.Fatalf("calls = %d, slept %d, error %v: %s", calls.Load(), slept, res.IsError, res.Text())
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -614,5 +615,34 @@ func TestACLIPassesBatchChildEnvironmentThroughTheGuard(t *testing.T) {
 		if !strings.Contains(";"+res.Final+";", ";"+want+";") {
 			t.Errorf("missing %s in %s", want, res.Final)
 		}
+	}
+}
+
+func TestCodexRefusesAConfigValueACmdShimWouldMangleEveryTime(t *testing.T) {
+	shim := filepath.Join(t.TempDir(), "codex.cmd")
+	if err := os.WriteFile(shim, []byte("@echo off\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	b := NewCodexBackend()
+	b.candidates = func() []string { return []string{shim} }
+	b.args = func(Task, string) []string { return []string{"exec", "-c", "x=a&b"} }
+	res := b.Run(t.Context(), Task{Prompt: "go", Dir: t.TempDir()}, func(Event) {})
+	if res.Status != StatusError || !strings.Contains(res.Error, "cmd.exe shim") || !res.StartRefusal {
+		t.Fatalf("res = %+v, want a start refusal", res)
+	}
+}
+
+func TestCLIRefusesACompactWindowBelowItsMinimumAsAStartRefusal(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	b := NewClaudeBackend()
+	b.candidates = func() []string { return []string{os.Args[0]} }
+	b.args = func(Task, string) []string {
+		t.Error("a refused compact_window reached process arguments")
+		return helperCLI(nil).args(Task{}, "")
+	}
+	res := b.Run(t.Context(), Task{Dir: t.TempDir(), Options: Options{CompactWindow: "20480"}}, func(Event) {})
+	if res.Status != StatusError || !strings.Contains(res.Error, "compact_window") || !res.StartRefusal {
+		t.Fatalf("res = %+v, want a start refusal", res)
 	}
 }

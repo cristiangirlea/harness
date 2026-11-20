@@ -591,11 +591,14 @@ the message gives one. Then:
   above, on the backend that reset. A run with `--no-switch`, `--account` or `--continue`
   does not wait before it starts: it starts, ends `limited`, and only then waits. With
   `--no-switch` or `--account` that wait is only for the run's own backend and account,
-  never another account's or the partner's sooner reset.
+  never another account's or the partner's sooner reset. A run with a retrieval pin waits
+  only for its own backend, since the pin cannot move to the partner.
   D bounds all of a run's waits together, the one before the start and the one after a
-  limited result: the bound starts at the first wait, a later wait gets only what is left,
-  and once it is spent nothing waits again. The waits do not count against `timeout`,
-  which bounds each agent run. Every wait lasts 30 seconds past the reset, since CLIs report
+  limited result: the bound is a deadline set at the first wait, so the agent's own working
+  time between two waits counts against it too. A later wait gets only what is left (a 1h
+  start wait under `--wait-limit 2h` followed by a 1h run leaves nothing for a wait after a
+  limited result), and once it is spent nothing waits again. The waits do not count against
+  `timeout`, which bounds each agent run. Every wait lasts 30 seconds past the reset, since CLIs report
   resets to the minute; those 30 seconds count against D too. After the wait the
   preferences are read again: a backend disabled meanwhile, an account no longer declared,
   or a backend that would now bill per token is not started (a new run exits with the

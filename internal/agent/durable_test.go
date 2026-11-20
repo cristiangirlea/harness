@@ -679,7 +679,7 @@ func TestDurableRejectsLocalMCPBeforeStartingAnOperation(t *testing.T) {
 	backend, task, fake, _ := durableFixture(t, store)
 	task.MCP = []string{"unused.json"}
 	result := Run(context.Background(), backend, task, func(Event) {})
-	if result.Status != StatusError || !strings.Contains(result.Error, "durable MCP execution requires an isolated executor") || fake.served != 0 || len(store.records) != 0 {
+	if result.Status != StatusError || !strings.Contains(result.Error, "durable MCP execution requires an isolated executor") || !result.StartRefusal || fake.served != 0 || len(store.records) != 0 {
 		t.Fatalf("local MCP was accepted: %+v requests=%d checkpoints=%d", result, fake.served, len(store.records))
 	}
 }
@@ -694,7 +694,7 @@ func TestDurableRejectsAllowDangerousBeforeStartingAnOperation(t *testing.T) {
 			errorEvent = event.Text
 		}
 	})
-	if result.Status != StatusError || result.RecoveryRequired || !strings.Contains(result.Error, "allow_dangerous is not supported for durable jobs") {
+	if result.Status != StatusError || result.RecoveryRequired || !strings.Contains(result.Error, "allow_dangerous is not supported for durable jobs") || !result.StartRefusal {
 		t.Fatalf("dangerous durable run was not terminally refused: %+v", result)
 	}
 	if errorEvent != result.Error || fake.served != 0 || *effects != 0 || len(store.records) != 0 {

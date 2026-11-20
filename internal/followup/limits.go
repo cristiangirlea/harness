@@ -666,6 +666,8 @@ func After(prevID, backend string, prev agent.Task, res agent.Result, w Waits) (
 		w.Budget = NewBudget(time.Duration(prev.WaitLimit))
 	}
 	pinned := prev.NoSwitch || w.KeepAccount
+	// A retrieval pin binds the run to its backend, so a partner's sooner reset is no use to it.
+	retrievalPinned := prev.Retrieval != "" && prev.Retrieval != "off"
 
 	now := time.Now()
 	spent := Spent{}
@@ -683,7 +685,7 @@ func After(prevID, backend string, prev agent.Task, res agent.Result, w Waits) (
 	}
 	if ok, reason := Ready(other, now, spent); !ok {
 		return waitCarry(prevID, backend, prev, res, why+reason+", so the run stays "+string(agent.StatusLimited), w.Budget,
-			WaitScope{Backend: backend, Account: res.Account, Pinned: pinned, Partner: !pinned})
+			WaitScope{Backend: backend, Account: res.Account, Pinned: pinned, Partner: !pinned && !retrievalPinned})
 	}
 
 	account := ""

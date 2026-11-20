@@ -53,10 +53,11 @@ const (
 	backoffCap  = time.Minute
 )
 
-// maxBackoffs and backoffSleep are replaced in tests.
+// maxBackoffs, backoffSleep and backendForAccount are replaced in tests.
 var (
-	maxBackoffs  = 3
-	backoffSleep = followup.Sleep
+	maxBackoffs       = 3
+	backoffSleep      = followup.Sleep
+	backendForAccount = followup.BackendFor
 )
 
 const (
@@ -404,7 +405,7 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 		case retryOn != nil:
 			b = retryOn
 		case atReset != nil && atReset.Account != "":
-			b, err = followup.BackendFor(name, atReset.Account)
+			b, err = backendForAccount(name, atReset.Account)
 		default:
 			b, err = spent.Backend(name)
 		}
@@ -549,9 +550,9 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			s.tr.Error = fmt.Sprintf("gate %q: %s", g.Command, g.Outcome())
 			return taskEnd{StatusFail, s.tr.Error}
 		}
-		// Only an attempt that left nothing behind and was not refused before it started is worth replaying.
+		// Only an attempt that left nothing behind, was not refused before it started and was not stopped for running ungated is worth replaying.
 		if att := out.att; att.Result.Status == agent.StatusError && len(att.Gates) == 0 && !s.spec.SingleAttempt && backoffs < maxBackoffs &&
-			out.noWork && !att.Result.StartRefusal && installed(b) {
+			out.noWork && !att.Result.StartRefusal && !att.Result.GateStop && installed(b) {
 			delay := min(backoffBase<<backoffs, backoffCap)
 			backoffs++
 			text := fmt.Sprintf("%s ended with an error before any gate ran; retrying on %[1]s after %s (backoff %d of %d)", att.Backend, delay, backoffs, maxBackoffs)

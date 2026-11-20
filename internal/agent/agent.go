@@ -137,7 +137,8 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 	}
 	prepared, state, err := prepareRetrieval(ctx, b.Name(), task)
 	if err != nil {
-		return Result{Backend: b.Name(), Status: StatusError, Error: err.Error(), Retrieval: state}
+		var r retrievalRefusal
+		return Result{Backend: b.Name(), Status: StatusError, Error: err.Error(), Retrieval: state, StartRefusal: errors.As(err, &r)}
 	}
 	task = prepared
 	// After retrieval, so the block is not part of its query.

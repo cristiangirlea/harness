@@ -294,7 +294,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	if c.name == "codex" {
 		if err := codexBatchArgsError(bin, args); err != nil {
-			return fail(StatusError, err)
+			return refuse(err)
 		}
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)

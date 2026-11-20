@@ -44,6 +44,12 @@ func saveRetrieval(dir string, state *retrieval.Record) error {
 	}
 	return closeErr
 }
+
+// retrievalRefusal marks a retrieval error every try would repeat, unlike a search the network failed.
+type retrievalRefusal struct{ error }
+
+func (r retrievalRefusal) Unwrap() error { return r.error }
+
 func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *retrieval.Record, error) {
 	previous := task.RetrievalState
 	if task.Resume != nil && task.Resume.Retrieval != nil {
@@ -54,10 +60,10 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 		return task, nil, nil
 	}
 	if task.Durable != nil {
-		return task, nil, fmt.Errorf("retrieval is unsupported for durable execution")
+		return task, nil, retrievalRefusal{errors.New("retrieval is unsupported for durable execution")}
 	}
 	if task.Resume != nil && backend != "api" {
-		return task, nil, fmt.Errorf("retrieval continuation is supported only for API conversations")
+		return task, nil, retrievalRefusal{errors.New("retrieval continuation is supported only for API conversations")}
 	}
 	original := task.OriginalPrompt
 	if original == "" {
@@ -74,7 +80,7 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 		return task, state, err
 	}
 	if task.ForkSession != "" {
-		return fail(fmt.Errorf("retrieval is unsupported for native session continuation"))
+		return fail(retrievalRefusal{errors.New("retrieval is unsupported for native session continuation")})
 	}
 	if previous != nil && enabled && task.Resume == nil && task.Retrieval == previous.Mode && !previous.Replayed && previous.Packet == nil && previous.Failure != "" && previous.Failure != "optional retrieval unavailable" {
 		previous = nil
@@ -85,32 +91,32 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 		state.Packet = previous.Packet
 		if task.Resume != nil {
 			if err := kernel.ValidateContinuationPin(previous, task.Resume); err != nil {
-				return fail(err)
+				return fail(retrievalRefusal{err})
 			}
 		}
 		if task.Retrieval == "off" {
-			return fail(fmt.Errorf("cannot discard pinned retrieval on retry or continuation"))
+			return fail(retrievalRefusal{errors.New("cannot discard pinned retrieval on retry or continuation")})
 		}
 		if task.Retrieval != "" && task.Retrieval != previous.Mode {
-			return fail(fmt.Errorf("retrieval mode differs from saved pin"))
+			return fail(retrievalRefusal{errors.New("retrieval mode differs from saved pin")})
 		}
 		if previous.Failure != "" && previous.Failure != "optional retrieval unavailable" {
-			return fail(fmt.Errorf("previous retrieval failed; pin cannot be resumed"))
+			return fail(retrievalRefusal{errors.New("previous retrieval failed; pin cannot be resumed")})
 		}
 		state.Failure = previous.Failure
 		state.Replayed = true
 		sc := state.Scope
 		if sc.Backend != backend || task.Model != sc.Model || (task.RetrievalTenant != "" && task.RetrievalTenant != sc.TenantID) || (task.RetrievalProject != "" && task.RetrievalProject != sc.ProjectID) || (task.RetrievalRevision != "" && task.RetrievalRevision != sc.Revision) || (task.RetrievalVersion != "" && (state.Packet == nil || task.RetrievalVersion != state.Packet.VersionID)) {
-			return fail(fmt.Errorf("retrieval pin scope differs from execution"))
+			return fail(retrievalRefusal{errors.New("retrieval pin scope differs from execution")})
 		}
 		if state.Packet != nil {
 			if err := retrieval.ValidatePacket(*state.Packet, "", ""); err != nil {
-				return fail(err)
+				return fail(retrievalRefusal{err})
 			}
 		}
 	} else {
 		if err := ValidateOptions(task.Options); err != nil {
-			return fail(err)
+			return fail(retrievalRefusal{err})
 		}
 		state.Scope = retrieval.Scope{TenantID: task.RetrievalTenant, ProjectID: task.RetrievalProject, Revision: task.RetrievalRevision, Backend: backend, Model: task.Model}
 	}
@@ -118,11 +124,11 @@ func prepareRetrieval(ctx context.Context, backend string, task Task) (Task, *re
 	search := previous == nil || (task.Resume == nil && task.RetrievalRepair && state.Packet != nil && state.Packet.VersionID != "")
 	if search {
 		if task.Knowledge == nil {
-			return fail(fmt.Errorf("retrieval requires Knowledge"))
+			return fail(retrievalRefusal{errors.New("retrieval requires Knowledge")})
 		}
 		client, err := task.Knowledge()
 		if err != nil {
-			return fail(fmt.Errorf("retrieval transport configuration invalid"))
+			return fail(retrievalRefusal{errors.New("retrieval transport configuration invalid")})
 		}
 		query := boundedQuery(task.Prompt, 2048)
 		if task.RetrievalRepair {

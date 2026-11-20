@@ -68,6 +68,8 @@ type Result struct {
 	CLIVersion string `json:"cli_version,omitempty"`
 	// StartRefusal marks an error raised before the agent started that every try would repeat; it is never recorded.
 	StartRefusal bool `json:"-"`
+	// GateStop marks a gated run hrn stopped because a command may have run ungated: a replay could run more; never recorded.
+	GateStop bool `json:"-"`
 }
 
 // ModelTokens counts each model token once. Missing/unknown semantics are not zero.

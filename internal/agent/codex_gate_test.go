@@ -187,7 +187,7 @@ func TestGatedCodexStopsARunWhoseCommandSkippedTheTool(t *testing.T) {
 	installFakeGate(t)
 	started := time.Now()
 	res, _, _ := runGatedCodex(t, "unrouted", Task{Options: Options{Mode: ModeYolo, Gate: true}})
-	if res.Status != StatusError || !strings.HasPrefix(res.Error, gateUnrouted) {
+	if res.Status != StatusError || !strings.HasPrefix(res.Error, gateUnrouted) || !res.GateStop {
 		t.Fatalf("result = %s %q", res.Status, res.Error)
 	}
 	if time.Since(started) > 20*time.Second {
@@ -201,7 +201,7 @@ func TestGatedCodexStopsARunThatUsesAToolHrnDoesNotKnow(t *testing.T) {
 		t.Run(stream, func(t *testing.T) {
 			started := time.Now()
 			res, _, _ := runGatedCodex(t, stream, Task{Options: Options{Mode: ModeYolo, Gate: true}})
-			if res.Status != StatusError || !strings.HasPrefix(res.Error, gateUnrouted) || !strings.Contains(res.Error, item) {
+			if res.Status != StatusError || !strings.HasPrefix(res.Error, gateUnrouted) || !strings.Contains(res.Error, item) || !res.GateStop {
 				t.Fatalf("result = %s %q", res.Status, res.Error)
 			}
 			if time.Since(started) > 20*time.Second {

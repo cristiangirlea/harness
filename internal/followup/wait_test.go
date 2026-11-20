@@ -105,9 +105,10 @@ func TestWaitFailsAtOnceWithoutAResetWithinTheLimit(t *testing.T) {
 		max   time.Duration
 		want  string
 	}{
-		"beyond the maximum": {time.Now().Add(3 * time.Hour), time.Hour, "further off than the wait limit of 1h0m0s"},
-		"no reset":           {time.Time{}, time.Hour, "no usage-limit reset is remembered"},
-		"waiting is off":     {time.Now().Add(time.Minute), 0, "wait_limit"},
+		"beyond the maximum":      {time.Now().Add(3 * time.Hour), time.Hour, "further off than the wait limit of 1h0m0s"},
+		"no reset":                {time.Time{}, time.Hour, "no usage-limit reset is remembered"},
+		"waiting is off":          {time.Now().Add(time.Minute), 0, "wait_limit"},
+		"shorter than the margin": {time.Now().Add(time.Second), WaitMargin, "too short for the 30s margin"},
 	} {
 		err := Wait(context.Background(), c.until, NewBudget(c.max))
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -376,5 +377,42 @@ func TestAnUnsavedResetNamesNoPath(t *testing.T) {
 	}
 	if !strings.Contains(text, "could not be saved") || strings.Contains(text, home) || strings.Contains(text, filepath.ToSlash(home)) {
 		t.Fatalf("message = %q, want the failure said without a path", text)
+	}
+}
+
+func TestARetrievalPinnedRunWaitsOnlyForItsOwnBackend(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	fakeSleep(t)
+	noteLimit(t, "claude", "", time.Now().Add(10*time.Minute))
+	for _, retrieval := range []string{"required", "off"} {
+		prev := agent.Task{Prompt: "x", Dir: t.TempDir(), Options: agent.Options{Retrieval: retrieval, WaitLimit: agent.Duration(2 * time.Hour)}}
+		id := limitedRun(t, prev)
+		limited := agent.Result{Backend: "codex", Status: agent.StatusLimited, LimitResets: time.Now().Add(40 * time.Minute)}
+		noteLimit(t, "codex", "", limited.LimitResets)
+		next, why, err := After(id, "codex", prev, limited, Waits{})
+		if err != nil || next == nil {
+			t.Fatalf("%s: no waiting carry-on: %q %v", retrieval, why, err)
+		}
+		want := map[string]string{"required": "codex", "off": "claude"}[retrieval]
+		if next.To != want {
+			t.Fatalf("retrieval %s: waits for %s, want %s", retrieval, next.To, want)
+		}
+	}
+}
+
+func TestUsableRefusesAnAccountNoLongerDeclaredOrABackendThatWouldBillPerToken(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t, true, true)
+	twoAccounts(t)
+	if err := Usable("codex", "a"); err != nil {
+		t.Fatalf("a declared account: %v", err)
+	}
+	if err := Usable("codex", "gone"); !errors.Is(err, ErrChanged) || !strings.Contains(err.Error(), "codex@gone is no longer declared") {
+		t.Fatalf("an account no longer declared: %v", err)
+	}
+	t.Setenv("OPENAI_API_KEY", "fake-secret-value")
+	if err := Usable("codex", "a"); !errors.Is(err, ErrChanged) || !strings.Contains(err.Error(), "bill per token") || strings.Contains(err.Error(), "fake-secret-value") {
+		t.Fatalf("per-token billing: %v", err)
 	}
 }
