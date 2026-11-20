@@ -7,12 +7,12 @@ import (
 )
 
 func TestRepoNameAcceptsOnlyOwnerSlashName(t *testing.T) {
-	for _, s := range []string{"owner/name", "Some-Org/repo.go", "a_b/c-d"} {
+	for _, s := range []string{"owner/name", "Some-Org/repo.go", "a_b/c-d", "owner/.github", "owner/.dotfiles"} {
 		if !RepoName(s) {
 			t.Errorf("RepoName(%q) = false, want true", s)
 		}
 	}
-	for _, s := range []string{"", "name", "owner/", "/name", "a/b/c", "../x", "owner/..", ".owner/name", "owner/na me", `owner\name`, "harness-bot-stats-json"} {
+	for _, s := range []string{"", "name", "owner/", "/name", "a/b/c", "../x", "owner/..", "owner/.", ".owner/name", "owner/na me", `owner\name`, "harness-bot-stats-json"} {
 		if RepoName(s) {
 			t.Errorf("RepoName(%q) = true, want false", s)
 		}
@@ -66,6 +66,43 @@ func TestRepoAppliesTheDailyCapsBeforeSumming(t *testing.T) {
 	}
 	if got := Sum(events).Repo("owner/app", now); got.Week != 80 || got.Kinds[kindReview] != 4 {
 		t.Errorf("week %d, review count %d; want 80 and 4 (four clean reviews a day)", got.Week, got.Kinds[kindReview])
+	}
+}
+
+func TestRepoCountsAnEventStampedAheadOfTheClockInTheWeekAsTopReposDoes(t *testing.T) {
+	now := at(t, "2026-11-20T15:00:00Z")
+	events := []Event{
+		{Key: "a", Kind: kindReview, Track: TrackDelivery, XP: 20, At: now.Add(30 * time.Second), Repo: "owner/app"},
+		{Key: "b", Kind: kindReview, Track: TrackDelivery, XP: 20, At: now.Add(-time.Hour), Repo: "owner/other"},
+	}
+	totals := Sum(events)
+	got := totals.Repo("owner/app", now)
+	top := totals.TopRepos(WeekStart(now), 5)
+	if got.Week != 20 || got.Share != 0.5 || top[0] != (RepoWeek{"owner/app", 20}) || got.Days[34] != 20 {
+		t.Errorf("week %d, share %v, top %v, today %d; want 20, 0.5, owner/app first with 20, and today 20", got.Week, got.Share, top, got.Days[34])
+	}
+}
+
+func TestRepoWithEarlierDeliveryButNoneThisWeekHasNoShare(t *testing.T) {
+	now := at(t, "2026-11-20T15:00:00Z")
+	events := []Event{
+		{Key: "a", Kind: kindReview, Track: TrackDelivery, XP: 20, At: at(t, "2026-11-10T10:00:00Z"), Repo: "owner/app"},
+		{Key: "b", Kind: kindReview, Track: TrackDelivery, XP: 20, At: at(t, "2026-11-19T10:00:00Z"), Repo: "owner/other"},
+	}
+	got := Sum(events).Repo("owner/app", now)
+	if got.Week != 0 || got.Share != 0 || got.Days[24] != 20 || got.Kinds[kindReview] != 1 {
+		t.Errorf("got %+v; want no week and no share, but 20 on 10 November and one clean review", got)
+	}
+}
+
+func TestTopReposShowsTheEarlierSpellingInATie(t *testing.T) {
+	now := at(t, "2026-11-20T15:00:00Z")
+	events := []Event{
+		{Key: "a", Kind: "test", Track: TrackDelivery, XP: 5, At: now, Repo: "o/a"},
+		{Key: "b", Kind: "test", Track: TrackDelivery, XP: 5, At: now, Repo: "O/A"},
+	}
+	if got := Sum(events).TopRepos(WeekStart(now), 5); len(got) != 1 || got[0] != (RepoWeek{"O/A", 10}) {
+		t.Errorf("top = %v, want one entry of 10 shown as O/A, the spelling that sorts first", got)
 	}
 }
 

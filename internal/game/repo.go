@@ -10,10 +10,14 @@ import (
 // RepoDays is how many UTC days a repository's delivery strip covers, today last.
 const RepoDays = 35
 
-var ownerName = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$`)
+var ownerName = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*/([A-Za-z0-9_.-]+)$`)
 
 // RepoName reports whether s is an owner/name repository; eval folders and bare folder names are not.
-func RepoName(s string) bool { return ownerName.MatchString(s) }
+// A name may start with a dot (owner/.github), but is never . or .. alone.
+func RepoName(s string) bool {
+	m := ownerName.FindStringSubmatch(s)
+	return m != nil && m[1] != "." && m[1] != ".."
+}
 
 // RepoDelivery is one repository's counted delivery experience.
 type RepoDelivery struct {
@@ -38,14 +42,18 @@ func (t Totals) Repo(repo string, now time.Time) RepoDelivery {
 			continue
 		}
 		at := e.At.UTC()
-		if !at.Before(week) && !at.After(now) {
+		// The week has no upper bound, as in Since, so this figure, the share and TopRepos agree.
+		if !at.Before(week) {
 			all += e.XP
 		}
-		if !strings.EqualFold(e.Repo, repo) || at.Before(first) || at.After(now) {
+		if !strings.EqualFold(e.Repo, repo) {
 			continue
 		}
 		if !at.Before(week) {
 			d.Week += e.XP
+		}
+		if at.Before(first) || !at.Before(today.AddDate(0, 0, 1)) {
+			continue
 		}
 		d.Days[int(at.Sub(first)/(24*time.Hour))] += e.XP
 		// A correction or a failed routed run brought nothing, so it is not part of what was delivered.

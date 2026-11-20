@@ -533,6 +533,8 @@ func TestBotStatsRefusesABadRepo(t *testing.T) {
 		{[]string{"stats", "--json", "--repo", "app"}, "OWNER/NAME"},
 		{[]string{"stats", "--json", "--repo", "../x"}, "OWNER/NAME"},
 		{[]string{"stats", "--json", "--repo"}, "--repo needs a value"},
+		{[]string{"stats", "--json", "--repo="}, "OWNER/NAME"},
+		{[]string{"stats", "--json", "--json"}, "unexpected argument"},
 		{[]string{"stats", "--json", "--repo", "a/b", "--repo", "c/d"}, "once"},
 		{[]string{"stats", "--json", "extra"}, "unexpected argument"},
 	} {
