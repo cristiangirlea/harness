@@ -197,6 +197,27 @@ jobs:
       - run: go build ./...
       - run: go test -count=1 ./...
 
+  contracts:
+    needs: changes
+    if: ${{ github.event.repository.private == false && needs.changes.outputs.code == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: contracts/go.mod
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test -count=1 ./...
+
   server-postgres:
     needs: changes
     if: ${{ github.event.repository.private == false && needs.changes.outputs.code == 'true' }}

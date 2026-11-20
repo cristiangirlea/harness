@@ -1,0 +1,1 @@
+{"v":1,"seq":3,"type":"result","id":"c1","status":"ok","output":{"expression":"x*y+1"},"evidence":[{"kind":"validation","source":"held-out examples","hash":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","excerpt":"12 of 12 held-out examples match"}]}

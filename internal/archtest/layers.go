@@ -5,6 +5,7 @@ import "strings"
 // layers is the reviewed package map; names are repository-relative.
 var layers = map[string]int{
 	"internal/prefs/prefstest": 0,
+	"internal/pluginproto":     0,
 	"internal/gitenv":          0, "internal/gitretry": 0, "internal/mask": 0, "internal/owner": 0, "internal/prefs": 0, "internal/purpose": 0, "internal/qr": 0, "internal/retrieval": 0, "internal/route/table": 0, "internal/runpaths": 0, "internal/scripthint": 0, "internal/shape": 0, "internal/envpolicy": 0, "internal/watchaddr": 0, "internal/nowindow": 0,
 	"internal/kernel": 1, "internal/runlog": 1, "internal/flow": 1, "internal/quota": 1, "internal/limits": 1,
 	"internal/mcp": 2, "internal/tools": 2, "internal/remote": 2, "internal/ws": 2,
@@ -15,6 +16,9 @@ var layers = map[string]int{
 }
 
 func layer(p string) (int, bool) {
+	if p == "contracts" || strings.HasPrefix(p, "contracts/") {
+		return 10, true
+	}
 	if p == "server" || strings.HasPrefix(p, "server/") {
 		return 9, true
 	}
@@ -32,6 +36,9 @@ func allowed(from, to string) bool {
 	}
 	a, _ := layer(from)
 	b, _ := layer(to)
+	if a == 10 || b == 10 {
+		return a == b
+	}
 	if a == 9 {
 		return b == 9
 	}

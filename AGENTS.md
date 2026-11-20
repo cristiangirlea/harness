@@ -18,6 +18,7 @@ records. Read `PLAN.md` before taking an item; don't reopen its decisions. Older
 | `internal/runlog/`, `followup/` | Run records, pruning, continuation. |
 | `internal/flow/`, `owner/`, `flowview/` | Execution events and step trees, local ownership, the shared flow view. |
 | `internal/gc/`, `internal/ws/` | Merged cleanup; O_EXCL-leased slots (`.hrn/slots/<n>`). |
+| `contracts/` | Separate standard-library module anyone can import: wire types and golden JSON (`docs/plugins.md`). `internal/pluginproto` is its byte-identical copy; change both together. |
 | `server/` | Separate module with its own `go.mod`; PostgreSQL control service and project worker. PostgreSQL tests need `HRN_TEST_DATABASE_URL`. |
 | `scripts/api-check.sh` | The first real api runs. Costs real money; a maintainer runs it. |
 | `.github/release.sh` | Builds the six release binaries and `SHA256SUMS` into `dist/`. |

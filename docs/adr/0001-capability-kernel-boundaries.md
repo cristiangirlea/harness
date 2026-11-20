@@ -131,7 +131,7 @@ kernel field; existing fields stay where they are on disk.
 
 | Layer | Packages | May import |
 |---|---|---|
-| leaf | `gitenv`, `gitretry`, `mask`, `owner`, `prefs`, `purpose`, `qr`, `retrieval`, `route/table`, `runpaths`, `scripthint`, `shape`; new `envpolicy`, `watchaddr` | no module package |
+| leaf | `gitenv`, `gitretry`, `mask`, `owner`, `prefs`, `purpose`, `qr`, `retrieval`, `route/table`, `runpaths`, `scripthint`, `shape`; new `envpolicy`, `watchaddr`, `pluginproto` | no module package |
 | kernel | new `kernel`, `runlog`, `flow`, `quota`, `limits` | leaf; inside the layer only `runlog → kernel` and `flow`, `quota`, `limits → kernel, runlog` (`kernel` imports no kernel package) |
 | infrastructure | `mcp`, `tools`, `remote`, `ws` | leaf, kernel; `tools → mcp` |
 | providers | `agent` | leaf, kernel, infrastructure |
@@ -141,6 +141,7 @@ kernel field; existing fields stay where they are on disk.
 | game pack | `game` | the layers above, coding, eval (reads records and scores) |
 | surfaces | `archtest`, `cmd/hrn`, `hrnmcp`, `watch`, `execproto`, `update`, `scripts/...` | everything above; only `cmd/hrn` imports another surface |
 | server module | `server/...` | nothing from the root module |
+| contracts module | `contracts/...` | nothing from the repository, and nothing in the repository imports it: the root keeps a byte-identical copy (`pluginproto`) |
 
 2. Named denials on top of the layers: `agent` imports no `remote`, `prefs`, `purpose` or
    `route/table`; `mcp` and `tools` import no `retrieval`.
