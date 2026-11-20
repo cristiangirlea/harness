@@ -408,12 +408,14 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if *continueID != "" {
 		routeNote = agent.ContinuationNote(*continueID, routed)
 	}
+	// One bound for the wait before the start and the wait after a limited result together.
+	waits := followup.NewBudget(time.Duration(opts.WaitLimit))
 	if !opts.NoSwitch && *account == "" && *continueID == "" {
 		meant := backend
 		var bothOut bool
 		backend, routed, bothOut = followup.ChooseWaiting(backend, named)
 		if bothOut && opts.WaitLimit > 0 {
-			waited, err := waitToStart(parent, meant, routed, time.Duration(opts.WaitLimit))
+			waited, err := waitToStart(parent, meant, routed, waits)
 			if err != nil {
 				return 1, err
 			}
@@ -531,7 +533,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	var next *followup.CarryOn
 	var why string
 	if ctx.Err() == nil {
-		next, why, err = followup.After(rec.ID(), backend, task, res)
+		next, why, err = followup.After(rec.ID(), backend, task, res, followup.Waits{Budget: waits, KeepAccount: *account != ""})
 	} else if err := followup.Note(backend, res); err != nil {
 		fmt.Fprintln(os.Stderr, "hrn: the limit was not remembered:", err)
 	}
@@ -595,11 +597,11 @@ type waitedStart struct {
 }
 
 // waitToStart waits for the soonest remembered reset when a new run's backend and partner are both limited; one that cannot wait starts as before.
-func waitToStart(parent context.Context, meant, why string, max time.Duration) (waitedStart, error) {
+func waitToStart(parent context.Context, meant, why string, waits *followup.Budget) (waitedStart, error) {
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	def := resolve.DefaultBackendNameIn(runlog.Home())
-	r, err := followup.WaitFor(ctx, cmp.Or(meant, def), true, nil, max, func(r followup.Reset) {
+	r, err := followup.WaitFor(ctx, followup.WaitScope{Backend: cmp.Or(meant, def), Partner: true}, nil, waits, func(r followup.Reset) {
 		fmt.Fprintf(os.Stderr, "hrn: %s; waiting for %s\n", why, r)
 	})
 	switch {
@@ -611,6 +613,8 @@ func waitToStart(parent context.Context, meant, why string, max time.Duration) (
 		return waitedStart{true, b, fmt.Sprintf("%s; waited for %s", why, r)}, nil
 	case ctx.Err() != nil:
 		return waitedStart{}, errors.New("run: canceled while waiting for a usage limit to reset")
+	case errors.Is(err, followup.ErrChanged):
+		return waitedStart{}, fmt.Errorf("run: %w", err)
 	}
 	return waitedStart{note: why + "; not waiting: " + err.Error()}, nil
 }

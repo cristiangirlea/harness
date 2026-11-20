@@ -224,10 +224,10 @@ func (s *taskRun) waiting(name, reason string) func(error) {
 	}
 }
 
-// waitForReset waits for the soonest remembered reset of name or, with switching on, its partner, as a waiting step.
-func (s *taskRun) waitForReset(name string, switching bool, why string, spent followup.Spent, max time.Duration) (followup.Reset, error) {
+// waitForReset waits within the task's budget for the soonest reset scope allows, as a waiting step.
+func (s *taskRun) waitForReset(scope followup.WaitScope, why string, spent followup.Spent, budget *followup.Budget) (followup.Reset, error) {
 	var done func(error)
-	r, err := followup.WaitFor(s.ctx, name, switching, spent, max, func(r followup.Reset) {
+	r, err := followup.WaitFor(s.ctx, scope, spent, budget, func(r followup.Reset) {
 		text := why + "; waiting for " + r.String()
 		done = s.waiting(r.Backend, text)
 		s.notify(Event{Task: s.t.ID, Kind: "info", Text: text})
@@ -236,6 +236,14 @@ func (s *taskRun) waitForReset(name string, switching bool, why string, spent fo
 		done(err)
 	}
 	return r, err
+}
+
+// notWaiting says why a wait did not start, or that it ended on a backend the preferences no longer allow.
+func notWaiting(err error) string {
+	if errors.Is(err, followup.ErrChanged) {
+		return err.Error()
+	}
+	return "not waiting: " + err.Error()
 }
 
 func (s *taskRun) resolveRoute() (taskRoute, error) {
@@ -324,8 +332,10 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 	var carry *Attempt    // the limited attempt the next one carries on
 	var backoff time.Duration
 	backoffs := 0
-	waitedLimited := false // a task waits once after a limited attempt, so it cannot wait forever
-	afterWait := false     // this pass's backend was picked at its reset, after a limited attempt
+	var backoffOn agent.Backend // a backoff retries the same backend and account, past routing
+	var waited *followup.Reset  // the reset this pass's backend was picked at, after a limited attempt
+	// One bound for all of the task's waits, so retry entries and carry-ons cannot wait again and again.
+	budget := followup.NewBudget(time.Duration(opts.WaitLimit))
 	for i := 0; i < len(backends); i++ {
 		name := backends[i]
 		plan := attemptPlan{number: len(s.tr.Attempts) + 1, prompt: s.t.Prompt, gateTimeout: gateTimeout, gate: through, chosenFor: backends[0], base: s.base, branch: s.tr.Branch, firstRoute: routedBy,
@@ -334,8 +344,8 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			backoffs = 0 // a new entry of the retry list starts its own count
 		}
 		backoff = 0
-		pickedAtReset := afterWait
-		afterWait = false
+		retryOn, atReset := backoffOn, waited
+		backoffOn, waited = nil, nil
 		if i == 0 {
 			plan.routedBy = routedBy
 		}
@@ -344,21 +354,22 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			plan.freshAccount = carry.Backend == name && carry.Result.Account != ""
 			carry = nil
 		}
-		if !opts.NoSwitch && !pickedAtReset {
+		if !opts.NoSwitch && atReset == nil && retryOn == nil {
 			keep := ""
 			if retrievalOn(opts) {
 				keep = "to keep its retrieval pin"
 			}
 			pick, why, bothOut := followup.PickKeeping(name, time.Now(), spent, keep)
 			if bothOut && opts.WaitLimit > 0 {
-				r, err := s.waitForReset(name, true, why, spent, time.Duration(opts.WaitLimit))
+				// A retrieval pin binds the task to its backend, so only that backend's reset is worth a wait.
+				r, err := s.waitForReset(followup.WaitScope{Backend: name, Partner: !retrievalOn(opts)}, why, spent, budget)
 				switch {
 				case err == nil:
-					pick, why, bothOut = r.Backend, why+"; waited for "+r.String(), false
+					pick, why, bothOut, atReset = r.Backend, why+"; waited for "+r.String(), false, &r
 				case s.ctx.Err() != nil:
 					return taskEnd{StatusCanceled, "canceled"}
 				default:
-					why += "; not waiting: " + err.Error()
+					why += "; " + notWaiting(err)
 				}
 			}
 			if bothOut {
@@ -387,7 +398,16 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 				s.notify(Event{Task: s.t.ID, Kind: "info", Text: why})
 			}
 		}
-		b, err := spent.Backend(name)
+		var b agent.Backend
+		var err error
+		switch {
+		case retryOn != nil:
+			b = retryOn
+		case atReset != nil && atReset.Account != "":
+			b, err = followup.BackendFor(name, atReset.Account)
+		default:
+			b, err = spent.Backend(name)
+		}
 		if err != nil {
 			return s.fail(err)
 		}
@@ -529,7 +549,9 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			s.tr.Error = fmt.Sprintf("gate %q: %s", g.Command, g.Outcome())
 			return taskEnd{StatusFail, s.tr.Error}
 		}
-		if att := out.att; att.Result.Status == agent.StatusError && len(att.Gates) == 0 && !s.spec.SingleAttempt && backoffs < maxBackoffs && installed(b) {
+		// Only an attempt that left nothing behind and was not refused before it started is worth replaying.
+		if att := out.att; att.Result.Status == agent.StatusError && len(att.Gates) == 0 && !s.spec.SingleAttempt && backoffs < maxBackoffs &&
+			out.noWork && !att.Result.StartRefusal && installed(b) {
 			delay := min(backoffBase<<backoffs, backoffCap)
 			backoffs++
 			text := fmt.Sprintf("%s ended with an error before any gate ran; retrying on %[1]s after %s (backoff %d of %d)", att.Backend, delay, backoffs, maxBackoffs)
@@ -541,13 +563,13 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 				return taskEnd{StatusCanceled, "canceled"}
 			}
 			backends = slices.Insert(backends, i+1, att.Backend)
-			backoff = delay
+			backoff, backoffOn = delay, b
 			continue
 		}
 		if att := out.att; att.Result.Status == agent.StatusLimited {
 			spent.Mark(att.Backend, att.Result.Account)
 			if err := followup.Note(att.Backend, att.Result); err != nil {
-				text := "the limit was not remembered: " + err.Error()
+				text := "the usage-limit reset could not be saved"
 				s.decide(flow.StatusOK, text)
 				s.notify(Event{Task: s.t.ID, Kind: "switch", Text: text})
 			}
@@ -566,21 +588,21 @@ func (s *taskRun) attempts(route taskRoute) taskEnd {
 			case ok:
 				backends = slices.Insert(backends, i+1, other)
 				carry = &att
-			case opts.WaitLimit > 0 && !waitedLimited && !s.spec.SingleAttempt:
-				waitedLimited = true
+			case opts.WaitLimit > 0 && !s.spec.SingleAttempt:
 				reason := att.Backend + " reached its usage limit"
 				if why != "" {
 					reason += "; " + why
 				}
-				r, err := s.waitForReset(att.Backend, !opts.NoSwitch, reason, spent, time.Duration(opts.WaitLimit))
+				scope := followup.WaitScope{Backend: att.Backend, Account: att.Result.Account, Pinned: opts.NoSwitch, Partner: !opts.NoSwitch && !retrievalOn(opts)}
+				r, err := s.waitForReset(scope, reason, spent, budget)
 				switch {
 				case err == nil:
 					backends = slices.Insert(backends, i+1, r.Backend)
-					carry, afterWait = &att, true
+					carry, waited = &att, &r
 				case s.ctx.Err() != nil:
 					return taskEnd{StatusCanceled, "canceled"}
 				default:
-					text := "not carried on: " + reason + "; not waiting: " + err.Error()
+					text := "not carried on: " + reason + "; " + notWaiting(err)
 					s.decide(flow.StatusOK, text)
 					s.notify(Event{Task: s.t.ID, Kind: "switch", Text: text})
 				}
@@ -811,6 +833,7 @@ type attemptOutcome struct {
 	commit       string // empty when the agent changed nothing
 	pass         bool   // the run finished and every gate exited 0
 	keepWorktree bool   // releasing a slot would move HEAD away from the agent's work
+	noWork       bool   // the agent moved no commit and left the tree clean, so a replay loses nothing
 }
 
 // runAttempt's returned error aborts the whole task; a failed run or gate is reported in the outcome instead.
@@ -828,7 +851,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		}
 	}()
 	task.ChildEnv = env
-	if plan.switchedFrom != "" && !plan.freshAccount {
+	if plan.switchedFrom != "" && plan.switchedFrom != b.Name() {
 		task.Model = "" // the model named for the other backend means nothing here
 	}
 	if b.Name() != plan.chosenFor {
@@ -876,9 +899,11 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		hideErr = errors.Join(hideErr, fmt.Errorf("putting the hidden files back: %w", err))
 	}
 	att.DidNotStart = startFailure(att)
-	if after, err := gitTips(task.Dir, plan.branch); beforeErr == nil && err == nil && before != "" && after != before {
+	after, afterErr := gitTips(task.Dir, plan.branch)
+	if beforeErr == nil && afterErr == nil && before != "" && after != before {
 		att.AgentCommitted = true
 	}
+	noWork := beforeErr == nil && afterErr == nil && before != "" && after == before && hideErr == nil && cleanTree(ctx, task.Dir, plan.hide)
 	if err := rec.Close(att.Result); err != nil {
 		att.Error = runlog.CloseMessage(err)
 	}
@@ -982,7 +1007,7 @@ func runAttempt(ctx context.Context, b agent.Backend, id string, task agent.Task
 		fw.Emit(flow.Event{Step: as + "/commit", Parent: as, Kind: flow.KindCommit, Task: id, Attempt: plan.number, Status: flow.StatusOK, Text: firstOf(sha, note)})
 	}
 	fw.Emit(flow.Event{Step: as, Parent: TaskStep(id), Kind: flow.KindAttempt, Task: id, Attempt: plan.number, Status: attemptStatus(att), Reason: attemptEndReason(att), Text: firstLineOf(att.Result.Error)})
-	return attemptOutcome{att: att, commit: sha, pass: pass}, nil
+	return attemptOutcome{att: att, commit: sha, pass: pass, noWork: noWork}, nil
 }
 
 // installed says whether b can start at all; a missing CLI does not come back after a backoff.

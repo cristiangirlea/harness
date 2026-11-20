@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/cristiangirlea/harness/internal/tools"
 )
@@ -74,5 +75,22 @@ func TestValidateOptionsGuardOrder(t *testing.T) {
 		if err := ValidateOptions(tc.o); err == nil || err.Error() != tc.want {
 			t.Errorf("ValidateOptions(%+v) = %v, want %s", tc.o, err, tc.want)
 		}
+	}
+}
+
+// Nor can it make its runs wait for a usage limit: a wait holds the operator's plans and machine.
+func TestAGuardedRunCannotWaitForAUsageLimit(t *testing.T) {
+	t.Setenv(tools.GuardedVar, "1")
+	if err := ValidateOptions(Options{WaitLimit: Duration(time.Hour)}); !errors.Is(err, ErrGuardedWait) {
+		t.Errorf("Validate = %v, want ErrGuardedWait", err)
+	}
+	runs := 0
+	res := Run(context.Background(), counting{&runs}, Task{Prompt: "p", Options: Options{WaitLimit: Duration(time.Hour)}}, func(Event) {})
+	if runs != 0 || res.Status != StatusRefused {
+		t.Errorf("runs = %d, status %s; want refused before the backend runs", runs, res.Status)
+	}
+	t.Setenv(tools.GuardedVar, "")
+	if err := ValidateOptions(Options{WaitLimit: Duration(time.Hour)}); err != nil {
+		t.Errorf("the operator's hrn: %v", err)
 	}
 }

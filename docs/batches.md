@@ -249,14 +249,24 @@ backend, when that reset is within the limit, and then starts on that backend. T
 `info` event and a `waiting` decision step in the flow naming the backend and the reset time.
 With no remembered reset, or one further off than the limit, the attempt is skipped as before.
 An attempt that ends `limited` with no partner ready to carry it on (limited too, not
-installed, billing per token, or `no_switch` set) waits the same way, once per task, and its
-work is carried on on the backend that reset; with `no_switch` only its own backend's reset
-counts. A partner kept out by more than its limit is never waited for. Eval cells neither
-wait nor back off: each stays one attempt.
+installed, billing per token, or `no_switch` set) waits the same way, and its work is
+carried on on the backend and account that reset; with `no_switch` only its own backend's
+and account's reset counts. A task with a retrieval pin waits only for its own backend, since
+it cannot move to the partner. A partner kept out by more than its limit is never waited
+for. `wait_limit` bounds all of a task's waits together, over every `retry` entry and
+carry-on: the bound starts at the first wait, later waits get what is left, and once it is
+spent the task never waits again. Each wait lasts 30 seconds past the reset, counted against
+the bound, and the preferences are read again after it: a backend disabled meanwhile, or one
+that would now bill per token, is not started. Eval cells neither wait nor back off: each
+stays one attempt.
 
 An attempt that ends `error` before any gate ran (a crash, a network error) on a backend that
-is installed is an infrastructure error: it is retried on the same backend after 5s, then 10s,
-then 20s, at most three times, before the `retry` list moves on. Each retry records the delay
+is installed, and left nothing behind (no commit, no change in the worktree, nothing untracked
+but hidden files), is an infrastructure error: it is retried on the same backend and account,
+without routing again, after 5s, then 10s, then 20s, at most three times, before the `retry`
+list moves on. An attempt that left work, and a refusal before the agent started (a model
+name that is not one, an option the backend does not support, claude refusing to bill per
+token), go to the `retry` list at once. Each retry records the delay
 it waited as `backoff`, which `hrn batch show` prints; cancelling the batch stops the wait. A
 failed gate, a `limited` run and the other statuses in the table above are never backed off.
 

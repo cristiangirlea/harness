@@ -181,7 +181,7 @@ func TestCLINoToolsRefusesUnsupportedBackend(t *testing.T) {
 		return helperCLI(nil).args(Task{}, "")
 	}
 	res := b.Run(t.Context(), Task{NoTools: true, Dir: t.TempDir()}, func(Event) {})
-	if res.Status != StatusError || res.Error != "no_tools is not supported by the codex backend" {
+	if res.Status != StatusError || res.Error != "no_tools is not supported by the codex backend" || !res.StartRefusal {
 		t.Fatalf("unexpected refusal: %+v", res)
 	}
 }

@@ -66,6 +66,8 @@ type Result struct {
 	LimitResets time.Time `json:"limit_resets,omitzero"`
 	// CLIVersion is the version the CLI recorded for this run.
 	CLIVersion string `json:"cli_version,omitempty"`
+	// StartRefusal marks an error raised before the agent started that every try would repeat; it is never recorded.
+	StartRefusal bool `json:"-"`
 }
 
 // ModelTokens counts each model token once. Missing/unknown semantics are not zero.

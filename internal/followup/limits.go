@@ -539,12 +539,6 @@ func (req Request) keep() string {
 	return ""
 }
 
-// ChooseFor is Choose for a new run; named says the caller typed the backend, so a nearly spent plan only warns.
-func ChooseFor(backend string, named bool) (string, string) {
-	pick, why, _ := ChooseContinuation(Request{Backend: backend, Named: named}, false, "")
-	return pick, why
-}
-
 // ChooseContinuation checks the session's account before moving it to a partner.
 func ChooseContinuation(req Request, noSwitch bool, freshField string) (string, string, error) {
 	meant := req.Backend
@@ -611,9 +605,9 @@ type CarryOn struct {
 	Until   time.Time
 	Waiting string
 
-	max  time.Duration
-	req  Request
-	prev agent.Task
+	budget *Budget
+	req    Request
+	prev   agent.Task
 }
 
 func (c CarryOn) Route() string {
@@ -628,7 +622,10 @@ func (c *CarryOn) Wait(ctx context.Context) error {
 	if c.Until.IsZero() {
 		return nil
 	}
-	if err := Wait(ctx, c.Until, c.max); err != nil {
+	if err := Wait(ctx, c.Until, c.budget); err != nil {
+		return err
+	}
+	if err := Usable(c.To, c.req.Account); err != nil {
 		return err
 	}
 	return c.plan()
@@ -650,15 +647,25 @@ func (c *CarryOn) plan() error {
 	return nil
 }
 
+// Waits is what all of one run's waits share: one budget, and KeepAccount for a run given its account.
+type Waits struct {
+	Budget      *Budget
+	KeepAccount bool
+}
+
 // After persists a limit and plans a switch, or returns nil; with wait_limit set and no partner ready, it plans a wait.
-func After(prevID, backend string, prev agent.Task, res agent.Result) (next *CarryOn, why string, err error) {
+func After(prevID, backend string, prev agent.Task, res agent.Result, w Waits) (next *CarryOn, why string, err error) {
 	if res.Status != agent.StatusLimited {
 		return nil, "", nil
 	}
 	if err := Note(backend, res); err != nil {
-		// Persistence failure costs only a future limited start.
-		why = "the limit was not remembered: " + err.Error() + "; "
+		// Persistence failure costs only a future limited start; the error can name a path, so it is not repeated.
+		why = "the usage-limit reset could not be saved; "
 	}
+	if w.Budget == nil {
+		w.Budget = NewBudget(time.Duration(prev.WaitLimit))
+	}
+	pinned := prev.NoSwitch || w.KeepAccount
 
 	now := time.Now()
 	spent := Spent{}
@@ -672,17 +679,18 @@ func After(prevID, backend string, prev agent.Task, res agent.Result) (next *Car
 		if prev.WaitLimit <= 0 {
 			return nil, "", nil
 		}
-		return waitCarry(prevID, backend, prev, res, why+msg, now, spent)
+		return waitCarry(prevID, backend, prev, res, why+msg, w.Budget, WaitScope{Backend: backend, Account: res.Account, Pinned: pinned})
 	}
 	if ok, reason := Ready(other, now, spent); !ok {
-		return waitCarry(prevID, backend, prev, res, why+reason+", so the run stays "+string(agent.StatusLimited), now, spent, other)
+		return waitCarry(prevID, backend, prev, res, why+reason+", so the run stays "+string(agent.StatusLimited), w.Budget,
+			WaitScope{Backend: backend, Account: res.Account, Pinned: pinned, Partner: !pinned})
 	}
 
 	account := ""
 	if other == backend {
 		a, _, _ := Account(backend, "", now, spent)
 		if a.Name == "" {
-			return waitCarry(prevID, backend, prev, res, why+backend+" accounts are all at their usage limit", now, spent)
+			return waitCarry(prevID, backend, prev, res, why+backend+" accounts are all at their usage limit", w.Budget, WaitScope{Backend: backend, Account: res.Account, Pinned: pinned})
 		}
 		account = a.Name
 	}
@@ -695,18 +703,20 @@ func After(prevID, backend string, prev agent.Task, res agent.Result) (next *Car
 	return c, "", nil
 }
 
-// waitCarry plans a carry-on after the soonest remembered reset of backend or a ready-once-reset other, or says why the run stays limited.
-func waitCarry(prevID, backend string, prev agent.Task, res agent.Result, why string, now time.Time, spent Spent, others ...string) (*CarryOn, string, error) {
+// waitCarry plans a carry-on after the soonest reset scope allows, or says why the run stays limited.
+func waitCarry(prevID, backend string, prev agent.Task, res agent.Result, why string, b *Budget, scope WaitScope) (*CarryOn, string, error) {
 	if prev.WaitLimit <= 0 {
 		return nil, why, nil
 	}
-	max := time.Duration(prev.WaitLimit)
-	r := soonest(now, backend, spent, others...)
-	if err := waitable(r.Until, max, now); err != nil {
+	now := time.Now()
+	spent := Spent{}
+	spent.Mark(backend, res.Account)
+	r := scope.soonest(now, spent)
+	if err := waitable(r.Until, b, now); err != nil {
 		return nil, why + "; not waiting: " + err.Error(), nil
 	}
 	label := accountLabel(r.Backend, r.Account)
-	c := &CarryOn{From: backend, To: r.Backend, Until: r.Until, max: max, prev: prev,
+	c := &CarryOn{From: backend, To: r.Backend, Until: r.Until, budget: b, prev: prev,
 		req: Request{RunID: prevID, Backend: r.Backend, Account: r.Account, Fresh: r.Backend == backend && r.Account != res.Account, Dir: prev.Dir, Retrieval: prev.Retrieval}}
 	c.Waiting = fmt.Sprintf("%s; waiting for %s", why, r)
 	c.Why = fmt.Sprintf("%s; waited for %s; %s carries run %s on", why, r, label, prevID)

@@ -627,7 +627,7 @@ func TestRunToolWaitsForTheResetWhenBothPlansAreOut(t *testing.T) {
 	var calls atomic.Int32
 	agent.Register(scripted{"codex", func(agent.Task) agent.Result {
 		if calls.Add(1) == 1 {
-			return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(30 * time.Second)}
+			return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(20 * time.Second)}
 		}
 		return agent.Result{Status: agent.StatusOK, Final: "finished after the reset", Turns: 1}
 	}})
@@ -676,7 +676,7 @@ func TestRunToolWaitsBeforeStartingWhenBothPlansAreOut(t *testing.T) {
 		calls.Add(1)
 		return agent.Result{Status: agent.StatusOK, Final: "finished after the reset", Turns: 1}
 	}})
-	for b, in := range map[string]time.Duration{"codex": 30 * time.Second, "claude": time.Hour} {
+	for b, in := range map[string]time.Duration{"codex": 20 * time.Second, "claude": time.Hour} {
 		if err := limits.Note(b, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(in)}); err != nil {
 			t.Fatal(err)
 		}

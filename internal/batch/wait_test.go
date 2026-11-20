@@ -3,6 +3,9 @@ package batch
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -132,7 +135,7 @@ func TestAnAttemptWaitsForTheResetInsteadOfSkipping(t *testing.T) {
 	agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
 		return agent.Result{Backend: "codex", Status: agent.StatusOK, Final: "finished", Turns: 1}
 	}})
-	for backend, in := range map[string]time.Duration{"codex": 30 * time.Second, "claude": time.Hour} {
+	for backend, in := range map[string]time.Duration{"codex": 20 * time.Second, "claude": time.Hour} {
 		if err := limits.Note(backend, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(in)}); err != nil {
 			t.Fatal(err)
 		}
@@ -206,7 +209,7 @@ func TestALimitedAttemptWaitsForTheResetAndCarriesOn(t *testing.T) {
 			orig, _ := agent.Get("wb-ok")
 			agent.Register(stub{"codex", func(ctx context.Context, task agent.Task) agent.Result {
 				if calls.Add(1) == 1 {
-					return agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(30 * time.Second)}
+					return agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(20 * time.Second)}
 				}
 				res := orig.Run(ctx, task, func(agent.Event) {})
 				res.Backend = "codex"
@@ -219,7 +222,7 @@ func TestALimitedAttemptWaitsForTheResetAndCarriesOn(t *testing.T) {
 			if tr.Status != StatusPass || len(tr.Attempts) != 2 || tr.Attempts[1].Backend != "codex" || tr.Attempts[1].SwitchedFrom != "codex" {
 				t.Fatalf("task = %s with %d attempts (%q), want a limited codex attempt carried on on codex after its reset", tr.Status, len(tr.Attempts), tr.Error)
 			}
-			if len(*slept) != 1 || (*slept)[0] > 30*time.Second {
+			if len(*slept) != 1 || (*slept)[0] > time.Minute {
 				t.Errorf("slept %v, want one wait for codex's reset", *slept)
 			}
 		})
@@ -257,7 +260,7 @@ func TestATaskWaitLimitShorterThanTheResetSkipsTheAttempt(t *testing.T) {
 func TestACanceledResetWaitCancelsTheTask(t *testing.T) {
 	dir := initRepo(t)
 	standIn(t)
-	for b, in := range map[string]time.Duration{"codex": 30 * time.Second, "claude": time.Hour} {
+	for b, in := range map[string]time.Duration{"codex": 20 * time.Second, "claude": time.Hour} {
 		if err := limits.Note(b, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(in)}); err != nil {
 			t.Fatal(err)
 		}
@@ -290,5 +293,160 @@ func TestAMissingBackendIsNotBackedOff(t *testing.T) {
 	res, _ := run(t, Spec{Dir: dir, Backend: "wb-missing", Tasks: []Task{{ID: "gone", Prompt: "write it"}}})
 	if tr := res.Tasks[0]; len(tr.Attempts) != 1 || len(*delays) != 0 {
 		t.Fatalf("%d attempts, backoffs %v: a backend that is not installed is not retried", len(tr.Attempts), *delays)
+	}
+}
+
+// noteResets remembers a reset in d for each backend.
+func noteResets(t *testing.T, in map[string]time.Duration) {
+	t.Helper()
+	for b, d := range in {
+		if err := limits.Note(b, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(d)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// countClaude replaces claude with a stub that counts its runs.
+func countClaude(t *testing.T) *atomic.Int32 {
+	t.Helper()
+	var calls atomic.Int32
+	agent.Register(stub{"claude", func(context.Context, agent.Task) agent.Result {
+		calls.Add(1)
+		return agent.Result{Backend: "claude", Status: agent.StatusOK, Final: "finished", Turns: 1}
+	}})
+	return &calls
+}
+
+func TestARetrievalPinnedTaskWaitsOnlyForItsOwnBackend(t *testing.T) {
+	opts := agent.Options{Model: "fixture", Retrieval: "required", RetrievalTenant: "t_fixture", RetrievalProject: "p_fixture",
+		RetrievalRevision: strings.Repeat("a", 40), WaitLimit: agent.Duration(time.Hour)}
+	for name, limitedFirst := range map[string]bool{"before the first attempt": false, "after a limited attempt": true} {
+		t.Run(name, func(t *testing.T) {
+			dir := initRepo(t)
+			standIn(t)
+			retrievalServer(t, nil)
+			slept := fakeWait(t)
+			claude := countClaude(t)
+			var calls atomic.Int32
+			agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
+				if calls.Add(1) == 1 && limitedFirst {
+					return agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(40 * time.Minute)}
+				}
+				return agent.Result{Backend: "codex", Model: "fixture", Status: agent.StatusOK, Final: "finished", Turns: 1}
+			}})
+			noteResets(t, map[string]time.Duration{"claude": 10 * time.Minute})
+			if !limitedFirst {
+				noteResets(t, map[string]time.Duration{"codex": 40 * time.Minute})
+			}
+			res, _ := run(t, Spec{Dir: dir, Backend: "codex", Options: opts, Tasks: []Task{{ID: "pinned", Prompt: "answer"}}})
+			tr := res.Tasks[0]
+			if tr.Status != StatusPass || claude.Load() != 0 {
+				t.Fatalf("task = %s (%q), claude ran %d times, attempts %+v; want it finished on codex alone", tr.Status, tr.Error, claude.Load(), tr.Attempts)
+			}
+			for _, a := range tr.Attempts {
+				if a.Backend != "codex" {
+					t.Fatalf("an attempt ran on %s", a.Backend)
+				}
+			}
+			if len(*slept) != 1 || (*slept)[0] < 30*time.Minute {
+				t.Fatalf("slept %v, want one wait for codex's reset, not claude's sooner one", *slept)
+			}
+		})
+	}
+}
+
+func TestATaskWaitsWithinOneBoundAcrossItsRetryEntries(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	slept := fakeWait(t)
+	var calls atomic.Int32
+	agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
+		calls.Add(1)
+		return agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(40 * time.Minute)}
+	}})
+	noteResets(t, map[string]time.Duration{"codex": 40 * time.Minute, "claude": 50 * time.Minute})
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Retry: []string{"codex", "codex"}, Options: agent.Options{WaitLimit: agent.Duration(time.Hour)},
+		Tasks: []Task{{ID: "out", Prompt: "write it"}}})
+	tr := res.Tasks[0]
+	var total time.Duration
+	for _, d := range *slept {
+		total += d
+	}
+	if tr.Status != StatusFail || len(*slept) != 1 || total > time.Hour || calls.Load() != 1 {
+		t.Fatalf("task = %s, slept %v (%s), %d runs; want one wait, then nothing past the hour", tr.Status, *slept, total, calls.Load())
+	}
+	if !strings.Contains(tr.Error+eventsText(t, res.ID), "wait limit") {
+		t.Errorf("error = %q, want the spent bound said", tr.Error)
+	}
+}
+
+// eventsText joins the reasons of a batch's flow, where skipped waits are explained.
+func eventsText(t *testing.T, id string) string {
+	t.Helper()
+	var b strings.Builder
+	for _, e := range mustTimeline(t, id) {
+		b.WriteString(e.Reason + "\n")
+	}
+	return b.String()
+}
+
+func TestAnAttemptThatLeftWorkIsNotBackedOff(t *testing.T) {
+	for name, act := range map[string]func(dir string) error{
+		"committed": func(dir string) error {
+			return exec.Command("git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--allow-empty", "-qm", "half").Run()
+		},
+		"wrote a file": func(dir string) error { return os.WriteFile(filepath.Join(dir, "half.txt"), []byte("half\n"), 0o644) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := initRepo(t)
+			delays := recordBackoff(t)
+			agent.Register(stub{"wb-acted", func(_ context.Context, task agent.Task) agent.Result {
+				if err := act(task.Dir); err != nil {
+					t.Error(err)
+				}
+				return agent.Result{Backend: "wb-acted", Status: agent.StatusError, Error: "connection reset"}
+			}})
+			res, _ := run(t, Spec{Dir: dir, Backend: "wb-acted", Retry: []string{"wb-ok"}, Tasks: []Task{{ID: "acted", Prompt: "write it"}}})
+			tr := res.Tasks[0]
+			if len(*delays) != 0 || len(tr.Attempts) != 2 || tr.Attempts[1].Backend != "wb-ok" {
+				t.Fatalf("backoffs %v, %d attempts: an attempt that acted moves on to the retry list", *delays, len(tr.Attempts))
+			}
+		})
+	}
+}
+
+func TestARefusalBeforeTheStartIsNotBackedOff(t *testing.T) {
+	dir := initRepo(t)
+	delays := recordBackoff(t)
+	agent.Register(stub{"wb-refuses", func(context.Context, agent.Task) agent.Result {
+		return agent.Result{Backend: "wb-refuses", Status: agent.StatusError, Error: `model "x" is not a model id`, StartRefusal: true}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "wb-refuses", Tasks: []Task{{ID: "refused", Prompt: "write it"}}})
+	if tr := res.Tasks[0]; len(*delays) != 0 || len(tr.Attempts) != 1 {
+		t.Fatalf("backoffs %v, %d attempts: a refusal repeats, so it is not retried", *delays, len(tr.Attempts))
+	}
+}
+
+func TestABackoffRetryKeepsItsBackendPastRouting(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	delays := recordBackoff(t)
+	claude := countClaude(t)
+	var calls atomic.Int32
+	orig, _ := agent.Get("wb-ok")
+	agent.Register(stub{"codex", func(ctx context.Context, task agent.Task) agent.Result {
+		if calls.Add(1) == 1 {
+			// Another run remembers codex's limit meanwhile: routing would now start on claude.
+			noteResets(t, map[string]time.Duration{"codex": time.Hour})
+			return agent.Result{Backend: "codex", Status: agent.StatusError, Error: "connection reset"}
+		}
+		res := orig.Run(ctx, task, func(agent.Event) {})
+		res.Backend = "codex"
+		return res
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "same", Prompt: "write it"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(*delays) != 1 || claude.Load() != 0 || len(tr.Attempts) != 2 || tr.Attempts[1].Backend != "codex" {
+		t.Fatalf("task = %s, backoffs %v, claude ran %d times, %d attempts; want the backoff retried on codex", tr.Status, *delays, claude.Load(), len(tr.Attempts))
 	}
 }

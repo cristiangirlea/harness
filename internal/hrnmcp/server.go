@@ -293,13 +293,15 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if args.ContinueRunID != "" {
 				routeNote = agent.ContinuationNote(args.ContinueRunID, routed)
 			}
+			// One bound for the wait before the start and the wait after a limited result together.
+			waits := followup.NewBudget(time.Duration(args.WaitLimit))
 			if !args.NoSwitch && args.Account == "" && args.ContinueRunID == "" {
 				meant := args.Backend
 				var bothOut bool
 				args.Backend, routed, bothOut = followup.ChooseWaiting(args.Backend, named)
 				if bothOut && args.WaitLimit > 0 {
 					def := resolve.DefaultBackendNameIn(runlog.Home())
-					r, err := followup.WaitFor(ctx, cmp.Or(meant, def), true, nil, time.Duration(args.WaitLimit), func(r followup.Reset) {
+					r, err := followup.WaitFor(ctx, followup.WaitScope{Backend: cmp.Or(meant, def), Partner: true}, nil, waits, func(r followup.Reset) {
 						call.Progress(printableNote(routed+"; waiting for "+r.String(), 400))
 					})
 					switch {
@@ -310,6 +312,8 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 						routed += "; waited for " + r.String()
 					case ctx.Err() != nil:
 						return text("run: canceled while waiting for a usage limit to reset", nil, true), nil
+					case errors.Is(err, followup.ErrChanged):
+						return text("run: "+err.Error(), nil, true), nil
 					default:
 						routed += "; not waiting: " + err.Error()
 					}
@@ -400,9 +404,9 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			var next *followup.CarryOn
 			var why string
 			if ctx.Err() == nil {
-				next, why, err = followup.After(rec.ID(), args.Backend, task, res)
+				next, why, err = followup.After(rec.ID(), args.Backend, task, res, followup.Waits{Budget: waits, KeepAccount: args.Account != ""})
 			} else if err := followup.Note(args.Backend, res); err != nil {
-				notes = append(notes, "the limit was not remembered: "+err.Error())
+				notes = append(notes, "the usage-limit reset could not be saved")
 			}
 			if next != nil && next.Waiting != "" {
 				// The limited run's record is closed: the wait is reported now and recorded on the carry-on.

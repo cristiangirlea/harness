@@ -568,11 +568,24 @@ the message gives one. Then:
   is limited: for the soonest reset that `limits.json` remembers, if it is within D, then
   the run starts once on that backend. A run that would start on a limited backend waits
   before it starts; a run that ends `limited` waits and is carried on by a follow-up run, as
-  above, on the backend that reset. The wait is shown as it starts (stderr, MCP progress)
+  above, on the backend that reset. A run with `--no-switch`, `--account` or `--continue`
+  does not wait before it starts: it starts, ends `limited`, and only then waits. With
+  `--no-switch` or `--account` that wait is only for the run's own backend and account,
+  never another account's or the partner's sooner reset.
+  D bounds all of a run's waits together, the one before the start and the one after a
+  limited result: the bound starts at the first wait, a later wait gets only what is left,
+  and once it is spent nothing waits again. The waits do not count against `timeout`,
+  which bounds each agent run. Every wait lasts 30 seconds past the reset, since CLIs report
+  resets to the minute; those 30 seconds count against D too. After the wait the
+  preferences are read again: a backend disabled meanwhile, an account no longer declared,
+  or a backend that would now bill per token is not started (a new run exits with the
+  reason, a carry-on is not made and the run stays `limited`).
+  The wait is shown as it starts (stderr, MCP progress)
   and recorded as an info event, so a flow step, on the run that follows it; a batch
   attempt shows it as a `waiting` step (see [Batches](batches.md)). Nothing waits without a
-  remembered reset, or for one further off than D: the run stays `limited` and says why.
-  Cancelling stops the wait.
+  remembered reset, or for one further off than what is left of D: the run stays `limited`
+  and says why. Cancelling stops the wait. An hrn inside a guarded run refuses `wait_limit`
+  (see [Permissions](permissions.md)).
 - Under the plan policy, nothing moves automatically to a CLI that would bill per token.
   With `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
   or a `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switch set, claude prefers them to
