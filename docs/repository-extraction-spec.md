@@ -90,7 +90,7 @@ part behind it leaves.
 | C3 | knowledge wire (`/v1/knowledge/*`) | knowledge `version_id` and `RankingVersion`, no schema version | a schema version on request and packet, the exec rule, fixtures owned by the service |
 | C4 | job API (`/v1/projects/.../jobs`, `/v1/jobs/...`) | `JobOptions`, `JobResult`, strict decoding | the same as C2 and C3 |
 | C5 | run records on disk | additive `omitempty`, documented | a `record_version` field, written now, read leniently |
-| C6 | `hrn --json` outputs (`show`, `flow`, `batch show`, `eval diff`, `report`, `ws`, `retrieval`) | unversioned, except `bot stats` | a `version` in each object, as `bot stats` has; one page in `docs/` listing them |
+| C6 | `hrn --json` outputs (`show`, `flow`, `batch show`, `eval diff`, `report`, `ws`, `retrieval`) | unversioned, except `bot stats` and `runs` | a `version` in each object, as `bot stats` has; one page in `docs/` listing them |
 | C7 | plugin protocol | does not exist | the model above, v1, in `contracts/` |
 | C8 | releases | `Version` 0.2.0 in code, no tag, `hrn update` reads GitHub's latest release | the first tag; from then on every part's release is a tag with assets and `SHA256SUMS` |
 

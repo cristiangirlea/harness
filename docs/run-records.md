@@ -286,7 +286,8 @@ remote (or of the only remote, when there is no `origin`) as `host/path`, such a
 `github.com/acme/tool`: only the host and the path are kept, never the URL, so a user name,
 password, token or port in the remote never reaches the record, and a remote that is a local
 path or a `file://` URL records no `repo`. `branch` is the checked-out branch, absent on a
-detached HEAD. Both are read once, at the start.
+detached HEAD. Both are read once, at the start. `hrn runs --json --repo OWNER/NAME` reads
+`repo` to list one repository's recent runs, with `branch` beside each.
 At close, `result.changed_files` lists up to 500 repository-relative paths that differ
 from that HEAD, including committed, staged, unstaged and untracked non-ignored files.
 `changed_files_truncated` is true if more paths exist, and `end_head` records the
