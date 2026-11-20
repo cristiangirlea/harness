@@ -540,6 +540,24 @@ the message gives one. Then:
   says why. A `--continue` follows the same rule. `hrn backends` (and the MCP `backends`
   tool) shows each limit it remembers, also for a backend with no partner (agy without
   preferences). A limit can lift early (codex sells credits); deleting the file forgets it.
+- Before a limit is reached, the plan quota that `hrn backends` shows is weighed too. When
+  a current 5h or weekly window of claude or codex has less than 5% left, a run, a batch
+  attempt, a retry or a `--continue` meant for it starts on its partner, and the run's
+  info event (a batch's `switch` event) names the window and how much is left. Nothing
+  moves when the partner is not ready, or is itself under 5% in a window: the run stays
+  and the info event says why. A window with no report, or whose reset has passed (shown
+  as stale), never moves a run. A backend with named accounts keeps choosing among them
+  by `account_reserve_percent` (below) instead.
+- A backend named for the run (`-b`, the MCP `backend` field) stays where it is when only
+  its quota is low: the plan still answers until the limit itself, the figure is the
+  last one a run reported, and the name is the caller's choice. The info event warns
+  ("running on codex as named"). A remembered limit still moves a named backend, since
+  that run would fail at once; `--no-switch` keeps either from moving it.
+  A batch's backends (`-b`, a spec's or task's `backend`, its retries) are not named in
+  this sense: an attempt moves as it would at a limit. A continuation of a run with a
+  retrieval pin, or a batch with retrieval on, stays too, since a move would break the
+  pin ("running on codex to keep its retrieval pin"). A reset further off than its window can last (6 hours for
+  the 5h window, 8 days for the weekly one) is taken as a misread figure and ignored.
 - Under the plan policy, nothing moves automatically to `api`, which is billed per token, unless its endpoint is
   opted in as local (below). Without preferences, gemini, opencode and agy are not partners either.
   Under the plan policy, with a preference, the enabled installed plan backends stand in,

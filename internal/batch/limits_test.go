@@ -584,3 +584,62 @@ func TestALimitedAccountCarriesOnInABatchBeforeThePartner(t *testing.T) {
 		t.Fatalf("fresh carry-on record: %+v, %v", rec, err)
 	}
 }
+
+func TestAnAttemptMeantForANearlySpentBackendStartsOnItsPartner(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	nearlySpent(t, "CODEX_HOME")
+	res, events := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "moved", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 1 {
+		t.Fatalf("task = %+v", tr)
+	}
+	if a := tr.Attempts[0]; a.Backend != "claude" || a.SwitchedFrom != "codex" {
+		t.Errorf("attempt on %s switched from %q", a.Backend, a.SwitchedFrom)
+	}
+	if s := eventTexts(events, "switch"); !strings.Contains(s, "codex has 3.0% of its weekly window left") {
+		t.Errorf("switch events = %q", s)
+	}
+}
+
+// nearlySpent points the codex home variable at a session saying 3% of the weekly window is left.
+func nearlySpent(t *testing.T, variable string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv(variable, home)
+	sessions := filepath.Join(home, "sessions", "2026", "01", "01")
+	if err := os.MkdirAll(sessions, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	line := fmt.Sprintf(`{"timestamp":%q,"payload":{"type":"token_count","rate_limits":{"secondary":{"used_percent":97,"window_minutes":10080,"resets_at":%d}}}}`,
+		time.Now().Format(time.RFC3339), time.Now().Add(48*time.Hour).Unix())
+	if err := os.WriteFile(filepath.Join(sessions, "rollout.jsonl"), []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnAttemptStaysOnANearlySpentBackendWhenThePartnerCannotTakeOver(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	nearlySpent(t, "CODEX_HOME")
+	_ = limits.Note("claude", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
+	codex, err := agent.Get("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Register(stub{"codex", func(_ context.Context, task agent.Task) agent.Result {
+		return agent.Result{Backend: "codex", Status: agent.StatusOK, Final: "finished"}
+	}})
+	t.Cleanup(func() { agent.Register(codex) })
+	res, events := run(t, Spec{Dir: dir, Backend: "codex", Tasks: []Task{{ID: "stays", Prompt: "p"}}})
+	tr := res.Tasks[0]
+	if tr.Status != StatusPass || len(tr.Attempts) != 1 || tr.Attempts[0].Backend != "codex" {
+		t.Fatalf("task = %+v", tr)
+	}
+	if s := eventTexts(events, "switch"); s != "" {
+		t.Errorf("switch events = %q, want none", s)
+	}
+	if s := eventTexts(events, "info"); !strings.Contains(s, "codex has 3.0%") || !strings.Contains(s, "claude is at its usage limit") {
+		t.Errorf("info events = %q, want the low quota and why claude was passed over", s)
+	}
+}

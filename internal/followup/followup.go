@@ -42,6 +42,8 @@ type Request struct {
 	Fresh bool
 	// Resume opts out of the codex fresh default.
 	Resume bool
+	// Named: the caller typed Backend, so a nearly spent plan warns instead of moving it.
+	Named bool
 }
 
 func (req Request) freshFor(previous, backend string) bool {

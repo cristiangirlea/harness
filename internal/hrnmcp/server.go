@@ -243,9 +243,10 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			// Mirrors hrn run: limit routing first, then the earlier run's mode and purpose unless named.
 			var routed string
+			named := args.Backend != ""
 			plan := followup.Plan{Account: args.Account}
 			if args.ContinueRunID != "" {
-				req := followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Account: args.Account, Dir: args.Dir, Model: args.Model, Retrieval: args.Retrieval, RetrievalRevision: args.RetrievalRevision, RetrievalTenant: args.RetrievalTenant, RetrievalProject: args.RetrievalProject, RetrievalVersion: args.RetrievalVersion, RetrievalRefresh: args.RetrievalRefresh, Fresh: args.Fresh != nil && *args.Fresh, Resume: args.Fresh != nil && !*args.Fresh}
+				req := followup.Request{RunID: args.ContinueRunID, Backend: args.Backend, Named: named, Account: args.Account, Dir: args.Dir, Model: args.Model, Retrieval: args.Retrieval, RetrievalRevision: args.RetrievalRevision, RetrievalTenant: args.RetrievalTenant, RetrievalProject: args.RetrievalProject, RetrievalVersion: args.RetrievalVersion, RetrievalRefresh: args.RetrievalRefresh, Fresh: args.Fresh != nil && *args.Fresh, Resume: args.Fresh != nil && !*args.Fresh}
 				chosen, reason, err := followup.ChooseContinuation(req, args.NoSwitch, "fresh")
 				if err != nil {
 					return mcp.CallResult{}, err
@@ -293,7 +294,7 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			if !args.NoSwitch && args.Account == "" && args.ContinueRunID == "" {
 				meant := args.Backend
-				if args.Backend, routed = followup.Choose(args.Backend, ""); args.Backend != meant {
+				if args.Backend, routed = followup.ChooseFor(args.Backend, named); args.Backend != meant {
 					if routedBy != nil {
 						args.Options.Effort = "" // the row measured the limited backend, not its partner
 					}

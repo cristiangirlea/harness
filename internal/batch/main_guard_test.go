@@ -28,6 +28,8 @@ func TestMain(m *testing.M) {
 			panic(err)
 		}
 		os.Setenv("HRN_HOME", home)
+		// Routing reads codex's sessions for its quota; the user's must not move a test's run.
+		os.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
 		code := m.Run()
 		os.RemoveAll(home)
 		if repoTemplate != "" {

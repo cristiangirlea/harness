@@ -539,3 +539,81 @@ func TestRunRoutesOrRefusesALimitedContinuationAccount(t *testing.T) {
 		t.Fatalf("refused continuation: %d, %v", code, err)
 	}
 }
+
+// nearlySpentCodex points CODEX_HOME at a session saying 2% of the 5h window is left.
+func nearlySpentCodex(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	dir := filepath.Join(home, "sessions", "2026", "01", "01")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	line := fmt.Sprintf(`{"timestamp":%q,"payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":98,"window_minutes":300,"resets_at":%d}}}}`,
+		time.Now().Format(time.RFC3339), time.Now().Add(time.Hour).Unix())
+	if err := os.WriteFile(filepath.Join(dir, "rollout.jsonl"), []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func saidInfo(t *testing.T, id, want string) bool {
+	t.Helper()
+	events, _ := runlog.Events(id)
+	for _, e := range events {
+		if e.Kind == agent.EventInfo && strings.Contains(e.Text, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRunOnANamedNearlySpentBackendWarnsAndStays(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t)
+	nearlySpentCodex(t)
+	cmdRun([]string{"-b", "codex", "-C", t.TempDir(), "fix", "it"})
+	recs, _ := runlog.List(5)
+	var first runlog.Record
+	for _, r := range recs {
+		if r.Continues == "" {
+			first = r
+		}
+	}
+	if first.Backend != "codex" {
+		t.Fatalf("first run on %q, want codex as named", first.Backend)
+	}
+	if !saidInfo(t, first.ID, "running on codex as named") {
+		t.Error("the run does not warn that codex is nearly spent")
+	}
+}
+
+func TestContinuingANearlySpentBackendGoesToTheOtherOne(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	standIn(t)
+	nearlySpentCodex(t)
+	dir := t.TempDir()
+	rec, err := runlog.Create("codex", agent.Task{Prompt: "first", Dir: dir}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rec.Close(agent.Result{Backend: "codex", Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := cmdRun([]string{"--continue", rec.ID(), "again"}); code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	// Runs started in one second do not sort by start, so the follow-up is found by what it continues.
+	recs, _ := runlog.List(5)
+	var follow runlog.Record
+	for _, r := range recs {
+		if r.Continues == rec.ID() {
+			follow = r
+		}
+	}
+	if follow.Backend != "claude" {
+		t.Fatalf("follow-up on %s continuing %q, want claude continuing %s", follow.Backend, follow.Continues, rec.ID())
+	}
+	if !saidInfo(t, follow.ID, "codex has 2.0% of its 5h window left") {
+		t.Error("the follow-up does not say why it started on claude")
+	}
+}

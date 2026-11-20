@@ -335,9 +335,10 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 
 	// Resolve replacement before continuation planning; the requested model belongs to the original backend.
 	var routed string
+	named := backend != ""
 	plan := followup.Plan{Account: *account}
 	if *continueID != "" {
-		req := followup.Request{RunID: *continueID, Backend: backend, Account: *account, Retrieval: opts.Retrieval, RetrievalRevision: opts.RetrievalRevision, RetrievalTenant: opts.RetrievalTenant, RetrievalProject: opts.RetrievalProject, RetrievalVersion: opts.RetrievalVersion, RetrievalRefresh: *retrievalRefresh, Fresh: *fresh, Resume: *resume || (set["fresh"] && !*fresh)}
+		req := followup.Request{RunID: *continueID, Backend: backend, Named: named, Account: *account, Retrieval: opts.Retrieval, RetrievalRevision: opts.RetrievalRevision, RetrievalTenant: opts.RetrievalTenant, RetrievalProject: opts.RetrievalProject, RetrievalVersion: opts.RetrievalVersion, RetrievalRefresh: *retrievalRefresh, Fresh: *fresh, Resume: *resume || (set["fresh"] && !*fresh)}
 		chosen, reason, err := followup.ChooseContinuation(req, opts.NoSwitch, "--fresh")
 		if err != nil {
 			return 2, err
@@ -406,7 +407,7 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	if !opts.NoSwitch && *account == "" && *continueID == "" {
 		meant := backend
-		if backend, routed = followup.Choose(backend, ""); backend != meant {
+		if backend, routed = followup.ChooseFor(backend, named); backend != meant {
 			if routedBy != nil {
 				opts.Effort = "" // the row measured the limited backend, not its partner
 			}
