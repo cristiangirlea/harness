@@ -113,13 +113,14 @@ exposure counts, not proof of authorship or knowledge. On the watch card, famili
 absent on the first page load and can be about a minute old. Unreadable practice records
 are skipped and reported, so familiarity may be incomplete.
 
-The read stops after 3 seconds, with up to six Git reads at once. A repository not read in
-time is left out of both lists, and `hrn bot stats` says so (`familiarity: time limit
+Git reads stop 3 seconds after the records are loaded, with up to six at once. The Git
+evidence of a repository not fully read in time is left out (its practice reads still
+count), and `hrn bot stats` says so (`familiarity: time limit
 reached, some repositories were skipped`). Reads are kept in `familiarity-cache.json` so the
 next call gets further: a batch's evidence is kept while the batch record exists, since its
-commit IDs fix it; a repository's recent commits are reused for 10 minutes, and a copy up
-to a day old stands in when a fresh read does not finish in time. Familiarity can therefore
-be up to 10 minutes old.
+full commit IDs fix it; a repository's recent commits are reused for 10 minutes, and a copy up
+to a day old stands in when a fresh read does not finish in time. Familiarity is therefore
+usually up to 10 minutes old, and up to a day when a read runs out of time.
 
 ## Levels and badges
 

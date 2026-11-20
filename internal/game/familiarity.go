@@ -51,8 +51,6 @@ var runGit = func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) { return c
 
 // ReadFamiliarity derives the view from local records and repositories within familiarityBudget.
 func ReadFamiliarity(ctx context.Context, now time.Time) (Familiarity, error) {
-	ctx, cancel := context.WithTimeout(ctx, familiarityBudget)
-	defer cancel()
 	runs, err := runlog.List(0)
 	if err != nil {
 		return Familiarity{}, err
@@ -61,6 +59,8 @@ func ReadFamiliarity(ctx context.Context, now time.Time) (Familiarity, error) {
 	if err != nil {
 		return Familiarity{}, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, familiarityBudget)
+	defer cancel()
 	return deriveFamiliarity(ctx, Records{Runs: runs, Batches: batches}, now)
 }
 
@@ -187,7 +187,7 @@ func readAll(reads []func()) {
 }
 
 func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Familiarity, error) {
-	partial := false
+
 	roots := map[string]string{}
 	var order []string
 	touched := map[string]map[string]bool{}
@@ -248,10 +248,6 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 		return name
 	}
 	for _, r := range records.Runs {
-		if ctx.Err() != nil {
-			partial = true
-			break
-		}
 		name := addRoot(r.Task.Dir)
 		if name == "" {
 			continue
@@ -276,10 +272,6 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 	kept := loadFamiliarityCache()
 	var batchReads []*batchRead
 	for _, b := range records.Batches {
-		if ctx.Err() != nil {
-			partial = true
-			break
-		}
 		name := addRoot(b.Dir)
 		if name == "" {
 			continue
@@ -302,8 +294,16 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 		if safeOID(b.Base) {
 			base = b.Base
 		}
-		read := &batchRead{repo: name, dir: b.Dir, base: base, oids: oids, key: batchKey(findRoot(b.Dir), base, oids)}
-		if found, ok := kept.Batches[read.key]; ok {
+		read := &batchRead{repo: name, dir: b.Dir, base: base, oids: oids}
+		fixed := base == "" || commitHash.MatchString(base)
+		for _, oid := range oids {
+			fixed = fixed && commitHash.MatchString(oid)
+		}
+		// Only full commit IDs fix the answer; a ref name may move, so its evidence is read every time.
+		if fixed {
+			read.key = batchKey(findRoot(b.Dir), base, oids)
+		}
+		if found, ok := kept.Batches[read.key]; ok && read.key != "" {
 			read.found, read.settled = found, true
 		}
 		batchReads = append(batchReads, read)
@@ -419,10 +419,12 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			incomplete[br.repo] = true
 			continue
 		}
-		if _, ok := kept.Batches[br.key]; !ok {
-			dirty = true
+		if br.key != "" {
+			if _, ok := kept.Batches[br.key]; !ok {
+				dirty = true
+			}
+			next.Batches[br.key] = br.found
 		}
-		next.Batches[br.key] = br.found
 		for _, h := range br.found.Excluded {
 			excluded[br.repo][h] = true
 		}
@@ -445,7 +447,7 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 		}
 		next.Repos[rr.root] = rr.found
 	}
-	if partial || len(incomplete) > 0 {
+	if len(incomplete) > 0 {
 		for key, found := range kept.Batches {
 			if _, ok := next.Batches[key]; !ok {
 				next.Batches[key] = found
@@ -531,7 +533,7 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			}
 		}
 	}
-	out := Familiarity{UnreadablePractice: unreadablePractice, Partial: partial || len(incomplete) > 0}
+	out := Familiarity{UnreadablePractice: unreadablePractice, Partial: len(incomplete) > 0}
 	for key, count := range counts {
 		repo, area, _ := strings.Cut(key, "\x00")
 		out.Known = append(out.Known, AreaExposure{repo, area, count})
