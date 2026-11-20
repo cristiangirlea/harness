@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"reflect"
 	"regexp"
 	"slices"
@@ -62,7 +63,7 @@ func ParseHostLine(line []byte) (any, error) {
 			return nil, err
 		}
 	case *Call:
-		if err := validateCall(frame, fields["timeout_ms"] != nil); err != nil {
+		if err := validateCall(frame, present(fields, "timeout_ms")); err != nil {
 			return nil, err
 		}
 	case *Cancel:
@@ -99,11 +100,11 @@ func ParsePluginLine(line []byte) (any, error) {
 	case *Ready:
 		err = validateReady(frame)
 	case *Event:
-		err = validateEvent(frame, fields["text"] != nil)
+		err = validateEvent(frame, present(fields, "text"))
 	case *Result:
 		err = validateResult(frame)
 	case *Error:
-		err = validateError(frame, fields["id"] != nil)
+		err = validateError(frame, present(fields, "id"))
 	}
 	if err != nil {
 		return nil, err
@@ -129,13 +130,9 @@ func parseLine(line []byte) (objectFields, string, error) {
 	if bytes.IndexByte(line, '\n') >= 0 {
 		return nil, "", fmt.Errorf("line: contains a newline")
 	}
-	line = bytes.TrimLeft(line, " \t\r")
-	if len(line) == 0 || line[0] != '{' {
-		return nil, "", fmt.Errorf("line: expected a JSON object")
-	}
-	var fields objectFields
-	if err := json.Unmarshal(line, &fields); err != nil {
-		return nil, "", fmt.Errorf("line: %w", err)
+	fields, err := readObject(line, "line")
+	if err != nil {
+		return nil, "", err
 	}
 	var kind string
 	raw, ok := fields["type"]
@@ -151,42 +148,76 @@ func parseLine(line []byte) (objectFields, string, error) {
 	return fields, kind, nil
 }
 
+// readObject refuses a repeated key, so two readers cannot disagree about one line.
+func readObject(raw []byte, path string) (objectFields, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return nil, fmt.Errorf("%s: expected a JSON object", path)
+	}
+	fields := objectFields{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		key, _ := token.(string)
+		if _, seen := fields[key]; seen {
+			return nil, fmt.Errorf("%s: duplicate key %q", path, key)
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		fields[key] = value
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, fmt.Errorf("%s: unexpected data after the object", path)
+	}
+	return fields, nil
+}
+
+func present(fields objectFields, name string) bool {
+	raw, ok := fields[name]
+	return ok && !bytes.Equal(raw, []byte("null"))
+}
+
 // decodeFields uses exact JSON tag names because encoding/json matches struct fields case-insensitively.
 func decodeFields(fields objectFields, path string, dst reflect.Value) error {
 	for i := range dst.NumField() {
-		name, _, _ := strings.Cut(dst.Type().Field(i).Tag.Get("json"), ",")
-		if raw, ok := fields[name]; ok {
-			if err := decodeValue(raw, path+"."+name, dst.Field(i)); err != nil {
-				return err
-			}
+		name, options, _ := strings.Cut(dst.Type().Field(i).Tag.Get("json"), ",")
+		raw, ok := fields[name]
+		if !ok || !present(fields, name) && options == "omitempty" {
+			continue
+		}
+		if err := decodeValue(raw, path+"."+name, dst.Field(i)); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
 func decodeValue(raw json.RawMessage, path string, dst reflect.Value) error {
-	if payload, ok := dst.Addr().Interface().(*json.RawMessage); ok {
-		switch raw[0] {
-		case '{':
-			*payload = raw
-			return nil
-		case 'n':
-			return nil
-		default:
-			return fmt.Errorf("%s: expected a JSON object", path)
-		}
-	}
 	if bytes.Equal(raw, []byte("null")) {
 		return fmt.Errorf("%s: must not be null", path)
+	}
+	if payload, ok := dst.Addr().Interface().(*json.RawMessage); ok {
+		if raw[0] != '{' {
+			return fmt.Errorf("%s: expected a JSON object", path)
+		}
+		*payload = raw
+		return nil
 	}
 	switch dst.Kind() {
 	case reflect.Pointer:
 		dst.Set(reflect.New(dst.Type().Elem()))
 		return decodeValue(raw, path, dst.Elem())
 	case reflect.Struct:
-		var fields objectFields
-		if err := json.Unmarshal(raw, &fields); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+		fields, err := readObject(raw, path)
+		if err != nil {
+			return err
 		}
 		return decodeFields(fields, path, dst)
 	case reflect.Slice:
@@ -242,13 +273,13 @@ func validateHello(frame *Hello, limits json.RawMessage) error {
 	if err := validateProgram("hello.host", frame.Host); err != nil {
 		return err
 	}
-	if frame.Limits != nil && frame.Limits.MaxLine <= 0 {
-		var fields objectFields
-		if err := json.Unmarshal(limits, &fields); err != nil {
-			return fmt.Errorf("hello.limits: %w", err)
+	if frame.Limits != nil && frame.Limits.MaxLine != MaxLine {
+		fields, err := readObject(limits, "hello.limits")
+		if err != nil {
+			return err
 		}
-		if _, present := fields["max_line"]; present {
-			return fmt.Errorf("hello.limits.max_line: must be positive")
+		if present(fields, "max_line") {
+			return fmt.Errorf("hello.limits.max_line: must be %d", MaxLine)
 		}
 	}
 	return nil

@@ -37,35 +37,36 @@ func TestGoldenFramesRoundTripByteForByte(t *testing.T) {
 }
 
 func TestToleratedFramesParseAndDiscardUnknownFieldsAndNulls(t *testing.T) {
+	golden := map[string]string{
+		"ready-unknown-field.json":   "plugin/ready.json",
+		"call-unknown-field.json":    "host/call-minimal.json",
+		"result-null-output.json":    "plugin/result-minimal.json",
+		"result-null-optionals.json": "plugin/result-minimal.json",
+		"hello-null-limits.json":     "host/hello-minimal.json",
+	}
 	forEachFixture(t, "tolerated", func(t *testing.T, name string, line []byte) {
-		var parse parser
-		switch prefix, _, _ := strings.Cut(name, "-"); prefix {
-		case "ready", "result":
-			parse = ParsePluginLine
-		case "call":
-			parse = ParseHostLine
-		default:
+		target, ok := golden[name]
+		if !ok {
 			t.Fatalf("unexpected fixture %q", name)
+		}
+		parse := ParsePluginLine
+		if strings.HasPrefix(target, "host/") {
+			parse = ParseHostLine
 		}
 		frame, err := parse(line)
 		if err != nil {
 			t.Fatal(err)
 		}
-		switch frame := frame.(type) {
-		case *Result:
-			if frame.Output != nil {
-				t.Fatalf("output = %s, want nil", frame.Output)
-			}
-		case *Ready:
-			if frame.Plugin.Name != "search" {
-				t.Fatalf("plugin name = %q, want search", frame.Plugin.Name)
-			}
-		case *Call:
-			if frame.ID != "c1" || frame.Input != nil || frame.TimeoutMS != 0 {
-				t.Fatalf("unexpected call: %+v", frame)
-			}
-		default:
-			t.Fatalf("unexpected frame %T", frame)
+		got, err := json.Marshal(frame)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := os.ReadFile(filepath.Join("testdata", "v1", target))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(append(got, '\n'), want) {
+			t.Fatalf("got %s, want %s", got, want)
 		}
 	})
 }
@@ -134,6 +135,8 @@ func TestBothParsersRejectMalformedLines(t *testing.T) {
 				{"line is an array", "[]", "line"},
 				{"line is a scalar", "42", "line"},
 				{"line has trailing data", side.line + " {}", "line"},
+				{"line has repeated type", appendFields(side.line, `"type":"unknown"`), "line"},
+				{"line has repeated unknown key", appendFields(side.line, `"extra":1,"extra":2`), "line"},
 				{"line has invalid UTF-8", appendFields(side.line, "\"x\":\"\xff\""), "line"},
 				{"line has an embedded newline", "{\n" + side.line[1:], "line"},
 				{"type is missing", "{}", "type"},
@@ -147,6 +150,9 @@ func TestBothParsersRejectMalformedLines(t *testing.T) {
 
 func TestHostParserRejectsInvalidFields(t *testing.T) {
 	rejectLines(t, ParseHostLine, []invalidLine{
+		{"host is missing", `{"type":"hello","protocols":["v1"]}`, "hello.host.name"},
+		{"protocols are missing", replace(helloLine, `"protocols":["v1"],`, ""), "hello.protocols"},
+		{"host name repeats", replace(helloLine, `"name":"hrn"`, `"name":"hrn","name":"other"`), "hello.host"},
 		{"host name must start with a letter", replace(helloLine, "hrn", "9hrn"), "hello.host.name"},
 		{"host name is case sensitive", replace(helloLine, `"name"`, `"Name"`), "hello.host.name"},
 		{"host name is too long", replace(helloLine, "hrn", strings.Repeat("a", 65)), "hello.host.name"},
@@ -159,14 +165,20 @@ func TestHostParserRejectsInvalidFields(t *testing.T) {
 		{"protocol entry is too long", replace(helloLine, "v1", strings.Repeat("v", 17)), "hello.protocols"},
 		{"line limit is zero", appendFields(helloLine, `"limits":{"max_line":0}`), "hello.limits.max_line"},
 		{"line limit is negative", appendFields(helloLine, `"limits":{"max_line":-1}`), "hello.limits.max_line"},
-		{"line limit is null", appendFields(helloLine, `"limits":{"max_line":null}`), "hello.limits.max_line"},
+		{"line limit is one byte above MaxLine", appendFields(helloLine, `"limits":{"max_line":4194305}`), "hello.limits.max_line"},
+		{"line limit is one", appendFields(helloLine, `"limits":{"max_line":1}`), "hello.limits.max_line"},
+		{"line limit is twice MaxLine", appendFields(helloLine, `"limits":{"max_line":8388608}`), "hello.limits.max_line"},
+		{"line limit repeats", appendFields(helloLine, `"limits":{"max_line":4194304,"max_line":4194304}`), "hello.limits"},
+		{"call capability is missing", replace(callLine, `,"capability":"search"`, ""), "call.capability"},
 		{"call capability has an invalid character", replace(callLine, "search", "a_b"), "call.capability"},
+		{"call id repeats", appendFields(callLine, `"id":"c2"`), "line"},
+		{"call id is null", replace(callLine, `"c1"`, "null"), "call.id"},
 		{"call id has an invalid character", replace(callLine, "c1", "c/1"), "call.id"},
+		{"cancel id is missing", `{"type":"cancel"}`, "cancel.id"},
 		{"cancel id is too long", replace(cancelLine, "c1", strings.Repeat("a", 129)), "cancel.id"},
 		{"call input is an array", appendFields(callLine, `"input":[]`), "call.input"},
 		{"call timeout is zero", appendFields(callLine, `"timeout_ms":0`), "call.timeout_ms"},
 		{"call timeout is negative", appendFields(callLine, `"timeout_ms":-1`), "call.timeout_ms"},
-		{"call timeout is null", appendFields(callLine, `"timeout_ms":null`), "call.timeout_ms"},
 	})
 }
 
@@ -176,36 +188,101 @@ func TestPluginParserRejectsInvalidFields(t *testing.T) {
 		{"sequence is zero", replace(readyLine, `"seq":1`, `"seq":0`), "ready.seq"},
 		{"ready protocol is empty", replace(readyLine, "v1", ""), "ready.protocol"},
 		{"ready protocol has an invalid character", replace(readyLine, "v1", "v_1"), "ready.protocol"},
+		{"plugin is missing", replace(readyLine, `"plugin":{"name":"search","version":"0.1.0"},`, ""), "ready.plugin.name"},
+		{"plugin is null", replace(readyLine, `{"name":"search","version":"0.1.0"}`, "null"), "ready.plugin"},
 		{"plugin name has an invalid character", replace(readyLine, "search", "Search"), "ready.plugin.name"},
 		{"plugin version is empty", replace(readyLine, "0.1.0", ""), "ready.plugin.version"},
+		{"plugin version repeats", replace(readyLine, `"version":"0.1.0"`, `"version":"0.1.0","version":"0.2.0"`), "ready.plugin"},
 		{"capability list is empty", replace(readyLine, `[{"name":"search"}]`, "[]"), "ready.capabilities"},
 		{"capability name is empty", replace(readyLine, `[{"name":"search"}]`, `[{"name":""}]`), "ready.capabilities[0].name"},
 		{"capability names repeat", replace(readyLine, `[{"name":"search"}]`, repeatedJSON(`{"name":"search"}`, 2)), "ready.capabilities"},
+		{"capability name key repeats", replace(readyLine, `[{"name":"search"}]`, `[{"name":"search","name":"other"}]`), "ready.capabilities[0]"},
 		{"capability list is too long", replace(readyLine, `[{"name":"search"}]`, repeatedJSON(`{"name":"search"}`, 65)), "ready.capabilities"},
 		{"capability description is too long", replace(readyLine, `[{"name":"search"}]`, `[{"name":"search","description":"`+strings.Repeat("a", 257)+`"}]`), "ready.capabilities[0].description"},
 		{"event id is empty", replace(eventLine, "c1", ""), "event.id"},
 		{"event kind is unknown", replace(eventLine, "info", "debug"), "event.kind"},
 		{"event text is missing", replace(eventLine, `,"text":""`, ""), "event.text"},
+		{"event text is null", replace(eventLine, `"text":""`, `"text":null`), "event.text"},
 		{"event text is too long", replace(eventLine, `""`, `"`+strings.Repeat("a", MaxEventText+1)+`"`), "event.text"},
 		{"result id has an invalid character", replace(resultLine, "c1", "c+1"), "result.id"},
+		{"result status is missing", replace(resultLine, `,"status":"ok"`, ""), "result.status"},
+		{"result status is null", replace(resultLine, `"status":"ok"`, `"status":null`), "result.status"},
+		{"result status repeats with different values", appendFields(resultLine, `"status":"canceled"`), "line"},
 		{"result status is unknown", replace(resultLine, "ok", "success"), "result.status"},
 		{"result output is a scalar", appendFields(resultLine, `"output":true`), "result.output"},
 		{"failed result has no error", failedLine, "result.error"},
 		{"successful result has an error", appendFields(resultLine, `"error":{"code":"internal","message":"failed"}`), "result.error"},
 		{"canceled result has an error", appendFields(replace(resultLine, "ok", "canceled"), `"error":{"code":"internal","message":"failed"}`), "result.error"},
 		{"result problem has an unknown code", appendFields(failedLine, `"error":{"code":"unknown","message":"failed"}`), "result.error.code"},
+		{"result problem code repeats", appendFields(failedLine, `"error":{"code":"internal","code":"unsupported","message":"failed"}`), "result.error"},
 		{"result problem has an empty message", appendFields(failedLine, `"error":{"code":"internal","message":""}`), "result.error.message"},
 		{"evidence list is too long", appendFields(resultLine, `"evidence":`+repeatedJSON("{}", 65)), "result.evidence"},
+		{"evidence hash repeats", appendFields(resultLine, `"evidence":[{"hash":null,"hash":""}]`), "result.evidence[0]"},
 		{"evidence hash is too short", appendFields(resultLine, `"evidence":[{"hash":"`+strings.Repeat("a", 63)+`"}]`), "result.evidence[0].hash"},
 		{"evidence hash has an uppercase letter", appendFields(resultLine, `"evidence":[{"hash":"`+strings.Repeat("a", 63)+`A"}]`), "result.evidence[0].hash"},
 		{"evidence excerpt is too long", appendFields(resultLine, `"evidence":[{"excerpt":"`+strings.Repeat("a", MaxExcerpt+1)+`"}]`), "result.evidence[0].excerpt"},
 		{"error id is empty", appendFields(errorLine, `"id":""`), "error.id"},
+		{"error code is missing", replace(errorLine, `"code":"bad_request",`, ""), "error.code"},
 		{"error code is unknown", replace(errorLine, "bad_request", "unknown"), "error.code"},
 		{"error message is empty", replace(errorLine, "bad input", ""), "error.message"},
 		{"error protocols are missing on refusal", replace(errorLine, "bad_request", "unsupported_protocol"), "error.protocols"},
 		{"error protocols are empty", appendFields(errorLine, `"protocols":[]`), "error.protocols"},
 		{"error protocols contain a bad entry", appendFields(errorLine, `"protocols":["v/1"]`), "error.protocols"},
 	})
+}
+
+func TestParsersAcceptOptionalFieldsAndWhitespace(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		parse parser
+		line  string
+	}{
+		{"empty limits", ParseHostLine, appendFields(helloLine, `"limits":{}`)},
+		{"null line limit", ParseHostLine, appendFields(helloLine, `"limits":{"max_line":null}`)},
+		{"leading and trailing whitespace", ParseHostLine, " \t" + callLine + "\t "},
+		{"protocols on bad request", ParsePluginLine, appendFields(errorLine, `"protocols":["v1"]`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.parse([]byte(tc.line)); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestParsersDiscardNullTimeoutAndErrorID(t *testing.T) {
+	call, err := ParseHostLine([]byte(appendFields(callLine, `"timeout_ms":null`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timeout := call.(*Call).TimeoutMS; timeout != 0 {
+		t.Errorf("timeout = %d, want 0", timeout)
+	}
+	frame, err := ParsePluginLine([]byte(appendFields(errorLine, `"id":null`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id := frame.(*Error).ID; id != "" {
+		t.Errorf("error id = %q, want empty", id)
+	}
+}
+
+func TestParsersPreserveOpaqueObjectsAndMatchKeysByCase(t *testing.T) {
+	const payload = `{"x":1,"x":2}`
+	frame, err := ParseHostLine([]byte(appendFields(callLine, `"ID":"ignored","input":`+payload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call := frame.(*Call); call.ID != "c1" || string(call.Input) != payload {
+		t.Fatalf("id = %q, input = %s, want c1 and %s", call.ID, call.Input, payload)
+	}
+	frame, err = ParsePluginLine([]byte(appendFields(resultLine, `"output":`+payload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output := frame.(*Result).Output; string(output) != payload {
+		t.Fatalf("output = %s, want %s", output, payload)
+	}
 }
 
 func rejectLines(t *testing.T, parse parser, cases []invalidLine) {
@@ -236,6 +313,7 @@ func TestParsersAcceptTheExactLimits(t *testing.T) {
 	}{
 		{"host line size", ParseHostLine, paddedLine(callLine, MaxLine) + "\r\n"},
 		{"plugin line size", ParsePluginLine, paddedLine(readyLine, MaxLine)},
+		{"advertised line limit", ParseHostLine, appendFields(helloLine, `"limits":{"max_line":4194304}`)},
 		{"protocol count", ParseHostLine, replace(helloLine, `["v1"]`, repeatedJSON(`"v1"`, 16))},
 		{"capability count", ParsePluginLine, replace(readyLine, `[{"name":"search"}]`, "["+strings.Join(capabilities, ",")+"]")},
 		{"event text bytes", ParsePluginLine, replace(eventLine, `""`, `"`+strings.Repeat("\u00e9", MaxEventText/2)+`"`)},

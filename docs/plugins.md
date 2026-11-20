@@ -13,15 +13,21 @@ it.
 
 ## Framing
 
-- stdin and stdout carry UTF-8 JSON, one object per line, ended by `\n`. stderr carries human
-  diagnostics only and is not part of the protocol.
-- A line is at most 4 MiB (4,194,304 bytes) without its newline, in both directions. The host
-  repeats the limit in `hello.limits.max_line`.
+- stdin and stdout carry UTF-8 JSON, one object per line, ended by `\n`. A reader also accepts
+  `\r\n`. stderr carries human diagnostics only and is not part of the protocol.
+- A line is at most 4 MiB (4,194,304 bytes) without its line ending, in both directions. JSON
+  whitespace around the object is allowed and counts toward the limit. The host may repeat the
+  limit in `hello.limits.max_line`, whose only valid value in version 1 is `4194304`.
 - Every line has `type`. Every line the plugin writes also has `v` (always `1`) and `seq`, which
   is 1 on the plugin's first line and increases by exactly one on every line it writes, so a gap
   or a repeat means lines were lost or duplicated.
 - Field names are case-sensitive. A reader ignores fields it does not know. An unknown `type` is
   an error: see [Compatibility](#compatibility).
+- A key appears at most once in any object the protocol reads, so two readers cannot disagree
+  about a line. A line with a repeated key is refused. What is inside `input` and `output`
+  belongs to the capability and is not read.
+- A `null` value for an optional field means the field is absent. A required field is never
+  `null`.
 
 ## Sequence
 
@@ -45,7 +51,7 @@ host that wants two calls at once starts two processes.
 ```
 
 - `protocols` lists the protocol versions the host speaks, most preferred first. It has 1 to 16
-  entries.
+  entries, each 1 to 16 characters from `[a-z0-9.-]`.
 - `host.name` and `host.version` identify the host program. `limits` is optional.
 
 ### `ready` (plugin, first line, after reading `hello`)
@@ -105,7 +111,7 @@ early. A `cancel` for an `id` that is not in flight gets an `error` line with co
 - `status` is `ok`, `failed` or `canceled`.
 - `output` is optional and, when present, a JSON object owned by the capability.
 - `error` is required when the status is `failed` and absent otherwise: an object with a `code`
-  from the table below and a `message`.
+  from the table below and a non-empty `message`.
 - `evidence` is optional, with at most 64 entries. Each has any of `kind`, `source`, `hash` (the
   SHA-256 of the content the entry stands for, 64 lowercase hexadecimal characters) and
   `excerpt` (at most 2,048 bytes). A plugin reports evidence; it does not certify itself, and
@@ -123,7 +129,8 @@ early. A `cancel` for an `id` that is not in flight gets an `error` line with co
 
 An `error` line reports something that is not the outcome of a call: a refused handshake, a
 line that could not be read, a `cancel` for an unknown call, a second `call` while one is in
-flight. It may carry the `id` it is about. Only `unsupported_protocol` ends the process.
+flight. Its `message` is never empty, and it may carry the `id` it is about. `protocols`, when
+present, follows the rule of `hello.protocols`. Only `unsupported_protocol` ends the process.
 
 | Code | Meaning |
 |---|---|
@@ -161,10 +168,14 @@ import "github.com/cristiangirlea/harness/contracts/pluginproto"
 ```
 
 The package holds the frame types, the constants above, `Negotiate` for the handshake, and
-`ParseHostLine` and `ParsePluginLine`, which decode one line and apply every rule on this page.
-It starts no process and reads no file: a plugin in any language needs only this page and the
-fixtures under `contracts/pluginproto/testdata/v1`, one line per file, which a conforming
-implementation reads and writes byte for byte.
+`ParseHostLine` and `ParsePluginLine`, which decode one line and apply every rule on this page
+that a single line can break. Rules that span lines are the caller's to check: `seq` starting at
+1 and increasing by one, `ready.protocol` being a version the host offered, a `capability` from
+`ready.capabilities`, one call in flight, and a `cancel` that names it.
+
+The package starts no process and reads no file: a plugin in any language needs only this page
+and the fixtures under `contracts/pluginproto/testdata/v1`, one line per file, which a
+conforming implementation reads and writes byte for byte.
 
 The module is standard library only and has no dependency on hrn. hrn's own copy of the package
 is `internal/pluginproto`; a test keeps the two byte-identical, so the root module needs no
