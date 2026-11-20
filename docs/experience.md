@@ -107,10 +107,20 @@ branch commit, and commits between a recorded run's start and end HEAD. Agent-to
 areas come from those batch commits and recorded run changed paths. Older standalone
 records lack these fields. Reviews read cannot be determined from records; answered
 read exercises are counted.
-Missing repositories are skipped. The two lists show at most five areas each; they are
+A record whose folder is not inside a Git checkout (a removed eval or task workspace) is
+left out. The two lists show at most five areas each; they are
 exposure counts, not proof of authorship or knowledge. On the watch card, familiarity is
 absent on the first page load and can be about a minute old. Unreadable practice records
 are skipped and reported, so familiarity may be incomplete.
+
+Git reads stop 3 seconds after the records are loaded, with up to six at once. The Git
+evidence of a repository not fully read in time is left out (its practice reads still
+count), and `hrn bot stats` says so (`familiarity: time limit
+reached, some repositories were skipped`). Reads are kept in `familiarity-cache.json` so the
+next call gets further: a batch's evidence is kept while the batch record exists, since its
+full commit IDs fix it; a repository's recent commits are reused for 10 minutes, and a copy up
+to a day old stands in when a fresh read does not finish in time. Familiarity is therefore
+usually up to 10 minutes old, and up to a day when a read runs out of time.
 
 ## Levels and badges
 
@@ -163,6 +173,8 @@ a repository without that reference yields no script events.
   reports it closed without merging or merged no later than its answer; settled and already
   credited reads are not checked again.
 - `settings.json`: `enabled` (the game switch); voice preferences are planned.
+- `familiarity-cache.json`: Git reads kept for familiarity (commit IDs, their dates and
+  areas). Safe to delete; the next read rebuilds it.
 
 The rules that make it rebuildable and safe to prune:
 
@@ -202,7 +214,7 @@ the answer to a plan backend (a CLI backend, never the api backend).
 ## JSON stats
 
 `hrn bot stats --json` reads existing records without rebuilding the ledger or
-selecting an exercise. It prints one JSON object, versioned by `version`
+selecting an exercise; the only file it may write is `familiarity-cache.json`. It prints one JSON object, versioned by `version`
 (currently `1`). The version changes only when a reader would break; fields may
 be added within a version, so a reader ignores fields it does not know. When the game is off the object contains only `version` and
 `enabled: false`. Otherwise it contains `enabled: true`, `level`, total `xp`,
@@ -212,11 +224,25 @@ be added within a version, so a reader ignores fields it does not know. When the
 there is no existing exercise, or has `kind`, `source`, `answered`, and masked
 `material` until answered. Answers and reveals are never included. `familiarity`
 is null when unavailable, or has `known` and `unseen` arrays of objects with
-`repo`, `area`, and `count`. Empty lists are arrays. Unreadable practice records
+`repo`, `area`, and `count`, and `partial`, true when the time limit left
+repositories out (with a warning on stderr). Empty lists are arrays. Unreadable practice records
 make the affected `streak`, `days`, or `exercise` null and produce warnings on
 stderr. Familiarity skips unreadable practice records, warns on stderr, and may
 be incomplete; it is null only when it cannot be read. The command fails with an
 error on stderr and no JSON output if settings or the ledger cannot be read.
+
+`hrn bot stats --json --repo OWNER/NAME` answers for one repository and quickly: it
+skips the familiarity walk, which reads every run record, so `familiarity` is null.
+It adds `repo` and `top`. `repo` has `name` (as given), `week` (delivery XP in the
+repository since `week_start`), `days` (35 integers, oldest first, today last: delivery
+XP per UTC day), `kinds` (how many counted delivery events of each kind those 35 days
+hold; corrections and events worth no XP are left out) and `share` (`week` as a part
+of the week's delivery in every repository, 0 to 1, and 0 when there was none). `top`
+lists up to five `{repo, week}`, the repositories with the most delivery XP this week,
+most first, then by name. Ledger entries are matched to the repository without regard
+to case, the same caps and corrections apply as for the totals, and `top` counts only
+`owner/name` entries, so run folders and bare folder names never appear in it. `--repo`
+without `--json`, or a value that is not `owner/name`, is refused.
 
 ## Slices
 

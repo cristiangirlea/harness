@@ -594,7 +594,7 @@ including values inherited from the spec,
 except `shape_tools`, which the variant always overrides. These options are `model`,
 `mode`, `max_turns`, `effort`, `mcp`, `no_instructions`, `no_context_edits`, `lean`,
 `skills`, `append_system_prompt`, `no_skills`, `compact_window`, `allow_dangerous`,
-`inherit_env`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch`, `issue`,
+`inherit_env`, `egress`, `timeout`, `max_cost_usd`, `task_budget`, `no_switch`, `issue`,
 `take_over`, `retrieval`, `retrieval_tenant`, `retrieval_project`,
 `retrieval_revision` and `retrieval_version`. They appear as `task_options_changed`
 in JSON, even when a variant overrides the task setting.

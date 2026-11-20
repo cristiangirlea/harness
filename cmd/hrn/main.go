@@ -174,6 +174,8 @@ Run flags:
                        lift the guard: agents may push, merge and deploy with your credentials
                        (every backend), and run_command may run sudo, rm -rf / and the like
       --inherit-env    start agent CLIs with your whole environment instead of an allowlisted one
+      --egress HOSTS   point agent CLIs at a proxy of the run's own that tunnels HTTPS only to these
+                       exact host names (comma list, repeatable) and the backend's own; advisory
       --no-switch      stay on this backend at its usage limit instead of using an enabled partner
       --issue REF      the GitHub issue this run works on (owner/name#N, its URL, or #N for origin's
                        repository), leased so a second run for it is refused, and claimed on GitHub

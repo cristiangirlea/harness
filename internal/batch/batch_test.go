@@ -1687,6 +1687,8 @@ func TestSpecValidation(t *testing.T) {
 		{"empty task gate list", Spec{Backend: "wb-ok", Gate: []string{"go vet"}, Tasks: []Task{{Prompt: "a", Gate: []string{}}}}, "task t1: empty gate list"},
 		{"unknown effort", Spec{Backend: "wb-ok", Options: agent.Options{Effort: "turbo"}, Tasks: []Task{{Prompt: "a"}}}, `unknown effort "turbo"`},
 		{"unknown task effort", Spec{Backend: "wb-ok", Tasks: []Task{{Prompt: "a", Options: agent.Options{Effort: "HIGH"}}}}, "task t1"},
+		{"wildcard egress", Spec{Backend: "wb-ok", Options: agent.Options{Egress: []string{"*.example.com"}}, Tasks: []Task{{Prompt: "a"}}}, "wildcard"},
+		{"empty task egress", Spec{Backend: "wb-ok", Options: agent.Options{Egress: []string{"example.com"}}, Tasks: []Task{{Prompt: "a", Options: agent.Options{Egress: []string{}}}}}, "task t1"},
 	} {
 		if _, err := Run(context.Background(), tc.spec, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.want)

@@ -33,7 +33,7 @@
 | `hrn show --usage [--json] <id>` | A run's model calls, one row each: tokens, the context each carried, the cache reads so far, and compactions recorded or probable (see [Usage per turn](run-records.md#usage-per-turn)). |
 | `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--voice PROGRAM [--voice-arg ARG ...]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG [--owner-email ADDR ...]]` | Follow runs and batches live and view the [Backends card](watch.md#backends); loopback and verified public viewers can change backend preferences. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). `--owner-email` (repeatable) names the verified emails that see this install's runs and batches; other verified visitors see only records they own. `--voice` (a full path) speaks Ada's sentences through a speech program on this computer, with `--voice-arg` (repeatable) as its arguments: one sentence on standard input, a WAV file on standard output, no shell, 30 seconds a sentence, this computer's browser only; it cannot be combined with `--public` (see [A local voice](watch.md#a-local-voice)). |
 | `hrn bot [--addr HOST:PORT] [--voice PROGRAM [--voice-arg ARG ...]]` | Open Ada, hrn watch's bot, in a small window, serving hrn watch on loopback unless one already does; `--voice` and `--voice-arg` as for `hrn watch` (see [Ada, the bot](watch.md#ada-the-bot)). |
-| `hrn bot stats [--json]` | Show your level, this week's experience, practice streak and badges; `--json` prints a read-only, versioned JSON object (see [Experience](experience.md)). |
+| `hrn bot stats [--json [--repo OWNER/NAME]]` | Show your level, this week's experience, practice streak and badges; `--json` prints a read-only, versioned JSON object, and `--repo` adds one repository's delivery and the week's top repositories without reading familiarity (see [Experience](experience.md#json-stats)). |
 | `hrn bot practice [swap\|answer [--file PATH]\|mark got_it\|partly\|missed\|read owner/repo#n]` | Show or swap today's exercise, answer from stdin or a file, mark it, or start a read of an open pull request. |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](mcp.md#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries; each task may declare `purpose` (see [Batches](batches.md#batches)). |
@@ -159,6 +159,9 @@ at most 16 KiB), `--no-skills` (claude: skills off; see
 [Harness variants](evaluations.md#harness-variants)),
 `--allow-dangerous`, `--inherit-env` (CLI backends: your whole environment; see
 [A clean environment for CLI workers](backends.md#a-clean-environment-for-cli-workers)),
+`--egress HOSTS` (CLI backends: a comma list, repeatable, of exact host names the run's
+proxy tunnels HTTPS to, besides the backend's own; advisory, see
+[Egress allowlist](permissions.md#egress-allowlist-advisory)),
 `--no-switch` (see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)),
 `--issue REF` (the GitHub issue the run works on: `owner/name#N`, its URL, or `#N` for the
