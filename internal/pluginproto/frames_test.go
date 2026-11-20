@@ -12,6 +12,19 @@ import (
 
 type parser func([]byte) (any, error)
 
+func TestValidNameAcceptsOnlyPluginAndCapabilityNames(t *testing.T) {
+	for _, name := range []string{"a", "a1-b", strings.Repeat("a", 64)} {
+		if !ValidName(name) {
+			t.Errorf("ValidName(%q) = false", name)
+		}
+	}
+	for _, name := range []string{"", "1a", "-a", "A", "../x", "a_b", "a\n", strings.Repeat("a", 65)} {
+		if ValidName(name) {
+			t.Errorf("ValidName(%q) = true", name)
+		}
+	}
+}
+
 func TestGoldenFramesRoundTripByteForByte(t *testing.T) {
 	for _, side := range []struct {
 		name  string
