@@ -321,7 +321,18 @@ func TestFamiliarityKeepsGitReads(t *testing.T) {
 		return got
 	}
 	check("stale", hung(now.Add(time.Hour)), false)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	warm, err := deriveFamiliarity(cancelled, records, now.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("warm after the deadline", warm, false)
 	check("too old", hung(now.Add(25*time.Hour)), true)
+	kept := loadFamiliarityCache()
+	if len(kept.Batches) != 1 || len(kept.Repos) != 1 {
+		t.Fatalf("a timed-out read dropped kept reads: %+v", kept)
+	}
 	if _, err := deriveFamiliarity(context.Background(), Records{}, now); err != nil {
 		t.Fatal(err)
 	}

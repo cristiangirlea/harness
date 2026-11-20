@@ -32,7 +32,7 @@ type AreaExposure struct {
 type Familiarity struct {
 	Known, Unseen      []AreaExposure
 	UnreadablePractice bool
-	// Partial is set when the time budget ran out; repositories not read in time are left out.
+	// Partial is set when the time budget ran out; the Git evidence of repositories not read in time is left out.
 	Partial bool
 }
 
@@ -187,7 +187,6 @@ func readAll(reads []func()) {
 }
 
 func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Familiarity, error) {
-
 	roots := map[string]string{}
 	var order []string
 	touched := map[string]map[string]bool{}
