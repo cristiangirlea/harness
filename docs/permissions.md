@@ -453,3 +453,30 @@ allowlisted environment withheld, and says what its backend leaves open: on code
 and opencode, the secret files, the wrangler and cargo logins, and gh's login in the
 credential store. `--allow-dangerous` lifts all of it; the variables the allowlisted
 environment left out need `--inherit-env` as well, and the line says so.
+
+#### Egress allowlist (advisory)
+
+`--egress HOSTS` (batch and MCP `egress`, recorded in `task.json`) starts a proxy of the
+run's own on `127.0.0.1` right before an agent CLI, and stops it when the run ends. It is
+**not network isolation**: the CLI is pointed at it through `HTTPS_PROXY`, `HTTP_PROXY` and
+`ALL_PROXY` (both cases; your own proxy is replaced and `NO_PROXY` cleared), and a process
+that ignores those variables reaches any host as before. Every run with it says
+`egress: advisory; N hosts allowed; a process that ignores proxy variables is not stopped`.
+
+- Only `CONNECT host:443` is served; plain HTTP and other ports get 403.
+- The host must be one of the run's names or [the backend's](backends.md#egress-hosts-per-backend),
+  exactly. Names are checked before the run starts: no wildcards, IP literals, CIDRs,
+  ports, schemes, trailing dots, upper case or repeats.
+- The proxy resolves the name itself and refuses it when any answer is loopback, private,
+  link-local, CGNAT, unique-local, multicast, unspecified or reserved, judging IPv4 inside
+  IPv6 (mapped, 6to4, NAT64) by the IPv4 address. It then dials the address it checked, so
+  a second lookup cannot swap the target. Each CONNECT is checked on its own.
+- Local services go through the proxy too, since `NO_PROXY` is cleared: an HTTP MCP server
+  or a provider gateway on `localhost` or `127.0.0.1` is refused (`not CONNECT` or
+  `IP literal`), so such a run cannot use `--egress` yet.
+- Headers are capped at 16 KiB, a connect at 10 seconds and an idle tunnel at 5 minutes.
+- Refused targets go into the run's events as `egress: refused <host:port> (<reason>)`,
+  each once and at most 20, never request contents.
+
+The api backend does not start a CLI: `--egress` does nothing there, and its `run_command`
+children are not proxied.

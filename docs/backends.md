@@ -306,6 +306,26 @@ without `--allow-dangerous` as well. An hrn inside a guarded run refuses `inheri
 `allow_dangerous`. The api backend does not start a CLI, so the option
 changes nothing there.
 
+### Egress hosts per backend
+
+With `--egress`, a CLI's proxy allows the run's own hosts and the backend's below, its
+model and login hosts (`egressDefaults` in `internal/agent/egress.go`). Every list is
+**unmeasured**: no real proxied run has confirmed it yet, so a run may need more; the run's
+`egress: refused` events name what to add.
+
+Node reads `NODE_USE_ENV_PROXY` from 24.5 and 22.21 on; an older Node ignores it, and its
+CLI then goes around the proxy without a sign.
+
+| Backend | Hosts added | Proxy variables read through |
+|---|---|---|
+| claude | `api.anthropic.com` | Node, so `NODE_USE_ENV_PROXY=1` is set |
+| codex | `chatgpt.com`, `api.openai.com`, `auth.openai.com` | its own client |
+| gemini | none yet | Node, so `NODE_USE_ENV_PROXY=1` is set |
+| agy, opencode | none yet | their own clients |
+
+See [Egress allowlist](permissions.md#egress-allowlist-advisory) for what the proxy does
+and does not stop.
+
 ### Compaction window
 
 Claude Code compacts a conversation (summarises its history into one message) when the
