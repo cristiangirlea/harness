@@ -325,7 +325,7 @@ func (s *Session) Call(ctx context.Context, capability string, input json.RawMes
 	if err := ctx.Err(); err != nil {
 		canceled = fmt.Errorf("plugin %s: call %s: %w", s.info.Name, id, err)
 	} else {
-		canceled = fmt.Errorf("plugin %s: call %s timed out after %s", s.info.Name, id, timeout)
+		canceled = fmt.Errorf("plugin %s: call %s timed out after %s: %w", s.info.Name, id, timeout, callCtx.Err())
 	}
 	return s.cancelCall(id, canceled, onEvent)
 }

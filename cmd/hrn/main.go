@@ -120,6 +120,10 @@ Usage:
   hrn ws issues [--json] [--free owner/name#N]
                                  the issue leases (hrn run --issue): who holds each, on which branch, or which
                                  pull request; --free removes one no running process holds
+  hrn plugin list [--json]         list available plugins
+  hrn plugin info <name> [--json]  show a plugin's version and capabilities
+  hrn plugin call <name> <capability> [--input JSON | --input-file FILE] [--timeout D] [--json]
+                                 call a plugin capability and record the run
   hrn scripts hint                a Claude Code PreToolUse hook: names the kept script (a matches: header)
                                  that covers the inline script a command is about to run; advice only
 
@@ -250,6 +254,8 @@ func main() {
 		code, err = cmdGC(os.Args[2:])
 	case "ws":
 		code, err = cmdWS(os.Args[2:])
+	case "plugin":
+		code, err = cmdPlugin(os.Args[2:])
 	case "scripts":
 		code, err = cmdScripts(os.Args[2:])
 	case "update":

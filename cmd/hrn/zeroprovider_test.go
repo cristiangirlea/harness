@@ -162,6 +162,7 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 		{[]string{"show", "--json", w.ID()}, "fixture prompt"},
 		{[]string{"flow", w.ID()}, "run codex"},
 		{[]string{"report"}, "codex"},
+		{[]string{"plugin", "list"}, "no plugins found"},
 		{[]string{"batch", "show", "--json", "fixture-batch"}, "fixture-batch"},
 		{[]string{"eval", "list"}, "fixture-eval"},
 		{[]string{"runs", "prune", "--older-than", "9999d", "--dry-run"}, "would remove 0 runs, 0 batch records and 1 eval records"},
@@ -430,6 +431,17 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 			}
 		})
 	}
+	t.Run("execute_missing_plugin", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, bin, "plugin", "call", "missing", "echo")
+		prepareZeroProviderCommand(cmd)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if ctx.Err() != nil || err == nil || !strings.Contains(string(out), "hrn plugin install missing") {
+			t.Fatalf("plugin call: %v (%v)\n%s", err, ctx.Err(), out)
+		}
+	})
 	t.Run("execute_eval_missing_key", func(t *testing.T) {
 		data, err := json.Marshal(map[string]any{"dir": repo, "tasks": []any{map[string]string{"id": "task", "prompt": "fixture"}}, "matrix": []any{map[string]string{"backend": "api"}}})
 		if err != nil {
