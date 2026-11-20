@@ -617,3 +617,126 @@ func TestContinuingANearlySpentBackendGoesToTheOtherOne(t *testing.T) {
 		t.Error("the follow-up does not say why it started on claude")
 	}
 }
+
+// fakeWait replaces the reset wait's sleep for one test and records what it was asked for.
+func fakeWait(t *testing.T) *[]time.Duration {
+	t.Helper()
+	var slept []time.Duration
+	orig := followup.WaitSleep
+	followup.WaitSleep = func(ctx context.Context, d time.Duration) error {
+		slept = append(slept, d)
+		return ctx.Err()
+	}
+	t.Cleanup(func() { followup.WaitSleep = orig })
+	return &slept
+}
+
+// limitedOnce is codex reaching its limit for a second, then finishing once it has reset.
+func limitedOnce(t *testing.T, resets time.Duration) *atomic.Int32 {
+	t.Helper()
+	standIn(t)
+	var calls atomic.Int32
+	agent.Register(scripted{"codex", func(agent.Task) agent.Result {
+		if calls.Add(1) == 1 {
+			return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(resets)}
+		}
+		return agent.Result{Status: agent.StatusOK, Final: "finished", Turns: 1}
+	}})
+	if err := limits.Note("claude", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	return &calls
+}
+
+func hasInfo(t *testing.T, id, want string) bool {
+	t.Helper()
+	events, err := runlog.Events(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Kind == agent.EventInfo && strings.Contains(e.Text, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRunWaitsForTheResetWhenBothPlansAreOutThenCarriesOn(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	slept := fakeWait(t)
+	calls := limitedOnce(t, 30*time.Second)
+	code, err := cmdRun([]string{"-b", "codex", "-C", t.TempDir(), "--mode", "auto", "--wait-limit", "1m", "fix", "it"})
+	if code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v: the run should wait for codex's reset and finish", code, err)
+	}
+	recs, err := runlog.List(5)
+	if err != nil || len(recs) != 2 || calls.Load() != 2 {
+		t.Fatalf("runs = %d (%v), calls = %d; want the limited run and one carry-on", len(recs), err, calls.Load())
+	}
+	carried := recs[0]
+	if carried.Continues == "" {
+		carried = recs[1]
+	}
+	if carried.Backend != "codex" || carried.Result.Status != agent.StatusOK || carried.Task.WaitLimit != agent.Duration(time.Minute) {
+		t.Fatalf("carry-on: %s %s, wait_limit %s", carried.Backend, carried.Result.Status, carried.Task.WaitLimit)
+	}
+	if !hasInfo(t, carried.ID, "waited for codex's usage limit to reset") {
+		t.Error("the carry-on does not record the wait")
+	}
+	if len(*slept) != 1 || (*slept)[0] > 30*time.Second {
+		t.Errorf("slept %v, want one wait up to codex's reset", *slept)
+	}
+}
+
+func TestRunWithoutWaitLimitStaysLimited(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	slept := fakeWait(t)
+	calls := limitedOnce(t, time.Second)
+	if code, _ := cmdRun([]string{"-b", "codex", "-C", t.TempDir(), "fix", "it"}); code != 1 || calls.Load() != 1 || len(*slept) != 0 {
+		t.Fatalf("code=%d calls=%d: without --wait-limit the run ends limited", code, calls.Load())
+	}
+}
+
+func TestRunWaitsBeforeStartingWhenBothPlansAreOut(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	slept := fakeWait(t)
+	calls := limitedOnce(t, time.Second)
+	calls.Store(1) // codex finishes at once: only its remembered limit is in the way
+	if err := limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(30 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	code, err := cmdRun([]string{"-b", "codex", "-C", t.TempDir(), "--wait-limit", "1m", "fix", "it"})
+	if code != 0 || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	recs, err := runlog.List(5)
+	if err != nil || len(recs) != 1 || recs[0].Backend != "codex" {
+		t.Fatalf("runs = %+v (%v), want one codex run after the wait", recs, err)
+	}
+	if !hasInfo(t, recs[0].ID, "waited for codex's usage limit to reset") {
+		t.Error("the run does not record the wait")
+	}
+	if len(*slept) != 1 {
+		t.Errorf("slept %v, want one wait before the start", *slept)
+	}
+}
+
+func TestRunCanceledWhileWaitingToStartEndsWithoutARun(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	calls := limitedOnce(t, time.Second)
+	if err := limits.Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(30 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	orig := followup.WaitSleep
+	followup.WaitSleep = func(ctx context.Context, _ time.Duration) error { cancel(); return ctx.Err() }
+	t.Cleanup(func() { followup.WaitSleep = orig })
+	code, err := cmdRunContext(ctx, []string{"-b", "codex", "-C", t.TempDir(), "--wait-limit", "1m", "fix", "it"})
+	if code == 0 || err == nil || !strings.Contains(err.Error(), "canceled while waiting") || calls.Load() != 0 {
+		t.Fatalf("code=%d err=%v calls=%d, want the wait canceled before any run", code, err, calls.Load())
+	}
+	if recs, _ := runlog.List(5); len(recs) != 0 {
+		t.Fatalf("%d runs recorded, want none", len(recs))
+	}
+}

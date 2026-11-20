@@ -159,7 +159,9 @@ at most 16 KiB), `--no-skills` (claude: skills off; see
 [Harness variants](evaluations.md#harness-variants)),
 `--allow-dangerous`, `--inherit-env` (CLI backends: your whole environment; see
 [A clean environment for CLI workers](backends.md#a-clean-environment-for-cli-workers)),
-`--no-switch` (see
+`--no-switch` and `--wait-limit D` (wait up to D, e.g. `2h`, for the soonest remembered reset
+when every eligible backend is at its usage limit, then start on that backend; default 0 ends
+the run `limited` as before; see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)),
 `--issue REF` (the GitHub issue the run works on: `owner/name#N`, its URL, or `#N` for the
 workspace's origin; leased before the agent starts, so a second run for it exits 2 naming the

@@ -243,7 +243,22 @@ an extra attempt that does not use up a `retry` entry, and an attempt meant for 
 whose limit is remembered starts on that partner (see [When a plan's usage limit is
 reached](backends.md#when-a-plans-usage-limit-is-reached)). When both are limited, the attempt is
 skipped, and a task with nothing left to run fails without starting an agent, its error
-saying why. `no_switch` turns this off.
+saying why. `no_switch` turns this off. With `wait_limit` set (a duration, on the spec or a
+task), the attempt waits instead for the soonest reset `limits.json` remembers for either
+backend, when that reset is within the limit, and then starts on that backend. The wait is an
+`info` event and a `waiting` decision step in the flow naming the backend and the reset time.
+With no remembered reset, or one further off than the limit, the attempt is skipped as before.
+An attempt that ends `limited` with no partner ready to carry it on (limited too, not
+installed, billing per token, or `no_switch` set) waits the same way, once per task, and its
+work is carried on on the backend that reset; with `no_switch` only its own backend's reset
+counts. A partner kept out by more than its limit is never waited for. Eval cells neither
+wait nor back off: each stays one attempt.
+
+An attempt that ends `error` before any gate ran (a crash, a network error) on a backend that
+is installed is an infrastructure error: it is retried on the same backend after 5s, then 10s,
+then 20s, at most three times, before the `retry` list moves on. Each retry records the delay
+it waited as `backoff`, which `hrn batch show` prints; cancelling the batch stops the wait. A
+failed gate, a `limited` run and the other statuses in the table above are never backed off.
 
 A continued attempt commits as `<id>: <prompt> (attempt N)`, so the branch reads as a
 sequence of fixes. Each attempt records the prompt it was actually sent, whether it

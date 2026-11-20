@@ -339,6 +339,9 @@ func printBatch(r *renderer, res batch.Result) {
 		}
 		r.Line(line)
 		for i, att := range t.Attempts {
+			if att.Backoff > 0 {
+				r.Line(fmt.Sprintf("    attempt %d: retried on %s after a %s backoff, attempt %d having ended with an error", i+1, att.Backend, att.Backoff, i))
+			}
 			if att.Error != "" {
 				r.Line(fmt.Sprintf("    attempt %d note: %s", i+1, printable(tools.OneLine(att.Error, 500))))
 			}

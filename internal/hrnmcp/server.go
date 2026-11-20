@@ -3,6 +3,7 @@ package hrnmcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -294,7 +295,26 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			}
 			if !args.NoSwitch && args.Account == "" && args.ContinueRunID == "" {
 				meant := args.Backend
-				if args.Backend, routed = followup.ChooseFor(args.Backend, named); args.Backend != meant {
+				var bothOut bool
+				args.Backend, routed, bothOut = followup.ChooseWaiting(args.Backend, named)
+				if bothOut && args.WaitLimit > 0 {
+					def := resolve.DefaultBackendNameIn(runlog.Home())
+					r, err := followup.WaitFor(ctx, cmp.Or(meant, def), true, nil, time.Duration(args.WaitLimit), func(r followup.Reset) {
+						call.Progress(printableNote(routed+"; waiting for "+r.String(), 400))
+					})
+					switch {
+					case err == nil:
+						if args.Backend = r.Backend; meant == "" && r.Backend == def {
+							args.Backend = "" // still the default, not a switch
+						}
+						routed += "; waited for " + r.String()
+					case ctx.Err() != nil:
+						return text("run: canceled while waiting for a usage limit to reset", nil, true), nil
+					default:
+						routed += "; not waiting: " + err.Error()
+					}
+				}
+				if args.Backend != meant {
 					if routedBy != nil {
 						args.Options.Effort = "" // the row measured the limited backend, not its partner
 					}
@@ -383,6 +403,13 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 				next, why, err = followup.After(rec.ID(), args.Backend, task, res)
 			} else if err := followup.Note(args.Backend, res); err != nil {
 				notes = append(notes, "the limit was not remembered: "+err.Error())
+			}
+			if next != nil && next.Waiting != "" {
+				// The limited run's record is closed: the wait is reported now and recorded on the carry-on.
+				call.Progress(printableNote(next.Waiting, 400))
+				if werr := next.Wait(ctx); werr != nil {
+					next, why = nil, "not carried on: "+werr.Error()
+				}
 			}
 			switch {
 			case err != nil:

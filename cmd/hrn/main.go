@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -174,6 +175,8 @@ Run flags:
                        (every backend), and run_command may run sudo, rm -rf / and the like
       --inherit-env    start agent CLIs with your whole environment instead of an allowlisted one
       --no-switch      stay on this backend at its usage limit instead of using an enabled partner
+      --wait-limit D   when every eligible backend is at its usage limit, wait up to D (e.g. 2h) for the
+                       soonest remembered reset, then start on that backend (default 0: end limited)
       --issue REF      the GitHub issue this run works on (owner/name#N, its URL, or #N for origin's
                        repository), leased so a second run for it is refused, and claimed on GitHub
       --take-over      take the issue lease from its current holder
@@ -407,7 +410,19 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	if !opts.NoSwitch && *account == "" && *continueID == "" {
 		meant := backend
-		if backend, routed = followup.ChooseFor(backend, named); backend != meant {
+		var bothOut bool
+		backend, routed, bothOut = followup.ChooseWaiting(backend, named)
+		if bothOut && opts.WaitLimit > 0 {
+			waited, err := waitToStart(parent, meant, routed, time.Duration(opts.WaitLimit))
+			if err != nil {
+				return 1, err
+			}
+			routed = waited.note
+			if waited.ok {
+				backend = waited.backend
+			}
+		}
+		if backend != meant {
 			if routedBy != nil {
 				opts.Effort = "" // the row measured the limited backend, not its partner
 			}
@@ -471,12 +486,11 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	defer releaseRunIssue(ctx, issue, "run "+rec.ID()+" ended")
 
-	var emit func(agent.Event)
+	var show func(agent.Event)
 	var r *renderer
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
-		emit = func(e agent.Event) {
-			rec.Event(e)
+		show = func(e agent.Event) {
 			if !e.Partial {
 				if e.Time.IsZero() {
 					e.Time = time.Now()
@@ -486,8 +500,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	} else {
 		r = newRenderer(thinking)
-		emit = func(e agent.Event) { rec.Event(e); r.Event(e) }
+		show = r.Event
 	}
+	emit := func(e agent.Event) { rec.Event(e); show(e) }
 
 	if routed != "" {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: routed})
@@ -519,6 +534,13 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		next, why, err = followup.After(rec.ID(), backend, task, res)
 	} else if err := followup.Note(backend, res); err != nil {
 		fmt.Fprintln(os.Stderr, "hrn: the limit was not remembered:", err)
+	}
+	if next != nil && next.Waiting != "" {
+		// The limited run's record is closed: the wait is shown now and recorded on the carry-on.
+		show(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: next.Waiting})
+		if werr := next.Wait(ctx); werr != nil {
+			next, why = nil, "not carried on: "+werr.Error()
+		}
 	}
 	switch {
 	case err != nil:
@@ -565,6 +587,32 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 1, nil
 	}
 	return 0, nil
+}
+
+type waitedStart struct {
+	ok            bool
+	backend, note string
+}
+
+// waitToStart waits for the soonest remembered reset when a new run's backend and partner are both limited; one that cannot wait starts as before.
+func waitToStart(parent context.Context, meant, why string, max time.Duration) (waitedStart, error) {
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer stop()
+	def := resolve.DefaultBackendNameIn(runlog.Home())
+	r, err := followup.WaitFor(ctx, cmp.Or(meant, def), true, nil, max, func(r followup.Reset) {
+		fmt.Fprintf(os.Stderr, "hrn: %s; waiting for %s\n", why, r)
+	})
+	switch {
+	case err == nil:
+		b := r.Backend
+		if meant == "" && b == def {
+			b = "" // still the default, not a switch
+		}
+		return waitedStart{true, b, fmt.Sprintf("%s; waited for %s", why, r)}, nil
+	case ctx.Err() != nil:
+		return waitedStart{}, errors.New("run: canceled while waiting for a usage limit to reset")
+	}
+	return waitedStart{note: why + "; not waiting: " + err.Error()}, nil
 }
 
 var backendNoticeOnce sync.Once
