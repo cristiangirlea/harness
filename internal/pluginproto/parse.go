@@ -27,6 +27,9 @@ var (
 	evidenceHash   = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
+// ValidName reports whether name can be a plugin or capability name.
+func ValidName(name string) bool { return programName.MatchString(name) }
+
 // Negotiate returns the first offered version that supported contains.
 func Negotiate(offered, supported []string) (string, bool) {
 	for _, version := range offered {
