@@ -218,6 +218,19 @@ stderr. Familiarity skips unreadable practice records, warns on stderr, and may
 be incomplete; it is null only when it cannot be read. The command fails with an
 error on stderr and no JSON output if settings or the ledger cannot be read.
 
+`hrn bot stats --json --repo OWNER/NAME` answers for one repository and quickly: it
+skips the familiarity walk, which reads every run record, so `familiarity` is null.
+It adds `repo` and `top`. `repo` has `name` (as given), `week` (delivery XP in the
+repository since `week_start`), `days` (35 integers, oldest first, today last: delivery
+XP per UTC day), `kinds` (how many counted delivery events of each kind those 35 days
+hold; corrections and events worth no XP are left out) and `share` (`week` as a part
+of the week's delivery in every repository, 0 to 1, and 0 when there was none). `top`
+lists up to five `{repo, week}`, the repositories with the most delivery XP this week,
+most first, then by name. Ledger entries are matched to the repository without regard
+to case, the same caps and corrections apply as for the totals, and `top` counts only
+`owner/name` entries, so run folders and bare folder names never appear in it. `--repo`
+without `--json`, or a value that is not `owner/name`, is refused.
+
 ## Slices
 
 1. The ledger, its rebuild and fold-before-prune, the switch, and `hrn bot stats`.
