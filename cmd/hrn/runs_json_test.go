@@ -15,8 +15,14 @@ import (
 // writeRun writes a run record started ago; a running one has no result yet.
 func writeRun(t *testing.T, ago time.Duration, suffix, repo, branch string, done bool) string {
 	t.Helper()
+	return writeRunIn(t, ago, ago, suffix, repo, branch, done)
+}
+
+// writeRunIn is writeRun with the folder named for one time and the record started at another.
+func writeRunIn(t *testing.T, folderAgo, ago time.Duration, suffix, repo, branch string, done bool) string {
+	t.Helper()
 	started := time.Now().Add(-ago)
-	id := started.Format("20060102-150405") + "-" + suffix
+	id := time.Now().Add(-folderAgo).Format("20060102-150405") + "-" + suffix
 	rec := runlog.Record{
 		ID: id, Backend: "claude", Started: started, Repo: repo, Branch: branch,
 		Task: agent.Task{Prompt: "secret-prompt-" + suffix},
@@ -81,6 +87,19 @@ func TestRunsJSONWithRepoListsThatRepositorysRunsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestRunsJSONWithRepoOpensNoOlderFolderAndListsNothingOlderThanFourteenDays(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	// The folder's name is old though the record says it started now: an opened folder would be listed.
+	writeRunIn(t, 20*24*time.Hour, time.Minute, "aaaaaa", "github.com/example/app", "", true)
+	// Inside the day of slack the folders are opened with, but older than the window.
+	writeRun(t, 14*24*time.Hour+6*time.Hour, "bbbbbb", "github.com/example/app", "", true)
+	recent := writeRun(t, 13*24*time.Hour, "cccccc", "github.com/example/app", "", true)
+	got, out := readRunsJSON(t, "--json", "--repo", "example/app")
+	if len(got.Runs) != 1 || got.Runs[0].ID != recent {
+		t.Fatalf("runs = %s; want only the run of 13 days ago", out)
+	}
+}
+
 func TestRunsJSONCountsOnlyMatchingRunsTowardN(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	writeRun(t, 3*time.Hour, "aaaaaa", "github.com/example/app", "", true)
@@ -115,6 +134,9 @@ func TestRunsRefusesABadRepo(t *testing.T) {
 		{[]string{"--json", "--repo", "app"}, "OWNER/NAME"},
 		{[]string{"--json", "--repo", "../x"}, "OWNER/NAME"},
 		{[]string{"--json", "--repo", "github.com/example/app"}, "OWNER/NAME"},
+		{[]string{"--json", "--repo="}, "OWNER/NAME"},
+		{[]string{"example/app", "--json"}, "unexpected argument"},
+		{[]string{"--json", "--repo", "example/app", "extra"}, "unexpected argument"},
 	} {
 		out, err := captureStdout(t, func() error { return cmdRuns(c.args) })
 		if err == nil || !strings.Contains(err.Error(), c.want) || len(out) != 0 {

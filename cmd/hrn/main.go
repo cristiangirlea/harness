@@ -784,6 +784,10 @@ func cmdRuns(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// flag stops at the first word that is not a flag, so a misplaced one would be dropped without a word.
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q: hrn runs takes flags only", fs.Arg(0))
+	}
 	repoSet := false
 	fs.Visit(func(f *flag.Flag) { repoSet = repoSet || f.Name == "repo" })
 	if repoSet && !runsRepoArg.MatchString(*repo) {
@@ -796,8 +800,9 @@ func cmdRuns(args []string) error {
 	var err error
 	if repoSet {
 		want := "github.com/" + *repo
+		since := time.Now().Add(-runsRepoWindow)
 		// Listing every record takes tens of seconds on a large home, so one repository's runs come from recent folders only.
-		recs, err = runlog.ListMatching(time.Now().Add(-runsRepoWindow), *n, func(r runlog.Record) bool { return strings.EqualFold(r.Repo, want) })
+		recs, err = runlog.ListMatching(since, *n, func(r runlog.Record) bool { return strings.EqualFold(r.Repo, want) && !r.Started.Before(since) })
 	} else {
 		recs, err = runlog.List(*n)
 	}
