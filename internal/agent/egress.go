@@ -39,6 +39,9 @@ func egressHosts(backend string, own []string) []string {
 
 var egressEnv = []string{"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY", "NODE_USE_ENV_PROXY"}
 
+// egressProxyNames are the variables withEgressProxy can set, in the spellings it sets them.
+var egressProxyNames = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NODE_USE_ENV_PROXY"}
+
 // withEgressProxy replaces every proxy variable, in either case, with the run's proxy and clears NO_PROXY.
 func withEgressProxy(env []string, proxyURL string, node bool) []string {
 	out := slices.DeleteFunc(slices.Clone(env), func(kv string) bool {

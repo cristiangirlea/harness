@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -33,7 +34,8 @@ func TestHelperEgressCLI(t *testing.T) {
 	got["connect"] = "none"
 	if u, err := url.Parse(os.Getenv("HTTPS_PROXY")); err == nil && strings.HasPrefix(u.Host, "127.0.0.1:") {
 		got["proxy"] = u.Host
-		got["connect"] = connectStatus(u.Host, "denied.example.org:443")
+		got["connect"] = connectStatus(u.Host, "denied.example.org:443", u.User)
+		got["noauth"] = connectStatus(u.Host, "denied.example.org:443", nil)
 	}
 	report, _ := json.Marshal(got)
 	out, _ := json.Marshal(map[string]any{"type": "result", "subtype": "success", "num_turns": 1, "result": string(report)})
@@ -41,14 +43,20 @@ func TestHelperEgressCLI(t *testing.T) {
 	os.Exit(0)
 }
 
-func connectStatus(proxy, target string) string {
+// connectStatus asks proxy for target, with the credentials of user when it is not nil, as a client reading the proxy URL would.
+func connectStatus(proxy, target string, user *url.Userinfo) string {
 	c, err := net.DialTimeout("tcp", proxy, 5*time.Second)
 	if err != nil {
 		return err.Error()
 	}
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(5 * time.Second))
-	fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+	auth := ""
+	if user != nil {
+		pass, _ := user.Password()
+		auth = "Proxy-Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(user.Username()+":"+pass)) + "\r\n"
+	}
+	fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", target, target, auth)
 	resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: http.MethodConnect})
 	if err != nil {
 		return err.Error()
@@ -67,9 +75,15 @@ func egressHelper() *CLIBackend {
 
 func runEgressHelper(t *testing.T, opts Options) (map[string]string, []Event) {
 	t.Helper()
+	return runEgressHelperTask(t, Task{Options: opts})
+}
+
+func runEgressHelperTask(t *testing.T, task Task) (map[string]string, []Event) {
+	t.Helper()
 	t.Setenv("HRN_EGRESS_HELPER", "1")
+	task.Prompt, task.Dir = "go", t.TempDir()
 	var events []Event
-	res := egressHelper().Run(context.Background(), Task{Prompt: "go", Dir: t.TempDir(), Options: opts}, func(e Event) { events = append(events, e) })
+	res := egressHelper().Run(context.Background(), task, func(e Event) { events = append(events, e) })
 	if res.Status != StatusOK {
 		t.Fatalf("run %s: %s", res.Status, res.Error)
 	}
@@ -106,10 +120,11 @@ func TestAnEgressRunPointsTheCLIAtItsOwnProxy(t *testing.T) {
 			t.Setenv("HTTP_PROXY", "http://operator-proxy.example:3128")
 			t.Setenv("NO_PROXY", "*")
 			got, events := runEgressHelper(t, opts)
-			want := "http://" + got["proxy"]
 			if got["proxy"] == "" {
 				t.Fatalf("the child saw no proxy of the run's own: %v", got)
 			}
+			want := got["HTTPS_PROXY"]
+			checkRunProxyURL(t, want, got["proxy"])
 			for _, k := range []string{"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"} {
 				if got[k] != want {
 					t.Errorf("%s=%q, want %q", k, got[k], want)
@@ -124,7 +139,10 @@ func TestAnEgressRunPointsTheCLIAtItsOwnProxy(t *testing.T) {
 				t.Errorf("NODE_USE_ENV_PROXY=%q, want 1 for a Node CLI", got["NODE_USE_ENV_PROXY"])
 			}
 			if got["connect"] != "403" {
-				t.Errorf("a host off the list got %s from the proxy, want 403", got["connect"])
+				t.Errorf("a host off the list got %s from the proxy with the child's credentials, want 403", got["connect"])
+			}
+			if got["noauth"] != "407" {
+				t.Errorf("a request without the child's credentials got %s, want 407", got["noauth"])
 			}
 			info := infoTexts(events)
 			if !slices.Contains(info, "egress: advisory; 2 hosts allowed; a process that ignores proxy variables is not stopped") {
@@ -138,6 +156,56 @@ func TestAnEgressRunPointsTheCLIAtItsOwnProxy(t *testing.T) {
 				t.Error("the proxy outlived the run")
 			}
 		})
+	}
+}
+
+// checkRunProxyURL wants raw to name the proxy at host with the run's user and a token.
+func checkRunProxyURL(t *testing.T, raw, host string) {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("proxy URL: %v", err)
+	}
+	if pass, _ := u.User.Password(); u.Scheme != "http" || u.User.Username() != "hrn" || len(pass) != 64 || u.Host != host {
+		t.Errorf("proxy URL scheme %q, user %q, %d-character token, host %q; want http, hrn, 64 and %s", u.Scheme, u.User.Username(), len(pass), u.Host, host)
+	}
+}
+
+func TestProxyVariablesFromTheRunsChildEnvAreReplacedToo(t *testing.T) {
+	egressDefaults[os.Args[0]] = egressDefault{hosts: []string{"api.example.com"}}
+	t.Cleanup(func() { delete(egressDefaults, os.Args[0]) })
+	got, _ := runEgressHelperTask(t, Task{
+		Options:  Options{Mode: ModeYolo, Egress: []string{"allowed.example.org"}},
+		ChildEnv: []string{"HTTPS_PROXY=http://child-proxy.example:3128", "all_proxy=socks5://child-proxy.example:1080", "NO_PROXY=*"},
+	})
+	if got["proxy"] == "" {
+		t.Fatalf("the child saw no proxy of the run's own: %v", got)
+	}
+	for _, k := range []string{"HTTPS_PROXY", "ALL_PROXY", "all_proxy"} {
+		checkRunProxyURL(t, got[k], got["proxy"])
+	}
+	if v, ok := got["NO_PROXY"]; ok {
+		t.Errorf("NO_PROXY=%q from the child environment reached the child", v)
+	}
+	if got["connect"] != "403" {
+		t.Errorf("the child's proxy answered %s, want 403 for a host off the list", got["connect"])
+	}
+}
+
+func TestTheCodexGateServerIsHandedTheProxyVariables(t *testing.T) {
+	for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NODE_USE_ENV_PROXY"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+	names := codexGateEnvNames(Task{Options: Options{Mode: ModeYolo, Egress: []string{"allowed.example.org"}}})
+	for _, k := range egressProxyNames {
+		if !slices.Contains(names, k) {
+			t.Errorf("%s is not handed to the gate server: %v", k, names)
+		}
+	}
+	names = codexGateEnvNames(Task{Options: Options{Mode: ModeYolo}})
+	if slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(n, "HTTPS_PROXY") }) {
+		t.Errorf("a run without egress names a proxy variable the operator did not set: %v", names)
 	}
 }
 

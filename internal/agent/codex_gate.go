@@ -103,6 +103,10 @@ func codexGateEnvNames(t Task) []string {
 			names = append(names, name)
 		}
 	}
+	// The run's proxy is set on codex after these are read, so the operator's environment may not name it.
+	if len(t.Egress) > 0 {
+		names = append(names, egressProxyNames...)
+	}
 	slices.Sort(names)
 	return slices.Compact(names)
 }

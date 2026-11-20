@@ -3,6 +3,7 @@ package egress
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -72,8 +73,26 @@ func start(t *testing.T, hosts []string, answers []netip.Addr, origin string, tu
 	return h
 }
 
-// send writes raw request bytes to the proxy and returns the status code it answers.
+// authHeader is the Proxy-Authorization line a client builds from the proxy's URL.
+func authHeader(t *testing.T, p *Proxy) string {
+	t.Helper()
+	u, err := url.Parse(p.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass, _ := u.User.Password()
+	return "Proxy-Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(u.User.Username()+":"+pass)) + "\r\n"
+}
+
+// send adds the proxy's credentials after the request line of raw and returns the status code the proxy answers.
 func send(t *testing.T, p *Proxy, raw string) (int, net.Conn, *bufio.Reader) {
+	t.Helper()
+	line, rest, _ := strings.Cut(raw, "\r\n")
+	return sendRaw(t, p, line+"\r\n"+authHeader(t, p)+rest)
+}
+
+// sendRaw writes raw request bytes to the proxy as they are and returns the status code it answers.
+func sendRaw(t *testing.T, p *Proxy, raw string) (int, net.Conn, *bufio.Reader) {
 	t.Helper()
 	c, err := net.Dial("tcp", p.Addr())
 	if err != nil {
@@ -100,11 +119,11 @@ func TestAnAllowedHostIsTunnelledToTheOrigin(t *testing.T) {
 	defer origin.Close()
 	// httptest's certificate names example.com, so TLS verifies end to end.
 	h := start(t, []string{"example.com"}, []netip.Addr{publicAddr}, origin.Listener.Addr().String(), nil)
-	if !strings.HasPrefix(h.proxy.URL(), "http://127.0.0.1:") {
-		t.Fatalf("proxy URL %s is not on loopback", h.proxy.URL())
+	proxyURL, _ := url.Parse(h.proxy.URL())
+	if pass, _ := proxyURL.User.Password(); proxyURL.User.Username() != "hrn" || len(pass) != 64 || proxyURL.Host != h.proxy.Addr() || !strings.HasPrefix(proxyURL.Host, "127.0.0.1:") {
+		t.Fatalf("proxy URL user %q, %d-character token, host %s; want hrn, 64 and loopback", proxyURL.User.Username(), len(pass), proxyURL.Host)
 	}
 	tr := origin.Client().Transport.(*http.Transport).Clone()
-	proxyURL, _ := url.Parse(h.proxy.URL())
 	tr.Proxy = http.ProxyURL(proxyURL)
 	defer tr.CloseIdleConnections()
 	resp, err := (&http.Client{Transport: tr, Timeout: 5 * time.Second}).Get("https://example.com/")
@@ -125,7 +144,10 @@ func TestRefusedRequestsNeverDial(t *testing.T) {
 	for _, tc := range []struct{ name, raw, target, reason string }{
 		{"host not on the list", "CONNECT other.example.org:443 HTTP/1.1\r\nHost: other.example.org:443\r\n\r\n", "other.example.org:443", "not allowed"},
 		{"port other than 443", "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\n\r\n", "example.com:80", "port not 443"},
-		{"plain HTTP", "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n", "example.com", "not CONNECT"},
+		{"plain HTTP", "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n", "example.com:80", "not CONNECT"},
+		{"plain HTTP with a query", "GET http://user:pw@example.com:8080/p?token=secret HTTP/1.1\r\nHost: example.com\r\n\r\n", "example.com:8080", "not CONNECT"},
+		{"CONNECT with a query", "CONNECT example.com:443?token=secret HTTP/1.1\r\n\r\n", "example.com:443", "port not 443"},
+		{"CONNECT with a path", "CONNECT other.example.org:443/token/secret HTTP/1.1\r\n\r\n", "other.example.org:443", "port not 443"},
 		{"IPv4 literal", "CONNECT 93.184.216.34:443 HTTP/1.1\r\nHost: 93.184.216.34:443\r\n\r\n", "93.184.216.34:443", "IP literal"},
 		{"IPv6 literal", "CONNECT [2606:4700::1]:443 HTTP/1.1\r\nHost: [2606:4700::1]:443\r\n\r\n", "[2606:4700::1]:443", "IP literal"},
 		{"non-ASCII name", "CONNECT b\xc3\xa9.example:443 HTTP/1.1\r\n\r\n", "b?.example:443", "not allowed"},
@@ -175,6 +197,7 @@ func TestANonPublicAnswerIsRefused(t *testing.T) {
 		"::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:169.254.169.254", "::7f00:1",
 		"2002:7f00:1::1", "2002:a00:1::1", "2002:a9fe:a9fe::1",
 		"64:ff9b::7f00:1", "64:ff9b::a00:1", "64:ff9b:1::1",
+		"192.88.99.1", "2001::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2",
 	} {
 		t.Run(a, func(t *testing.T) {
 			bad := netip.MustParseAddr(a)
@@ -431,7 +454,7 @@ func TestClosingDuringALookupRecordsNoRefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	io.WriteString(c, "CONNECT example.com:443 HTTP/1.1\r\n\r\n")
+	io.WriteString(c, "CONNECT example.com:443 HTTP/1.1\r\n"+authHeader(t, h.proxy)+"\r\n")
 	<-looking
 	h.proxy.Close()
 	if d := h.denials(); len(d) != 0 {
@@ -476,5 +499,162 @@ func TestAFailedAcceptDoesNotStopTheProxy(t *testing.T) {
 	h := start(t, []string{"example.com"}, []netip.Addr{publicAddr}, origin, nil)
 	if code, _, _ := send(t, h.proxy, "CONNECT example.com:443 HTTP/1.1\r\n\r\n"); code != http.StatusOK {
 		t.Fatalf("status %d after a failed accept", code)
+	}
+}
+
+func TestOnlyTheRunsCredentialsAreTunnelled(t *testing.T) {
+	origin := echoOrigin(t)
+	h := start(t, []string{"example.com"}, []netip.Addr{publicAddr}, origin, nil)
+	wrong := "Proxy-Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("hrn:"+strings.Repeat("0", 64))) + "\r\n"
+	for name, raw := range map[string]string{
+		"no header":   "CONNECT example.com:443 HTTP/1.1\r\n\r\n",
+		"wrong token": "CONNECT example.com:443 HTTP/1.1\r\n" + wrong + "\r\n",
+		"other user":  "CONNECT example.com:443 HTTP/1.1\r\n" + strings.Replace(authHeader(t, h.proxy), "Basic aHJu", "Basic aHJv", 1) + "\r\n",
+		"not basic":   "CONNECT example.com:443 HTTP/1.1\r\nProxy-Authorization: Bearer x\r\n\r\n",
+	} {
+		c, err := net.Dial("tcp", h.proxy.Addr())
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.SetDeadline(time.Now().Add(5 * time.Second))
+		io.WriteString(c, raw)
+		resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: http.MethodConnect})
+		c.Close()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if resp.StatusCode != http.StatusProxyAuthRequired || !strings.HasPrefix(resp.Header.Get("Proxy-Authenticate"), "Basic") {
+			t.Errorf("%s: status %d, Proxy-Authenticate %q; want 407 asking for Basic", name, resp.StatusCode, resp.Header.Get("Proxy-Authenticate"))
+		}
+	}
+	if n := h.dials.Load(); n != 0 {
+		t.Errorf("the proxy dialled %d times for requests without its credentials", n)
+	}
+	for _, d := range h.denials() {
+		if d != (denial{"example.com:443", "no valid proxy credentials"}) {
+			t.Errorf("denial %v", d)
+		}
+	}
+	if code, _, _ := send(t, h.proxy, "CONNECT example.com:443 HTTP/1.1\r\n\r\n"); code != http.StatusOK {
+		t.Fatalf("status %d with the right credentials", code)
+	}
+}
+
+func TestEachProxyHasItsOwnToken(t *testing.T) {
+	a := start(t, []string{"example.com"}, []netip.Addr{publicAddr}, "127.0.0.1:1", nil)
+	b := start(t, []string{"example.com"}, []netip.Addr{publicAddr}, "127.0.0.1:1", nil)
+	if a.proxy.token == b.proxy.token {
+		t.Fatal("two proxies share a token")
+	}
+	line := "CONNECT example.com:443 HTTP/1.1\r\n" + authHeader(t, a.proxy) + "\r\n"
+	if code, _, _ := sendRaw(t, b.proxy, line); code != http.StatusProxyAuthRequired {
+		t.Errorf("another run's credentials got %d, want 407", code)
+	}
+}
+
+func TestConnectionsPastTheCapAreClosed(t *testing.T) {
+	origin := echoOrigin(t)
+	h := start(t, []string{"example.com"}, []netip.Addr{publicAddr}, origin, func(o *Options) { o.MaxConns = 1 })
+	held, err := net.Dial("tcp", h.proxy.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The held connection is accepted first, so its handler owns the only slot before the next accept.
+	extra, err := net.Dial("tcp", h.proxy.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer extra.Close()
+	extra.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := extra.Read(make([]byte, 1)); err == nil || isTimeout(err) {
+		t.Fatalf("read %v; want a connection past the cap closed at once", err)
+	}
+	held.Close()
+	// The slot comes back once the held handler sees the close; a retry that lands before is closed too.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		c, err := net.Dial("tcp", h.proxy.Addr())
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.SetDeadline(time.Now().Add(5 * time.Second))
+		io.WriteString(c, "CONNECT example.com:443 HTTP/1.1\r\n"+authHeader(t, h.proxy)+"\r\n")
+		resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: http.MethodConnect})
+		c.Close()
+		if err == nil {
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status %d once the slot was free", resp.StatusCode)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the slot never came back: %v", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// pipeListener hands the proxy one end of in-memory pipes, whose writes block until the other end reads.
+type pipeListener struct {
+	conns chan net.Conn
+	done  chan struct{}
+	once  sync.Once
+}
+
+func (l *pipeListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.done:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *pipeListener) Close() error {
+	l.once.Do(func() { close(l.done) })
+	return nil
+}
+
+func (l *pipeListener) Addr() net.Addr { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)} }
+
+func TestAClientThatReadsNothingIsDroppedAfterTheWriteTimeout(t *testing.T) {
+	pl := &pipeListener{conns: make(chan net.Conn, 1), done: make(chan struct{})}
+	listen = func(string, string) (net.Listener, error) { return pl, nil }
+	t.Cleanup(func() { listen = net.Listen })
+	upFar, upNear := net.Pipe()
+	defer upFar.Close()
+	h := start(t, []string{"example.com"}, []netip.Addr{publicAddr}, "127.0.0.1:1", func(o *Options) {
+		o.WriteTimeout = 20 * time.Millisecond
+		o.Dial = func(context.Context, string, string) (net.Conn, error) { return upNear, nil }
+	})
+	client, server := net.Pipe()
+	defer client.Close()
+	pl.conns <- server
+	client.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(client, "CONNECT example.com:443 HTTP/1.1\r\n"+authHeader(t, h.proxy)+"\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	// The client never reads the 200; the proxy gives up on it and ends the upstream connection.
+	upFar.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := upFar.Read(make([]byte, 1)); err == nil || isTimeout(err) {
+		t.Fatalf("upstream read %v; want it closed once the reply could not be written", err)
+	}
+}
+
+func TestAnUpstreamThatReadsNothingIsDroppedAfterTheWriteTimeout(t *testing.T) {
+	upFar, upNear := net.Pipe()
+	defer upFar.Close()
+	h := start(t, []string{"example.com"}, []netip.Addr{publicAddr}, "127.0.0.1:1", func(o *Options) {
+		o.WriteTimeout = 20 * time.Millisecond
+		o.Dial = func(context.Context, string, string) (net.Conn, error) { return upNear, nil }
+	})
+	// The early bytes go upstream before the tunnel starts; nothing reads them there.
+	code, c, br := send(t, h.proxy, "CONNECT example.com:443 HTTP/1.1\r\n\r\nearly")
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := br.ReadByte(); err == nil || isTimeout(err) {
+		t.Fatalf("read %v; want the client closed once the early bytes could not be written", err)
 	}
 }

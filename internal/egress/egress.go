@@ -5,6 +5,11 @@ package egress
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +26,9 @@ import (
 // MaxHeaderBytes bounds a request's line and headers together.
 const MaxHeaderBytes = 16 << 10
 
+// proxyUser is the user name in the proxy's credentials; only the token is secret.
+const proxyUser = "hrn"
+
 // Options configures one proxy; zero durations and nil functions take the defaults.
 type Options struct {
 	// Hosts are the exact DNS names a CONNECT may name; see CheckHost.
@@ -35,6 +43,9 @@ type Options struct {
 	HeaderTimeout  time.Duration // default 10s
 	ConnectTimeout time.Duration // resolve and dial; default 10s
 	IdleTimeout    time.Duration // a tunnel with no bytes either way; default 5m
+	WriteTimeout   time.Duration // the 200 reply and the first bytes upstream; default 10s
+	// MaxConns caps connections handled at once; past it a new one is closed unread. Default 64.
+	MaxConns int
 }
 
 // Proxy is a running proxy; Close stops it and ends its tunnels.
@@ -46,6 +57,11 @@ type Proxy struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 	once   sync.Once
+	slots  chan struct{}
+
+	token string
+	// tokenSum is compared instead of the token so the comparison's time does not depend on its length.
+	tokenSum [sha256.Size]byte
 
 	mu     sync.Mutex
 	conns  map[net.Conn]struct{}
@@ -75,11 +91,21 @@ func Start(ctx context.Context, o Options) (*Proxy, error) {
 	o.HeaderTimeout = orDefault(o.HeaderTimeout, 10*time.Second)
 	o.ConnectTimeout = orDefault(o.ConnectTimeout, 10*time.Second)
 	o.IdleTimeout = orDefault(o.IdleTimeout, 5*time.Minute)
+	o.WriteTimeout = orDefault(o.WriteTimeout, 10*time.Second)
+	if o.MaxConns <= 0 {
+		o.MaxConns = 64
+	}
+	var secret [32]byte
+	if _, err := rand.Read(secret[:]); err != nil {
+		return nil, fmt.Errorf("egress: %w", err)
+	}
 	ln, err := listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("egress: %w", err)
 	}
-	p := &Proxy{o: o, ln: ln, allow: map[string]bool{}, conns: map[net.Conn]struct{}{}}
+	p := &Proxy{o: o, ln: ln, allow: map[string]bool{}, conns: map[net.Conn]struct{}{}, slots: make(chan struct{}, o.MaxConns)}
+	p.token = hex.EncodeToString(secret[:])
+	p.tokenSum = sha256.Sum256([]byte(p.token))
 	for _, h := range o.Hosts {
 		p.allow[h] = true
 	}
@@ -105,8 +131,23 @@ func orDefault(d, def time.Duration) time.Duration {
 // Addr is the listening address, 127.0.0.1:port.
 func (p *Proxy) Addr() string { return p.ln.Addr().String() }
 
-// URL is the value for HTTPS_PROXY and its kin.
-func (p *Proxy) URL() string { return "http://" + p.Addr() }
+// URL is the value for HTTPS_PROXY and its kin; it holds the run's credentials, so it is never logged.
+func (p *Proxy) URL() string { return "http://" + proxyUser + ":" + p.token + "@" + p.Addr() }
+
+// authorized reports whether h is Basic credentials for the proxy's user and token.
+func (p *Proxy) authorized(h string) bool {
+	scheme, enc, ok := strings.Cut(h, " ")
+	if !ok || !strings.EqualFold(scheme, "Basic") {
+		return false
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(enc))
+	if err != nil {
+		return false
+	}
+	user, pass, ok := strings.Cut(string(raw), ":")
+	sum := sha256.Sum256([]byte(pass))
+	return ok && user == proxyUser && subtle.ConstantTimeCompare(sum[:], p.tokenSum[:]) == 1
+}
 
 // Close stops accepting, ends every open connection and waits for them.
 func (p *Proxy) Close() error {
@@ -170,10 +211,19 @@ func (p *Proxy) serve() {
 			continue
 		}
 		delay = 0
+		select {
+		case p.slots <- struct{}{}:
+		default:
+			// Reading a header to answer 503 would itself cost what the cap protects.
+			c.Close()
+			continue
+		}
 		if !p.track(c) {
+			<-p.slots
 			continue
 		}
 		p.wg.Go(func() {
+			defer func() { <-p.slots }()
 			defer p.untrack(c)
 			p.handle(c)
 		})
@@ -216,11 +266,15 @@ func (p *Proxy) handle(c net.Conn) {
 		}
 		return
 	}
-	if req.Method != http.MethodConnect {
-		p.deny(c, capped(req.Host), "not CONNECT", http.StatusForbidden)
+	target := targetOf(req)
+	if !p.authorized(req.Header.Get("Proxy-Authorization")) {
+		p.deny(c, target, "no valid proxy credentials", http.StatusProxyAuthRequired)
 		return
 	}
-	target := capped(req.RequestURI)
+	if req.Method != http.MethodConnect {
+		p.deny(c, target, "not CONNECT", http.StatusForbidden)
+		return
+	}
 	host, port, err := net.SplitHostPort(req.RequestURI)
 	if err != nil {
 		p.deny(c, target, "no port", http.StatusForbidden)
@@ -273,12 +327,14 @@ func (p *Proxy) handle(c net.Conn) {
 	defer p.untrack(up)
 	cancel()
 	c.SetDeadline(time.Time{})
+	c.SetWriteDeadline(time.Now().Add(p.o.WriteTimeout))
 	if _, err := io.WriteString(c, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		return
 	}
 	// Bytes the client sent after the request are already in the reader.
 	if n := br.Buffered(); n > 0 {
 		early, _ := br.Peek(n)
+		up.SetWriteDeadline(time.Now().Add(p.o.WriteTimeout))
 		if _, err := up.Write(early); err != nil {
 			return
 		}
@@ -324,13 +380,40 @@ func (p *Proxy) tunnel(a, b net.Conn) {
 // deny answers status, reports the refusal and lets the client read the answer before the close.
 func (p *Proxy) deny(c net.Conn, target, reason string, status int) {
 	p.o.OnDeny(target, reason)
-	fmt.Fprintf(c, "HTTP/1.1 %d %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", status, http.StatusText(status))
+	auth := ""
+	if status == http.StatusProxyAuthRequired {
+		auth = "Proxy-Authenticate: Basic realm=\"hrn\"\r\n"
+	}
+	c.SetWriteDeadline(time.Now().Add(p.o.WriteTimeout))
+	fmt.Fprintf(c, "HTTP/1.1 %d %s\r\n%sContent-Length: 0\r\nConnection: close\r\n\r\n", status, http.StatusText(status), auth)
 	// Closing with unread input sends a reset that can overtake the answer.
 	if tc, ok := c.(*net.TCPConn); ok {
 		tc.CloseWrite()
 		c.SetReadDeadline(time.Now().Add(time.Second))
 		io.CopyN(io.Discard, c, MaxHeaderBytes)
 	}
+}
+
+// targetOf is the host and port a request names, without user, path or query, which can carry secrets.
+func targetOf(req *http.Request) string {
+	h := req.URL.Host
+	if h == "" {
+		h = req.Host
+	}
+	if i := strings.LastIndex(h, "@"); i >= 0 {
+		h = h[i+1:]
+	}
+	if i := strings.IndexAny(h, "/?#"); i >= 0 {
+		h = h[:i]
+	}
+	if _, _, err := net.SplitHostPort(h); err != nil && h != "" && req.Method != http.MethodConnect {
+		port := "80"
+		if req.URL.Scheme == "https" {
+			port = "443"
+		}
+		h = net.JoinHostPort(strings.Trim(h, "[]"), port)
+	}
+	return capped(h)
 }
 
 // capped keeps a client-chosen target short and printable: it reaches the operator's terminal.
