@@ -63,7 +63,9 @@ host that wants two calls at once starts two processes.
 - `protocol` is the first entry of `hello.protocols` that the plugin speaks.
 - `plugin.name` is the name in the executable `hrn-<name>`: 1 to 64 characters from `[a-z0-9-]`,
   starting with a letter. `plugin.version` is 1 to 64 characters from `[A-Za-z0-9._+-]`. The host
-  program in `hello` follows the same two rules.
+  program in `hello` follows the same two rules. hrn never treats `server`, `worker` or
+  `fixture-model` as plugin names: programs of its own are called `hrn-server`, `hrn-worker` and
+  `hrn-fixture-model`.
 - `capabilities` has 1 to 64 entries. A capability's `name` follows the plugin name's rule and
   is unique in the list; its optional `description` is at most 256 bytes.
 
@@ -100,7 +102,11 @@ A plugin that speaks none of the offered versions writes one `error` line with c
 
 The plugin stops the call and still writes its `result`, with status `canceled` if it stopped
 early. A `cancel` for an `id` that is not in flight gets an `error` line with code
-`bad_request`.
+`bad_request` that carries that `id`.
+
+A `cancel` can cross a `result` in the pipe: the plugin finishes, then reads a `cancel` for a
+call that is over, and answers with that `error` line. A host ignores an `error` line that names
+a call it has already finished.
 
 ### `result` (plugin, last line of a call)
 

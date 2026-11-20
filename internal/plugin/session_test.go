@@ -8,10 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cristiangirlea/harness/internal/pluginproto"
 	"github.com/cristiangirlea/harness/internal/tools"
@@ -29,7 +32,7 @@ func TestStartReportsTheNegotiatedPluginAndItsSHA256(t *testing.T) {
 	for _, capability := range info.Capabilities {
 		names = append(names, capability.Name)
 	}
-	if !slices.Equal(names, []string{"echo", "wait", "env", "exit", "skip"}) {
+	if !slices.Equal(names, []string{"echo", "wait", "env", "exit", "skip", "late", "latebare", "spawn", "complain", "wrongid", "alien"}) {
 		t.Errorf("capabilities = %v", names)
 	}
 	assertSamePath(t, info.Path, exe)
@@ -93,6 +96,34 @@ func TestCallReturnsTheCanceledResultAndTheTimeoutError(t *testing.T) {
 	}
 }
 
+func TestCallSkipsTheBadRequestForACancelThatCrossedAResult(t *testing.T) {
+	session, _ := startFake(t, "echo")
+	assertCrossingCancel(t, session, "late")
+	result, err := session.Call(t.Context(), "echo", nil, 2*time.Second, nil)
+	if err != nil || result == nil || result.ID != "c2" || result.Status != pluginproto.StatusOK {
+		t.Fatalf("Call(echo) = %+v, %v", result, err)
+	}
+}
+
+func TestCallFailsOnAnErrorWithoutAnIDAfterACancelCrossedAResult(t *testing.T) {
+	session, _ := startFake(t, "echo")
+	assertCrossingCancel(t, session, "latebare")
+	if result, err := session.Call(t.Context(), "echo", nil, 2*time.Second, nil); err == nil || result != nil || !strings.Contains(err.Error(), `received error code "bad_request"`) {
+		t.Fatalf("Call(echo) = %+v, %v", result, err)
+	}
+	if _, err := session.Call(t.Context(), "echo", nil, time.Second, nil); err == nil {
+		t.Error("Call() accepted a call on a broken session")
+	}
+}
+
+func assertCrossingCancel(t *testing.T, session *Session, capability string) {
+	t.Helper()
+	result, err := session.Call(t.Context(), capability, nil, 300*time.Millisecond, nil)
+	if err == nil || !strings.Contains(err.Error(), "call c1 timed out after 300ms") || result == nil || result.ID != "c1" || result.Status != pluginproto.StatusOK {
+		t.Fatalf("Call(%s) = %+v, %v", capability, result, err)
+	}
+}
+
 func TestCallKillsAPluginThatIgnoresCancellation(t *testing.T) {
 	session, _ := startFake(t, "stubborn")
 	started := time.Now()
@@ -118,12 +149,14 @@ func TestCallKillsAPluginThatIgnoresCancellation(t *testing.T) {
 }
 
 func TestStartAppliesTheEnvironmentPolicyAndGuard(t *testing.T) {
-	filtered := []string{"HRN_OPERATOR_TOKEN", "HRN_DATABASE_URL", "ANTHROPIC_API_KEY", "GIT_DIR"}
+	filtered := []string{"HRN_OPERATOR_TOKEN", "HRN_DATABASE_URL", "ANTHROPIC_API_KEY", "GIT_DIR", "HRN_WATCH_ADDR", "HRN_TLS_KEY_FILE", "hrn_MIXED_CASE"}
 	for _, name := range filtered {
 		t.Setenv(name, "x")
 	}
+	t.Setenv("GH_TOKEN", "real-secret")
 	session, _ := startFake(t, "echo")
-	input, err := json.Marshal(map[string][]string{"names": append(slices.Clone(filtered), tools.GuardedVar)})
+	filtered = append(filtered, "HRN_HOME")
+	input, err := json.Marshal(map[string][]string{"names": append(slices.Clone(filtered), tools.GuardedVar, "GH_TOKEN")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +176,9 @@ func TestStartAppliesTheEnvironmentPolicyAndGuard(t *testing.T) {
 	if marker := env[tools.GuardedVar]; !marker.Set || marker.Value != "1" {
 		t.Errorf("expected the child guard marker to be set to 1")
 	}
+	if token, ok := env["GH_TOKEN"]; !ok || token.Value == "real-secret" {
+		t.Error("expected the child to report a guarded GH_TOKEN")
+	}
 }
 
 func TestCallBreaksTheSessionWhenThePluginExitsWithoutAResult(t *testing.T) {
@@ -151,6 +187,18 @@ func TestCallBreaksTheSessionWhenThePluginExitsWithoutAResult(t *testing.T) {
 
 func TestCallBreaksTheSessionWhenThePluginSkipsASequenceNumber(t *testing.T) {
 	assertCallBreaksSession(t, "skip", "sequence")
+}
+
+func TestCallBreaksTheSessionWhenThePluginSendsAnErrorInsteadOfAResult(t *testing.T) {
+	assertCallBreaksSession(t, "complain", `received error code "internal"`)
+}
+
+func TestCallBreaksTheSessionWhenTheResultHasAnotherCallID(t *testing.T) {
+	assertCallBreaksSession(t, "wrongid", `unexpected call ID "zz"`)
+}
+
+func TestCallBreaksTheSessionWhenThePluginSendsAnUnknownFrameType(t *testing.T) {
+	assertCallBreaksSession(t, "alien", `unknown plugin frame "alien"`)
 }
 
 func assertCallBreaksSession(t *testing.T, capability, diagnostic string) {
@@ -214,6 +262,56 @@ func TestCallWritesNothingForInvalidOrConcurrentCalls(t *testing.T) {
 	}
 }
 
+func TestCallWithAnAlreadyCanceledContextWritesNothing(t *testing.T) {
+	session, exe := startFake(t, "echo")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if result, err := session.Call(ctx, "echo", nil, time.Second, nil); result != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("Call() = %+v, %v", result, err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	frames := receivedFrames(t, exe)
+	if len(frames) != 1 {
+		t.Fatalf("received %d frames, want only hello", len(frames))
+	}
+	if _, ok := frames[0].(*pluginproto.Hello); !ok {
+		t.Errorf("first frame = %+v", frames[0])
+	}
+}
+
+func TestCallWithAnAlreadyCanceledContextLeavesTheFirstIDAvailable(t *testing.T) {
+	session, _ := startFake(t, "echo")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := session.Call(ctx, "echo", nil, time.Second, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled Call() error = %v", err)
+	}
+	if result, err := session.Call(t.Context(), "echo", nil, 2*time.Second, nil); err != nil || result == nil || result.ID != "c1" || result.Status != pluginproto.StatusOK {
+		t.Fatalf("next Call() = %+v, %v", result, err)
+	}
+}
+
+func TestCallTimesOutWhenThePluginStopsReadingStdin(t *testing.T) {
+	session, _ := startFake(t, "deaf")
+	input := json.RawMessage(`{"text":"` + strings.Repeat("x", 3<<20) + `"}`)
+	started := time.Now()
+	if result, err := session.Call(t.Context(), "echo", input, 300*time.Millisecond, nil); result != nil || err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("Call() = %+v, %v", result, err)
+	}
+	if elapsed := time.Since(started); elapsed > 6*time.Second {
+		t.Errorf("Call() took %s", elapsed)
+	}
+	started = time.Now()
+	if err := session.Close(); err != nil {
+		t.Error(err)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Errorf("Close() took %s", elapsed)
+	}
+}
+
 func TestStartRefusesAPluginThatStaysSilent(t *testing.T) {
 	assertRefused(t, "silent", "timed out")
 }
@@ -236,6 +334,35 @@ func TestStartReportsTheUnsupportedProtocolAndOfferedVersions(t *testing.T) {
 
 func TestStartIncludesStderrWhenThePluginExitsBeforeReady(t *testing.T) {
 	assertRefused(t, "noisy", "boom on stderr")
+}
+
+func TestStartRefusesAReadyFrameWithALateSequenceNumber(t *testing.T) {
+	assertRefused(t, "lateseq", "ready sequence is 2, want 1")
+}
+
+func TestStartRefusesAReadyFrameThatSelectsAnUnofferedProtocol(t *testing.T) {
+	assertRefused(t, "v9ready", `ready selected protocol "v9"`)
+}
+
+func TestStartSanitizesStderrInTheErrorAndKeepsTheRawCopy(t *testing.T) {
+	home := pluginHome(t)
+	installFake(t, home, "escape")
+	found, err := Find("escape")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	session, err := Start(t.Context(), found, Options{Host: testHost, Stderr: &stderr, HandshakeTimeout: 2 * time.Second})
+	if session != nil {
+		_ = session.Close()
+		t.Fatal("Start() accepted escape")
+	}
+	if err == nil || !strings.Contains(err.Error(), "boom") || strings.ContainsAny(err.Error(), "\x1b\x07\r") || !utf8.ValidString(err.Error()) {
+		t.Errorf("Start() error = %q", err)
+	}
+	if stderr.String() != escapedStderr {
+		t.Errorf("stderr copy = %q, want %q", stderr.String(), escapedStderr)
+	}
 }
 
 func assertRefused(t *testing.T, name string, diagnostics ...string) {
@@ -288,6 +415,96 @@ func TestCloseLetsAHealthyPluginExitSuccessfully(t *testing.T) {
 	}
 }
 
+func TestCloseReturnsPromptlyWhenAHealthyPluginIgnoresEndOfInput(t *testing.T) {
+	session, _ := startFake(t, "lingering")
+	started := time.Now()
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > 6*time.Second {
+		t.Errorf("Close() took %s", elapsed)
+	}
+}
+
+func TestCloseReturnsTheSameExitErrorWithStderrOnRepeatedCalls(t *testing.T) {
+	session, _ := launchFake(t, "sulky")
+	err := session.Close()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 4 || !strings.Contains(err.Error(), "leaving badly") {
+		t.Fatalf("Close() = %v", err)
+	}
+	if again := session.Close(); again != err {
+		t.Errorf("second Close() = %v, want the same error as the first Close()", again)
+	}
+}
+
+func TestCloseStopsAPluginDescendantFromWritingItsHeartbeat(t *testing.T) {
+	session, _ := startFake(t, "echo")
+	file := filepath.Join(t.TempDir(), "heartbeat")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input, err := json.Marshal(map[string]string{"file": file})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := session.Call(t.Context(), "spawn", input, 2*time.Second, nil); err != nil || result == nil || result.Status != pluginproto.StatusOK {
+		t.Fatalf("Call(spawn) = %+v, %v", result, err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for heartbeatSize(t, file) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("descendant did not write a heartbeat")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	size := heartbeatSize(t, file)
+	time.Sleep(500 * time.Millisecond)
+	if got := heartbeatSize(t, file); got != size {
+		t.Errorf("heartbeat size grew from %d to %d after Close()", size, got)
+	}
+}
+
+func heartbeatSize(t *testing.T, path string) int64 {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Size()
+}
+
+func TestCloseFromAnotherGoroutineUnblocksACallWithoutADeadline(t *testing.T) {
+	session, _ := startFake(t, "echo")
+	progress, finished := make(chan struct{}), make(chan error, 1)
+	go func() {
+		_, err := session.Call(context.Background(), "wait", nil, 0, func(pluginproto.Event) { close(progress) })
+		finished <- err
+	}()
+	select {
+	case <-progress:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiting call did not report progress")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- session.Close() }()
+	select {
+	case err := <-finished:
+		if err == nil {
+			t.Error("Call() succeeded while its session was closing")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close() did not unblock Call()")
+	}
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStderrTailKeepsTheLastEightKiBAndCopiesTheWholeStream(t *testing.T) {
 	var mirror bytes.Buffer
 	tail := &stderrTail{mirror: &mirror}
@@ -307,6 +524,17 @@ func TestStderrTailKeepsTheLastEightKiBAndCopiesTheWholeStream(t *testing.T) {
 
 func startFake(t *testing.T, name string) (*Session, string) {
 	t.Helper()
+	session, exe := launchFake(t, name)
+	t.Cleanup(func() {
+		if err := session.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return session, exe
+}
+
+func launchFake(t *testing.T, name string) (*Session, string) {
+	t.Helper()
 	home := pluginHome(t)
 	exe := installFake(t, home, name)
 	found, err := Find(name)
@@ -317,10 +545,5 @@ func startFake(t *testing.T, name string) (*Session, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		if err := session.Close(); err != nil {
-			t.Error(err)
-		}
-	})
 	return session, exe
 }

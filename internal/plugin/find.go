@@ -28,14 +28,17 @@ type Found struct {
 // Find looks in $HRN_HOME/plugins/<name>/ first, then on PATH.
 func Find(name string) (Found, error) {
 	if !pluginproto.ValidName(name) {
-		return Found{}, fmt.Errorf("plugin %s: invalid name %q", name, name)
+		return Found{}, fmt.Errorf("plugin: invalid name %q", name)
+	}
+	if isReservedName(name) {
+		return Found{}, fmt.Errorf("plugin: %q is reserved for one of hrn's own programs", name)
 	}
 	root := filepath.Join(runpaths.Home(), "plugins")
-	if path := installedPath(root, name); isRegular(path) {
+	if path := installedPath(root, name); isExecutable(path) {
 		return Found{Name: name, Path: path, Installed: true}, nil
 	}
-	path, err := exec.LookPath("hrn-" + name)
-	if err != nil || !filepath.IsAbs(path) {
+	path, err := exec.LookPath(executableName(name))
+	if err != nil || !filepath.IsAbs(path) || (runtime.GOOS == "windows" && !strings.EqualFold(filepath.Ext(path), ".exe")) {
 		return Found{}, fmt.Errorf("%w: %s (install it with: %s)", ErrNotFound, name, InstallHint(name))
 	}
 	path, err = filepath.Abs(path)
@@ -55,10 +58,10 @@ func List() ([]Found, error) {
 	found := make(map[string]Found)
 	for _, entry := range entries {
 		name := entry.Name()
-		if !pluginproto.ValidName(name) {
+		if !pluginproto.ValidName(name) || isReservedName(name) {
 			continue
 		}
-		if path := installedPath(root, name); isRegular(path) {
+		if path := installedPath(root, name); isExecutable(path) {
 			found[name] = Found{Name: name, Path: path, Installed: true}
 		}
 	}
@@ -72,10 +75,10 @@ func List() ([]Found, error) {
 		}
 		for _, entry := range entries {
 			name := pathPluginName(entry.Name())
-			if !pluginproto.ValidName(name) || found[name].Name != "" {
+			if !pluginproto.ValidName(name) || isReservedName(name) || found[name].Name != "" {
 				continue
 			}
-			if path := filepath.Join(dir, entry.Name()); isRegular(path) {
+			if path := filepath.Join(dir, entry.Name()); isExecutable(path) {
 				found[name] = Found{Name: name, Path: path}
 			}
 		}
@@ -89,11 +92,15 @@ func List() ([]Found, error) {
 func InstallHint(name string) string { return "hrn plugin install " + name }
 
 func installedPath(root, name string) string {
+	return filepath.Join(root, name, executableName(name))
+}
+
+func executableName(name string) string {
 	base := "hrn-" + name
 	if runtime.GOOS == "windows" {
 		base += ".exe"
 	}
-	return filepath.Join(root, name, base)
+	return base
 }
 
 func pathPluginName(base string) string {
@@ -111,7 +118,16 @@ func pathPluginName(base string) string {
 	return name
 }
 
-func isRegular(path string) bool {
+func isExecutable(path string) bool {
 	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
+	return err == nil && info.Mode().IsRegular() && (runtime.GOOS == "windows" || info.Mode()&0o111 != 0)
+}
+
+func isReservedName(name string) bool {
+	switch name {
+	case "server", "worker", "fixture-model":
+		return true
+	default:
+		return false
+	}
 }

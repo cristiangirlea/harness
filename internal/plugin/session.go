@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -36,7 +37,7 @@ const (
 type Options struct {
 	Host             pluginproto.Program // Required host name and version.
 	Dir              string              // Empty inherits the current directory.
-	Stderr           io.Writer           // Optional synchronous copy of child diagnostics.
+	Stderr           io.Writer           // Optional synchronous, raw and unsanitised copy of child diagnostics.
 	HandshakeTimeout time.Duration       // Zero uses ten seconds.
 }
 
@@ -64,9 +65,10 @@ type Session struct {
 	closeOnce sync.Once
 	closeErr  error
 
-	callMu   sync.Mutex
-	callID   uint64
-	sequence int64
+	callMu       sync.Mutex
+	callID       uint64
+	sequence     int64
+	lateCancelID string
 
 	lines     chan pluginLine
 	writes    chan hostWrite
@@ -150,6 +152,10 @@ func startProcess(found Found, opts Options) (*Session, error) {
 	nowindow.Set(cmd)
 	cmd.Dir = opts.Dir
 	env := envpolicy.Filter(gitenv.WithoutRepoVars(os.Environ()))
+	env = slices.DeleteFunc(env, func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return strings.HasPrefix(strings.ToUpper(name), "HRN_")
+	})
 	guardDir, err := os.MkdirTemp("", "hrn-plugin-guard-*")
 	if err != nil {
 		return nil, err
@@ -299,6 +305,9 @@ func (s *Session) Call(ctx context.Context, capability string, input json.RawMes
 		callCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("plugin %s: call: %w", s.info.Name, err)
+	}
 	written, err := s.queueLine(line)
 	if err != nil {
 		return nil, fmt.Errorf("plugin %s: %w", s.info.Name, err)
@@ -306,6 +315,7 @@ func (s *Session) Call(ctx context.Context, capability string, input json.RawMes
 	s.callID++
 	result, err := s.readResult(callCtx, written, id, onEvent)
 	if err == nil {
+		s.lateCancelID = ""
 		return result, nil
 	}
 	if callCtx.Err() == nil || !errors.Is(err, callCtx.Err()) {
@@ -348,6 +358,10 @@ func (s *Session) readResult(ctx context.Context, written <-chan error, id strin
 			return nil, fmt.Errorf("sequence is %d, want %d", seq, s.sequence+1)
 		}
 		s.sequence = seq
+		if response, ok := frame.(*pluginproto.Error); ok && response.Code == pluginproto.CodeBadRequest && response.ID != "" && response.ID == s.lateCancelID {
+			s.lateCancelID = ""
+			continue
+		}
 		if frameID != "" && frameID != id {
 			return nil, fmt.Errorf("unexpected call ID %q, want %q", frameID, id)
 		}
@@ -377,6 +391,7 @@ func (s *Session) cancelCall(id string, cause error, onEvent func(pluginproto.Ev
 	}
 	result, err := s.readResult(ctx, written, id, onEvent)
 	if err == nil {
+		s.lateCancelID = id
 		return result, cause
 	}
 	s.breakSession()
@@ -626,5 +641,12 @@ func (t *stderrTail) Write(p []byte) (int, error) {
 func (t *stderrTail) String() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return string(t.data[:t.used])
+	valid := strings.ToValidUTF8(string(t.data[:t.used]), "�")
+	lines := strings.ReplaceAll(valid, "\r\n", "\n")
+	return strings.Map(func(r rune) rune {
+		if (r < 0x20 && r != '\n' && r != '\t') || (r >= 0x7f && r <= 0x9f) {
+			return '�'
+		}
+		return r
+	}, lines)
 }

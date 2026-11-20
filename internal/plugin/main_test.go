@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -17,7 +18,12 @@ import (
 	"github.com/cristiangirlea/harness/internal/tools"
 )
 
+const escapedStderr = "\x1b]0;owned\x07boom\rline\xff\n"
+
 func TestMain(m *testing.M) {
+	if len(os.Args) == 3 && os.Args[1] == "heartbeat" {
+		os.Exit(fakeHeartbeat(os.Args[2]))
+	}
 	base := filepath.Base(os.Args[0])
 	if strings.EqualFold(filepath.Ext(base), ".exe") {
 		base = base[:len(base)-4]
@@ -38,7 +44,7 @@ func fakePlugin(name string) int {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4096), 5<<20)
 	var seq int64
-	var waiting string
+	var waiting pluginproto.Call
 	for scanner.Scan() {
 		if _, err := fmt.Fprintln(log, scanner.Text()); err != nil {
 			return 1
@@ -68,6 +74,9 @@ func fakePlugin(name string) int {
 			case "noisy":
 				fmt.Fprintln(os.Stderr, "boom on stderr")
 				return 1
+			case "escape":
+				fmt.Fprint(os.Stderr, escapedStderr)
+				return 1
 			}
 			seq++
 			program := pluginproto.Program{Name: name, Version: "0.1.0"}
@@ -76,17 +85,32 @@ func fakePlugin(name string) int {
 			}
 			capabilities := []pluginproto.Capability{{Name: "wait"}}
 			if name == "echo" {
-				capabilities = []pluginproto.Capability{{Name: "echo"}, {Name: "wait"}, {Name: "env"}, {Name: "exit"}, {Name: "skip"}}
+				capabilities = []pluginproto.Capability{
+					{Name: "echo"}, {Name: "wait"}, {Name: "env"}, {Name: "exit"}, {Name: "skip"},
+					{Name: "late"}, {Name: "latebare"}, {Name: "spawn"}, {Name: "complain"}, {Name: "wrongid"}, {Name: "alien"},
+				}
 			}
-			fakeWrite(pluginproto.Ready{V: 1, Seq: seq, Type: pluginproto.TypeReady, Protocol: pluginproto.V1, Plugin: program, Capabilities: capabilities})
+			ready := pluginproto.Ready{V: 1, Seq: seq, Type: pluginproto.TypeReady, Protocol: pluginproto.V1, Plugin: program, Capabilities: capabilities}
+			switch name {
+			case "deaf":
+				ready.Capabilities = []pluginproto.Capability{{Name: "echo"}}
+			case "lateseq":
+				ready.Seq = 2
+			case "v9ready":
+				ready.Protocol = "v9"
+			}
+			fakeWrite(ready)
+			if name == "deaf" {
+				fakeStall()
+			}
 		case *pluginproto.Call:
 			result := pluginproto.Result{V: 1, Type: pluginproto.TypeResult, ID: frame.ID, Status: pluginproto.StatusOK}
 			switch frame.Capability {
-			case "echo", "wait":
+			case "echo", "wait", "late", "latebare":
 				seq++
 				fakeWrite(pluginproto.Event{V: 1, Seq: seq, Type: pluginproto.TypeEvent, ID: frame.ID, Kind: pluginproto.KindProgress, Text: "working"})
-				if frame.Capability == "wait" {
-					waiting = frame.ID
+				if frame.Capability != "echo" {
+					waiting = *frame
 					continue
 				}
 				result.Output = frame.Input
@@ -103,6 +127,21 @@ func fakePlugin(name string) int {
 				return 3
 			case "skip":
 				seq++
+			case "spawn":
+				if err := fakeSpawn(frame.Input); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 1
+				}
+			case "complain":
+				seq++
+				fakeWrite(pluginproto.Error{V: 1, Seq: seq, Type: pluginproto.TypeError, Code: pluginproto.CodeInternal, ID: frame.ID, Message: "something broke"})
+				continue
+			case "wrongid":
+				result.ID = "zz"
+			case "alien":
+				seq++
+				fakeWrite(map[string]any{"v": 1, "seq": seq, "type": "alien"})
+				continue
 			default:
 				return 1
 			}
@@ -110,27 +149,80 @@ func fakePlugin(name string) int {
 			result.Seq = seq
 			fakeWrite(result)
 		case *pluginproto.Cancel:
-			if waiting == "" || waiting != frame.ID {
+			if waiting.ID != frame.ID {
 				return 1
 			}
 			if name == "stubborn" {
 				continue
 			}
-			waiting = ""
+			late := waiting.Capability == "late" || waiting.Capability == "latebare"
 			seq++
-			fakeWrite(pluginproto.Result{V: 1, Seq: seq, Type: pluginproto.TypeResult, ID: frame.ID, Status: pluginproto.StatusCanceled})
+			result := pluginproto.Result{V: 1, Seq: seq, Type: pluginproto.TypeResult, ID: frame.ID, Status: pluginproto.StatusCanceled}
+			if late {
+				result.Status = pluginproto.StatusOK
+			}
+			fakeWrite(result)
+			if late {
+				seq++
+				response := pluginproto.Error{V: 1, Seq: seq, Type: pluginproto.TypeError, Code: pluginproto.CodeBadRequest, Message: "no call with that id is in flight"}
+				if waiting.Capability == "late" {
+					response.ID = frame.ID
+				}
+				fakeWrite(response)
+			}
+			waiting = pluginproto.Call{}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if name == "stubborn" && waiting != "" {
-		for {
-			time.Sleep(time.Second)
-		}
+	if name == "lingering" || (name == "stubborn" && waiting.ID != "") {
+		fakeStall()
+	}
+	if name == "sulky" {
+		fmt.Fprintln(os.Stderr, "leaving badly")
+		return 4
 	}
 	return 0
+}
+
+func fakeStall() {
+	for {
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func fakeSpawn(input json.RawMessage) error {
+	var request struct {
+		File string `json:"file"`
+	}
+	if err := json.Unmarshal(input, &request); err != nil {
+		return err
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	child := exec.Command(exe, "heartbeat", request.File)
+	if err := child.Start(); err != nil {
+		return err
+	}
+	return child.Process.Release()
+}
+
+func fakeHeartbeat(path string) int {
+	for {
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			return 1
+		}
+		_, writeErr := file.WriteString(".")
+		if closeErr := file.Close(); writeErr != nil || closeErr != nil {
+			return 1
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 type envEntry struct {

@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -45,9 +46,72 @@ func TestFindReportsAMissingPluginWithAnInstallHint(t *testing.T) {
 func TestFindRejectsInvalidNamesAsCallerErrors(t *testing.T) {
 	pluginHome(t)
 	for _, name := range []string{"../x", "A", "", strings.Repeat("a", 65)} {
-		if _, err := Find(name); err == nil || errors.Is(err, ErrNotFound) {
+		if _, err := Find(name); err == nil || errors.Is(err, ErrNotFound) || err.Error() != fmt.Sprintf("plugin: invalid name %q", name) {
 			t.Errorf("Find(%q) error = %v", name, err)
 		}
+	}
+}
+
+func TestDiscoveryIgnoresCommandScriptsOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows enables command scripts through PATHEXT")
+	}
+	pluginHome(t)
+	t.Setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hrn-x.cmd"), []byte("@echo off\r\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prependPath(t, dir)
+	if found, err := Find("x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Find() = %+v, %v", found, err)
+	}
+	if found, err := List(); err != nil || len(found) != 0 {
+		t.Errorf("List() = %+v, %v", found, err)
+	}
+}
+
+func TestDiscoveryIgnoresFilesWithoutAnExecuteBitOnUnix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not use Unix execute bits")
+	}
+	home := pluginHome(t)
+	dir := t.TempDir()
+	prependPath(t, dir)
+	installed := filepath.Join(home, "plugins", "echo", "hrn-echo")
+	if err := os.MkdirAll(filepath.Dir(installed), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(dir, "hrn-notes"), installed} {
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"notes", "echo"} {
+		if found, err := Find(name); !errors.Is(err, ErrNotFound) {
+			t.Errorf("Find(%q) = %+v, %v", name, found, err)
+		}
+	}
+	if found, err := List(); err != nil || len(found) != 0 {
+		t.Errorf("List() = %+v, %v", found, err)
+	}
+}
+
+func TestDiscoveryReservesTheNamesOfHrnsOwnPrograms(t *testing.T) {
+	home := pluginHome(t)
+	installFake(t, home, "server")
+	dir := t.TempDir()
+	prependPath(t, dir)
+	for _, name := range []string{"server", "worker", "fixture-model"} {
+		if name != "server" {
+			copyFake(t, dir, name)
+		}
+		if _, err := Find(name); err == nil || errors.Is(err, ErrNotFound) || err.Error() != fmt.Sprintf("plugin: %q is reserved for one of hrn's own programs", name) {
+			t.Errorf("Find(%q) error = %v", name, err)
+		}
+	}
+	if found, err := List(); err != nil || len(found) != 0 {
+		t.Errorf("List() = %+v, %v", found, err)
 	}
 }
 
