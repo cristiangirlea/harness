@@ -218,7 +218,7 @@ func TestANonPublicAnswerIsRefused(t *testing.T) {
 }
 
 func TestPublicAddressesPass(t *testing.T) {
-	for _, a := range []string{"93.184.216.34", "1.1.1.1", "2606:4700::1111", "::ffff:93.184.216.34", "64:ff9b::5db8:d822", "2002:5db8:d822::1"} {
+	for _, a := range []string{"93.184.216.34", "1.1.1.1", "2606:4700::1111", "::ffff:93.184.216.34", "64:ff9b::5db8:d822", "2002:5db8:d822::1", "2001:4860:4860::8888", "2001:1::1", "192.88.98.1", "192.88.100.1"} {
 		if !Public(netip.MustParseAddr(a)) {
 			t.Errorf("Public(%s) = false", a)
 		}
@@ -569,6 +569,9 @@ func TestConnectionsPastTheCapAreClosed(t *testing.T) {
 	if _, err := extra.Read(make([]byte, 1)); err == nil || isTimeout(err) {
 		t.Fatalf("read %v; want a connection past the cap closed at once", err)
 	}
+	if d := h.denials(); len(d) == 0 || d[0] != (denial{"", "connection cap reached"}) {
+		t.Errorf("denials %v; want the closed connection recorded", d)
+	}
 	held.Close()
 	// The slot comes back once the held handler sees the close; a retry that lands before is closed too.
 	deadline := time.Now().Add(5 * time.Second)
@@ -584,6 +587,11 @@ func TestConnectionsPastTheCapAreClosed(t *testing.T) {
 		if err == nil {
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("status %d once the slot was free", resp.StatusCode)
+			}
+			for _, d := range h.denials() {
+				if d != (denial{"", "connection cap reached"}) {
+					t.Errorf("denial %v", d)
+				}
 			}
 			return
 		}

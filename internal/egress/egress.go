@@ -215,6 +215,7 @@ func (p *Proxy) serve() {
 		case p.slots <- struct{}{}:
 		default:
 			// Reading a header to answer 503 would itself cost what the cap protects.
+			p.o.OnDeny("", "connection cap reached")
 			c.Close()
 			continue
 		}

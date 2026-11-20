@@ -125,6 +125,14 @@ func TestAnEgressRunPointsTheCLIAtItsOwnProxy(t *testing.T) {
 			}
 			want := got["HTTPS_PROXY"]
 			checkRunProxyURL(t, want, got["proxy"])
+			if u, err := url.Parse(want); err == nil {
+				pass, _ := u.User.Password()
+				for _, e := range events {
+					if pass != "" && strings.Contains(e.Text, pass) {
+						t.Errorf("an event carries the proxy token: kind %v", e.Kind)
+					}
+				}
+			}
 			for _, k := range []string{"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"} {
 				if got[k] != want {
 					t.Errorf("%s=%q, want %q", k, got[k], want)

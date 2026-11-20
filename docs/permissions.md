@@ -463,8 +463,9 @@ run's own on `127.0.0.1` right before an agent CLI, and stops it when the run en
 that ignores those variables reaches any host as before. Every run with it says
 `egress: advisory; N hosts allowed; a process that ignores proxy variables is not stopped`.
 
-- Only the run's child can use it: the proxy URL carries a random token per run
-  (`http://hrn:<token>@127.0.0.1:port`), and a request without it gets 407. The token is
+- It refuses other users and any process without the run's token: the proxy URL carries a
+  random token per run (`http://hrn:<token>@127.0.0.1:port`), and a request without it gets 407.
+  A process of the same user can read the child's environment, token included. The token is
   never logged. On codex with `--gate`, the gate's command server is handed the same variables.
 - Only `CONNECT host:443` is served; plain HTTP and other ports get 403.
 - The host must be one of the run's names or [the backend's](backends.md#egress-hosts-per-backend),
