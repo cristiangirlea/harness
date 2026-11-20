@@ -1,0 +1,1 @@
+{"v":1,"seq":1,"type":"error","code":"unsupported_protocol","message":"this plugin speaks v2 only","protocols":["v2"]}

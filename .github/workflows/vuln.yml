@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [., server]
+        module: [., server, contracts]
     defaults:
       run:
         working-directory: ${{ matrix.module }}

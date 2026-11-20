@@ -29,6 +29,10 @@ func TestFixtures(t *testing.T) {
 		{"leaf hiding windows", map[string]string{"internal/gitenv/a.go": `package gitenv; import _ "example.com/root/internal/nowindow"`}, "", ""},
 		{"server hiding windows", map[string]string{"server/go.mod": "module example.com/server\n", "server/platform/a.go": `package platform; import _ "example.com/root/internal/nowindow"`}, "", "server/platform -> internal/nowindow"},
 		{"nested module", map[string]string{"server/go.mod": "module example.com/server\n", "server/platform/a.go": `package platform; import _ "example.com/root/internal/agent"`}, "", "server/platform -> internal/agent"},
+		{"root cannot import contracts", map[string]string{"contracts/go.mod": "module example.com/contracts\n", "internal/agent/a.go": `package agent; import _ "example.com/contracts/pluginproto"`}, "", "agent -> contracts/pluginproto"},
+		{"contracts cannot import root", map[string]string{"contracts/go.mod": "module example.com/contracts\n", "contracts/a/a.go": `package a; import _ "example.com/root/internal/nowindow"`}, "", "contracts/a -> nowindow"},
+		{"server cannot import contracts", map[string]string{"contracts/go.mod": "module example.com/contracts\n", "server/go.mod": "module example.com/server\n", "server/platform/a.go": `package platform; import _ "example.com/contracts/pluginproto"`}, "", "server/platform -> contracts/pluginproto"},
+		{"contracts can import contracts", map[string]string{"contracts/go.mod": "module example.com/contracts\n", "contracts/a/a.go": `package a; import _ "example.com/contracts/b"`, "contracts/b/b.go": `package b`}, "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
