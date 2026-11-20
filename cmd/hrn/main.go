@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"slices"
 	"sort"
@@ -778,12 +779,33 @@ func cmdRuns(args []string) error {
 	}
 	fs := flag.NewFlagSet("runs", flag.ContinueOnError)
 	n := fs.Int("n", 20, "")
+	jsonOut := fs.Bool("json", false, "")
+	repo := fs.String("repo", "", "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	recs, err := runlog.List(*n)
+	repoSet := false
+	fs.Visit(func(f *flag.Flag) { repoSet = repoSet || f.Name == "repo" })
+	if repoSet && !runsRepoArg.MatchString(*repo) {
+		return fmt.Errorf("--repo wants OWNER/NAME, got %q", *repo)
+	}
+	if repoSet && !*jsonOut {
+		return errors.New("--repo needs --json")
+	}
+	var recs []runlog.Record
+	var err error
+	if repoSet {
+		want := "github.com/" + *repo
+		// Listing every record takes tens of seconds on a large home, so one repository's runs come from recent folders only.
+		recs, err = runlog.ListMatching(time.Now().Add(-runsRepoWindow), *n, func(r runlog.Record) bool { return strings.EqualFold(r.Repo, want) })
+	} else {
+		recs, err = runlog.List(*n)
+	}
 	if err != nil {
 		return err
+	}
+	if *jsonOut {
+		return printRunsJSON(recs)
 	}
 	if len(recs) == 0 {
 		fmt.Println("no runs yet")
@@ -798,6 +820,37 @@ func cmdRuns(args []string) error {
 			rec.Result.Duration.Round(time.Second), printable(tools.OneLine(mask.Text(rec.Task.Prompt), 70)))
 	}
 	return nil
+}
+
+// runsRepoWindow is how far back hrn runs --repo looks.
+const runsRepoWindow = 14 * 24 * time.Hour
+
+var runsRepoArg = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$`)
+
+type runJSON struct {
+	ID         string    `json:"id"`
+	Backend    string    `json:"backend"`
+	Status     string    `json:"status"`
+	Started    time.Time `json:"started"`
+	DurationMS int64     `json:"duration_ms"`
+	Repo       string    `json:"repo"`
+	Branch     string    `json:"branch"`
+}
+
+// printRunsJSON prints runs without their prompts or answers.
+func printRunsJSON(recs []runlog.Record) error {
+	runs := []runJSON{}
+	for _, rec := range recs {
+		r := runJSON{ID: rec.ID, Backend: rec.Backend, Status: "running", Started: rec.Started, Repo: rec.Repo, Branch: rec.Branch}
+		if rec.Done {
+			r.Status, r.DurationMS = string(rec.Result.Status), rec.Result.Duration.Milliseconds()
+		}
+		runs = append(runs, r)
+	}
+	return json.NewEncoder(os.Stdout).Encode(struct {
+		Version int       `json:"version"`
+		Runs    []runJSON `json:"runs"`
+	}{1, runs})
 }
 
 func cmdShow(args []string) error {
