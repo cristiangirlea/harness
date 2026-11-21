@@ -32,17 +32,17 @@ func Find(name string) (Found, error) {
 	if isReservedName(name) {
 		return Found{}, fmt.Errorf("plugin: %q is reserved for one of hrn's own programs", name)
 	}
-	root := filepath.Join(runpaths.Home(), "plugins")
+	root := Root()
 	if path := installedPath(root, name); isExecutable(path) {
 		return Found{Name: name, Path: path, Installed: true}, nil
 	}
 	// The same walk as List, so the two never disagree about what a plugin file is.
 	for _, dir := range pathDirs() {
-		if path := filepath.Join(dir, executableName(name)); isExecutable(path) {
+		if path := filepath.Join(dir, ExecutableName(name)); isExecutable(path) {
 			return Found{Name: name, Path: path}, nil
 		}
 	}
-	return Found{}, fmt.Errorf("%w: %s (install it with: %s)", ErrNotFound, name, InstallHint(name))
+	return Found{}, fmt.Errorf("%w: %s", ErrNotFound, name)
 }
 
 func pathDirs() []string {
@@ -53,7 +53,7 @@ func pathDirs() []string {
 
 // List returns plugins sorted by name, with installed plugins shadowing those on PATH.
 func List() ([]Found, error) {
-	root := filepath.Join(runpaths.Home(), "plugins")
+	root := Root()
 	entries, err := os.ReadDir(root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("plugin discovery: read installed plugins: %w", err)
@@ -89,13 +89,21 @@ func List() ([]Found, error) {
 }
 
 // InstallHint is the command that installs a plugin.
-func InstallHint(name string) string { return "hrn plugin install " + name }
-
-func installedPath(root, name string) string {
-	return filepath.Join(root, name, executableName(name))
+func InstallHint(name string, configured bool) string {
+	if configured {
+		return "hrn plugin install " + name
+	}
+	return "hrn plugin install OWNER/hrn-" + name
 }
 
-func executableName(name string) string {
+// Root holds installed plugins and same-volume staging directories.
+func Root() string { return filepath.Join(runpaths.Home(), "plugins") }
+
+func installedPath(root, name string) string {
+	return filepath.Join(root, name, ExecutableName(name))
+}
+
+func ExecutableName(name string) string {
 	base := "hrn-" + name
 	if runtime.GOOS == "windows" {
 		base += ".exe"

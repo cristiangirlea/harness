@@ -123,6 +123,35 @@ func TestFetchReleaseDownloadsTheAssetForThisPlatformAndChecksIt(t *testing.T) {
 	}
 }
 
+func TestFetchReleaseUsesTheTagEndpointAndCustomPlatformAsset(t *testing.T) {
+	const tag = "v1.2.3"
+	const endpoint = "/repos/owner/repo/releases/tags/" + tag
+	const asset = "hrn-echo_1.2.3_linux_arm64"
+	binary := []byte("plugin binary")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case endpoint:
+			fmt.Fprintf(w, `{"tag_name":%q,"assets":[{"name":%q,"browser_download_url":"http://%s/binary"},{"name":"SHA256SUMS","browser_download_url":"http://%s/sums"}]}`, tag, asset, r.Host, r.Host)
+		case "/binary":
+			w.Write(binary)
+		case "/sums":
+			fmt.Fprintf(w, "%x  %s\n", sha256.Sum256(binary), asset)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	src := ReleaseSource{API: srv.URL + endpoint, GOOS: "linux", GOARCH: "arm64",
+		Asset: func(tag, goos, goarch string) string {
+			return "hrn-echo_" + strings.TrimPrefix(tag, "v") + "_" + goos + "_" + goarch
+		},
+	}
+	path, gotTag, err := src.Fetch(context.Background(), t.TempDir())
+	if err != nil || filepath.Base(path) != asset || gotTag != tag {
+		t.Fatalf("Fetch = %q, %q, %v", path, gotTag, err)
+	}
+}
+
 func TestFetchReleaseRefusesAChecksumMismatch(t *testing.T) {
 	srv, _ := fakeGitHub(t, []byte("MZ tampered"), fmt.Sprintf(sumsFixture, strings.Repeat("00", 32)))
 	dir := t.TempDir()
@@ -319,25 +348,50 @@ func TestFetchReleaseSendsNoTokenToTheAssetHost(t *testing.T) {
 	}
 }
 
-func TestFetchReleaseRefusesATagThatLeavesTheDirectory(t *testing.T) {
+func TestFetchReleaseRefusesUnsafeCustomAssetNames(t *testing.T) {
+	srv, _ := fakeGitHub(t, nil, "")
+	for _, name := range []string{"../x", "a:b", ""} {
+		t.Run(strconv.Quote(name), func(t *testing.T) {
+			src := ReleaseSource{
+				API: srv.URL + "/repos/cristiangirlea/harness/releases/latest", Client: srv.Client(),
+				Asset: func(_, _, _ string) string { return name },
+			}
+			dir := t.TempDir()
+			_, _, err := src.Fetch(t.Context(), dir)
+			want := fmt.Sprintf("invalid asset name %q", name)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("Fetch error = %v, want %q", err, want)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("download directory = %v, %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestFetchReleaseRefusesTagsThatAreNotPlainVersions(t *testing.T) {
 	for _, tag := range []string{"../../evil", "v..", "a/b", `a\b`} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			name := AssetName(tag, "windows", "amd64")
-			json.NewEncoder(w).Encode(map[string]any{"tag_name": tag, "assets": []map[string]any{
-				{"name": name, "browser_download_url": "http://" + r.Host + "/dl/x"},
-				{"name": "SHA256SUMS", "browser_download_url": "http://" + r.Host + "/dl/SHA256SUMS"},
-			}})
-		}))
-		src := ReleaseSource{API: srv.URL + "/latest", Client: srv.Client(), GOOS: "windows", GOARCH: "amd64"}
-		dir := t.TempDir()
-		_, _, err := src.Fetch(context.Background(), dir)
-		srv.Close()
-		if err == nil || !strings.Contains(err.Error(), "tag") {
-			t.Fatalf("%q: err = %v; want a refusal naming the tag", tag, err)
-		}
-		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
-			t.Fatalf("%q: something was written into the download directory: %v", tag, entries)
-		}
+		t.Run(strconv.Quote(tag), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode(map[string]string{"tag_name": tag})
+			}))
+			t.Cleanup(srv.Close)
+			src := ReleaseSource{
+				API: srv.URL + "/latest", Client: srv.Client(),
+				Asset: func(_, _, _ string) string { return "safe-asset" },
+			}
+			dir := t.TempDir()
+			_, _, err := src.Fetch(t.Context(), dir)
+			want := fmt.Sprintf("tag %q is not a plain version tag", tag)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Errorf("Fetch error = %v, want %q", err, want)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("download directory = %v, %v", entries, err)
+			}
+		})
 	}
 }
 

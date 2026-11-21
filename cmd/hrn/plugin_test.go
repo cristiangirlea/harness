@@ -65,8 +65,13 @@ func fakePluginMain(name string) int {
 				}
 				return 2
 			}
-			if name != "fixture" {
+			if name != "fixture" && name != "echo" {
 				return 1
+			}
+			if name == "echo" {
+				if override, err := os.ReadFile(".plugin-fixture-name"); err == nil {
+					name = string(override)
+				}
 			}
 			err = encoder.Encode(pluginproto.Ready{
 				V: 1, Seq: seq, Type: pluginproto.TypeReady, Protocol: pluginproto.V1,
@@ -274,7 +279,7 @@ func TestPluginInfoShowsTheHandshakeAndExecutableHashWithoutRecordingARun(t *tes
 		t.Fatalf("info JSON: %s", out)
 	}
 	_, _, err = runPluginCommand(t, "", 1, "info", "missing")
-	if err == nil || !strings.Contains(err.Error(), "hrn plugin install missing") {
+	if err == nil || !strings.Contains(err.Error(), "hrn plugin install OWNER/hrn-missing") {
 		t.Fatalf("missing info: %v", err)
 	}
 	requireNoPluginRuns(t)
@@ -549,7 +554,7 @@ func TestPluginCallEscapesCharactersATerminalMayActOnWithoutChangingTheData(t *t
 func TestPluginCallDoesNotRecordMissingPluginsOrRefusedHandshakes(t *testing.T) {
 	home := useEmptyPluginHome(t)
 	_, _, err := runPluginCommand(t, "", 1, "call", "missing", "echo")
-	if err == nil || !strings.Contains(err.Error(), "hrn plugin install missing") {
+	if err == nil || !strings.Contains(err.Error(), "hrn plugin install OWNER/hrn-missing") {
 		t.Fatalf("missing call: %v", err)
 	}
 	requireNoPluginRuns(t)

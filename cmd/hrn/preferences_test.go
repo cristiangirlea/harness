@@ -296,6 +296,41 @@ func TestBackendsResetKeepsTheWorkMapGitHubSetting(t *testing.T) {
 	}
 }
 
+func TestBackendsResetKeepsOnlyPluginPolicyOrRemovesTheFile(t *testing.T) {
+	for _, tc := range []struct{ name, plugins string }{
+		{"with plugin policy", `"plugins":{"install":"off","sources":{"echo":"owner/hrn-echo"},"allow":["owner/*"]}`},
+		{"backend fields only", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HRN_HOME", home)
+			prefstest.OrgPath(t)
+			path := filepath.Join(home, "backends.json")
+			input := `"enabled":["claude"],"default":"claude","billing":"plan"`
+			if tc.plugins != "" {
+				input += "," + tc.plugins
+			}
+			prefstest.Write(t, path, "{"+input+"}")
+			if _, err := captureStdout(t, func() error { return cmdBackends([]string{"reset"}) }); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(path)
+			if tc.plugins == "" {
+				if !os.IsNotExist(err) {
+					t.Fatalf("reset should remove %s: read error = %v", path, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "{" + tc.plugins + "}"; !jsonEqual(data, want) {
+				t.Fatalf("reset = %s, want %s", data, want)
+			}
+		})
+	}
+}
+
 func TestBackendsSetsShowsAndResetsTheLocalAPI(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("ANTHROPIC_API_KEY", "")

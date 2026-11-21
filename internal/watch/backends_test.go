@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
@@ -533,6 +534,56 @@ func TestBackendsSavePreservesWorkMapRepos(t *testing.T) {
 		if w.Code != 204 || err != nil || !reflect.DeepEqual(p.WorkMapRepos, []string{"original"}) {
 			t.Fatalf("save: %d %+v %v", w.Code, p, err)
 		}
+	}
+}
+
+func TestBackendsSaveKeepsTheStoredPluginPolicy(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"default change", `{"enabled":["codex","claude"],"default":"codex"}`},
+		{"submitted plugin policy", `{"enabled":["codex","claude"],"default":"codex","plugins":{"install":"on","allow":["injected/*"]}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HRN_HOME", home)
+			prefstest.OrgPath(t)
+			p := prefs.Prefs{
+				EnabledNames: []string{"codex", "claude"},
+				DefaultName:  "claude",
+				Plugins: &prefs.PluginPrefs{
+					Install: "off",
+					Sources: map[string]string{"echo": "owner/hrn-echo"},
+					Allow:   []string{"owner/*", "another/hrn-echo"},
+				},
+			}
+			if err := prefs.Save(home, p); err != nil {
+				t.Fatal(err)
+			}
+			read := func() map[string]json.RawMessage {
+				t.Helper()
+				data, err := os.ReadFile(filepath.Join(home, "backends.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(data, &fields); err != nil {
+					t.Fatal(err)
+				}
+				return fields
+			}
+			want := read()["plugins"]
+			if len(want) == 0 {
+				t.Fatal("missing plugin policy in test fixture")
+			}
+			h := New(t.Context(), Options{Key: "test-key"})
+			w := backendRequest(h, "POST", "/backends", "127.0.0.1:1234", "127.0.0.1:8089", "test-key", "", backendBodyForTest(t, tc.body))
+			if w.Code != http.StatusNoContent {
+				t.Fatalf("save = %d: %s", w.Code, w.Body)
+			}
+			got := read()
+			if string(got["plugins"]) != string(want) || string(got["default"]) != `"codex"` {
+				t.Fatalf("saved plugins = %s, want %s; default = %s, want codex", got["plugins"], want, got["default"])
+			}
+		})
 	}
 }
 
