@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -268,16 +269,18 @@ func cmdBotStatsJSON(repo string) error {
 	}
 	now := time.Now().UTC()
 	// Familiarity needs only the records, so it runs beside the fold to keep the call within readers' timeouts.
-	familiarityDone := make(chan *statsFamiliarity, 1)
-	// Familiarity walks every run record; a caller asking for one repository wants a quick answer.
+	var familiarity *statsFamiliarity
+	var familiarityRead sync.WaitGroup
+	defer familiarityRead.Wait()
 	if settings.On() && repo == "" {
-		go func() { familiarityDone <- readStatsFamiliarity(records, now) }()
-	} else {
-		familiarityDone <- nil
+		familiarityRead.Add(1)
+		go func() {
+			defer familiarityRead.Done()
+			familiarity = readStatsFamiliarity(records, now)
+		}()
 	}
 	// Readers of the JSON form get current numbers, so new records are folded in; the practice rebuild stays with the text form.
 	if err := game.Fold(records); err != nil {
-		<-familiarityDone
 		return err
 	}
 	if !settings.On() {
@@ -318,7 +321,8 @@ func cmdBotStatsJSON(repo string) error {
 	for _, badge := range totals.Badges {
 		badges = append(badges, game.BadgeName(badge.Key))
 	}
-	familiarity := <-familiarityDone
+	// Familiarity walks every run record, so a caller asking for one repository gets none.
+	familiarityRead.Wait()
 	result := struct {
 		Version   int    `json:"version"`
 		Enabled   bool   `json:"enabled"`

@@ -638,12 +638,13 @@ func TestBotStatsJSONPrintsNothingWhenTheRecordsCannotBeFolded(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HRN_HOME", home)
 	oldRecords(t, home)
-	if err := os.WriteFile(game.Dir(), []byte("not a directory"), 0o644); err != nil {
+	// Settings still load, so the failure comes from the fold's ledger read.
+	if err := os.MkdirAll(filepath.Join(game.Dir(), "events.jsonl"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats", "--json"}) })
-	if err == nil || len(out) != 0 {
-		t.Errorf("hrn bot stats --json with no ledger folder = %v, printed %q; want an error and no JSON", err, out)
+	if err == nil || !strings.Contains(err.Error(), "events.jsonl") || len(out) != 0 {
+		t.Errorf("hrn bot stats --json with an unreadable ledger = %v, printed %q; want an error naming events.jsonl and no JSON", err, out)
 	}
 }
 
