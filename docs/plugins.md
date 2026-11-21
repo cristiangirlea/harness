@@ -7,10 +7,6 @@ JSON lines on stdin and stdout. This page is the wire contract. Its Go types and
 are the `contracts/pluginproto` package of the nested module
 `github.com/cristiangirlea/harness/contracts`, which any repository can import.
 
-hrn does not start plugins yet: discovery, installation and the policy a plugin runs under come
-with the plugin host. A plugin written against this page and the golden fixtures will work with
-it.
-
 ## Framing
 
 - stdin and stdout carry UTF-8 JSON, one object per line, ended by `\n`. A reader also accepts
@@ -166,6 +162,39 @@ field, a changed meaning or a new error code is a new version: the host adds it 
 Within version 1 an unknown `type` is an error. A plugin answers a host line of unknown type
 with `error` code `bad_request` and keeps reading. A host that reads a plugin line of unknown
 type stops the plugin and fails the call in flight.
+
+## Plugins in hrn
+
+hrn looks for `$HRN_HOME/plugins/<name>/hrn-<name>` first, then in the absolute directories
+on `PATH`. The executable has an `.exe` suffix on Windows. On Unix the file must be
+executable. The names `server`, `worker` and `fixture-model` are reserved for hrn.
+`hrn plugin install` is unavailable. Place the executable in one of the search locations.
+
+`hrn plugin list` lists the executables it finds without starting them. `hrn plugin info <name>`
+starts the plugin to learn its version, protocol and capabilities, then closes it without
+recording a run.
+
+The child receives no arguments, starts in the current directory and gets a filtered
+environment. hrn removes its own `HRN_` variables and adds the guard's environment
+variables. The child has its own process tree and starts without opening a console window.
+The handshake has a 10-second limit. After sending `cancel`, hrn gives the plugin two
+seconds to return a result. At close, hrn closes the input stream and gives the plugin
+three seconds to exit.
+
+`hrn plugin call <name> <capability>` accepts a JSON object via `--input` or `--input-file`.
+Use `--input-file -` to read standard input. The whole `call` line, with the input compacted,
+must fit in 4 MiB, so the input must be a little smaller than that. The call deadline defaults
+to 10 minutes. Use `--timeout 0` to disable it. The command prints progress and the run ID on
+standard error. Successful output goes to standard output. All three commands accept `--json`
+for machine-readable output. In JSON printed by these commands, the control characters JSON
+allows raw (U+007F to U+009F) and the bidirectional controls (U+061C, U+200E, U+200F,
+U+202A to U+202E and U+2066 to U+2069) are written as `\u` escapes, so the data is unchanged
+and a terminal cannot act on them.
+
+After a successful handshake, `hrn plugin call` saves a [run record](run-records.md#plugin-calls)
+with backend `plugin`. Plugin calls cannot be continued. A missing plugin, a refused handshake,
+invalid or oversized input, or a capability the plugin does not offer stops the command with
+no run recorded.
 
 ## Using the Go package
 

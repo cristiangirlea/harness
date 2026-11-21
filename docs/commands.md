@@ -56,6 +56,9 @@
 | `hrn ws free [PATH]` | Give the slot back once its work is pushed: HEAD detached, lease removed (see [Free](workspaces.md#free)). |
 | `hrn ws list [--repo DIR] [--json]` | The slots: who holds each, since when, its branch and what is in it. Text output ends with the limit and its source; JSON remains an array of slot rows (see [List](workspaces.md#list)). |
 | `hrn ws issues [--json] [--free owner/name#N]` | The issue leases: state (`held`, `held by pull request`, `stale`, `released`), holder, run, backend, branch, pull request and since; `--free` removes one no running process holds (see [Issue leases](workspaces.md#issue-leases)). |
+| `hrn plugin list [--json]` | List available plugins without starting them (see [Plugins](plugins.md#plugins-in-hrn)). |
+| `hrn plugin info <name> [--json]` | Show a plugin's version, protocol, executable hash and capabilities (see [Plugins](plugins.md#plugins-in-hrn)). |
+| `hrn plugin call <name> <capability> [--input JSON \| --input-file FILE] [--timeout D] [--json]` | Call a capability and record the run (see [Plugins](plugins.md#plugins-in-hrn)). |
 | `hrn scripts hint` | A Claude Code PreToolUse hook that reads the payload on stdin and names the kept script whose `matches:` header covers the inline script a command is about to run; advice only, silent otherwise (see [The hint hook](scripts.md#the-hint-hook)). |
 
 For slot cache trimming, cap thresholds and lock safety, see [Build caches](batches.md#build-caches).

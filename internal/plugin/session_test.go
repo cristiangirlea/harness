@@ -80,6 +80,9 @@ func TestCallReturnsTheCanceledResultAndTheTimeoutError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "call c1 timed out after 300ms") || result == nil || result.Status != pluginproto.StatusCanceled {
 		t.Fatalf("Call() = %+v, %v", result, err)
 	}
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "%!") {
+		t.Errorf("timeout error %q must wrap the deadline and nothing else", err)
+	}
 	if err := session.Close(); err != nil {
 		t.Fatal(err)
 	}
