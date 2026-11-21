@@ -327,6 +327,12 @@ func TestAPluginCallEarnsNothingAndMarksNoRepository(t *testing.T) {
 func TestPracticeLeavesOutRepositoriesOnlyAPluginCallRanIn(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	called, worked := filepath.Join(t.TempDir(), "called"), filepath.Join(t.TempDir(), "worked")
+	for _, dir := range []string{called, worked} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		gitIn(t, dir, "init", "-q")
+	}
 	writeRun(t, run(t, "p1", runlog.PluginBackend, called, "2026-10-26T10:00:00Z", agent.StatusOK))
 	writeRun(t, run(t, "a1", "claude", worked, "2026-10-26T10:00:00Z", agent.StatusOK))
 	src, err := NewGitHubSource()
