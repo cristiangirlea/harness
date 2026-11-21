@@ -380,6 +380,28 @@ batch running even when the batch record itself is over an hour old, and a runni
 gate has the batch save its record again every ten minutes. See
 [watch states](watch.md) for the display and Ada behaviour.
 
+## Plugin calls
+
+`hrn plugin call` records `backend: plugin` in `task.json` and `result.json` after a successful
+handshake. The result records a known zero for model usage and cost. Both files include
+the `plugin` object. Calls cannot be continued. See [Plugins](plugins.md#plugins-in-hrn).
+
+| Field | Meaning |
+|---|---|
+| `name` | Plugin name. |
+| `version` | Version announced by the plugin. |
+| `protocol` | Protocol selected in the handshake. |
+| `capability` | Capability requested by the call. |
+| `sha256` | SHA-256 of the executable before it started. |
+| `path` | Absolute path of the executable. |
+| `installed` | True when found under `$HRN_HOME/plugins`. Omitted for executables on `PATH`. |
+| `input` | Input JSON object, omitted when absent or larger than 256 KiB. |
+| `input_truncated` | True when the input exceeded the record limit and was omitted. |
+| `reported_evidence` | Evidence supplied by the plugin, written to `result.json` when present. |
+
+`reported_evidence` entries may include `kind`, `source`, `hash` and `excerpt`.
+`result.evidence` holds evidence verified by hrn.
+
 ## Ownership and execution flow
 
 Run records (`task.json`, `result.json`) and batch records carry an optional `owner`: who the

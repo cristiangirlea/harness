@@ -7,10 +7,6 @@ JSON lines on stdin and stdout. This page is the wire contract. Its Go types and
 are the `contracts/pluginproto` package of the nested module
 `github.com/cristiangirlea/harness/contracts`, which any repository can import.
 
-hrn does not start plugins yet: discovery, installation and the policy a plugin runs under come
-with the plugin host. A plugin written against this page and the golden fixtures will work with
-it.
-
 ## Framing
 
 - stdin and stdout carry UTF-8 JSON, one object per line, ended by `\n`. A reader also accepts
@@ -63,7 +59,9 @@ host that wants two calls at once starts two processes.
 - `protocol` is the first entry of `hello.protocols` that the plugin speaks.
 - `plugin.name` is the name in the executable `hrn-<name>`: 1 to 64 characters from `[a-z0-9-]`,
   starting with a letter. `plugin.version` is 1 to 64 characters from `[A-Za-z0-9._+-]`. The host
-  program in `hello` follows the same two rules.
+  program in `hello` follows the same two rules. hrn never treats `server`, `worker` or
+  `fixture-model` as plugin names: programs of its own are called `hrn-server`, `hrn-worker` and
+  `hrn-fixture-model`.
 - `capabilities` has 1 to 64 entries. A capability's `name` follows the plugin name's rule and
   is unique in the list; its optional `description` is at most 256 bytes.
 
@@ -100,7 +98,11 @@ A plugin that speaks none of the offered versions writes one `error` line with c
 
 The plugin stops the call and still writes its `result`, with status `canceled` if it stopped
 early. A `cancel` for an `id` that is not in flight gets an `error` line with code
-`bad_request`.
+`bad_request` that carries that `id`.
+
+A `cancel` can cross a `result` in the pipe: the plugin finishes, then reads a `cancel` for a
+call that is over. It answers with that `error` line before it writes any line of the next call,
+and the host ignores that one line.
 
 ### `result` (plugin, last line of a call)
 
@@ -160,6 +162,66 @@ field, a changed meaning or a new error code is a new version: the host adds it 
 Within version 1 an unknown `type` is an error. A plugin answers a host line of unknown type
 with `error` code `bad_request` and keeps reading. A host that reads a plugin line of unknown
 type stops the plugin and fails the call in flight.
+
+## Plugins in hrn
+
+hrn looks for `$HRN_HOME/plugins/<name>/hrn-<name>` first, then in the absolute directories
+on `PATH`. The executable has an `.exe` suffix on Windows. On Unix the file must be
+executable. The names `server`, `worker` and `fixture-model` are reserved for hrn.
+`hrn plugin install <name|owner/repo>[@tag] [--name NAME] [--json]` installs a binary from a
+GitHub release. With a repository, hrn derives the plugin name from the repository name by
+removing a leading `hrn-`. Use `--name` to specify another name. A short name needs a repository
+in the effective [plugin settings](backends.md#plugin-settings). Use `@tag` to select a release.
+Without it, hrn uses the latest release. The tag can contain up to 64 ASCII letters, digits,
+dots, underscores, plus signs and hyphens, and cannot start with a dot.
+
+Publish `hrn-<name>_<version>_<os>_<arch>` with an `.exe` suffix on Windows, plus a
+`SHA256SUMS` file listing the binary's digest. The version in the asset name is the release tag
+with a leading `v` removed. hrn verifies the checksum, stages the executable under
+`$HRN_HOME/plugins/`, and starts it for a handshake that must report the requested name.
+A failed download, checksum or handshake cleans up staging and leaves any previous
+installation in place.
+
+A successful install can replace an existing copy. It writes `install.json` beside the
+executable with the source repository, release tag, asset name, SHA-256 digest and UTC
+installation time. The command prints the installed release, executable path and capabilities
+and creates no run record. With `--json`, stdout contains `name`, `version`, `tag`, `source`,
+`path`, `sha256` and `capabilities`.
+
+Installation can be disabled or restricted to approved repositories in the plugin settings.
+You can also place a plugin executable in one of the usual search locations. The settings
+govern installation only: hrn still runs a plugin it finds on `PATH` or one installed earlier.
+
+`hrn plugin list` lists the executables it finds without starting them and shows the repository
+for installed plugins with readable installation metadata. `hrn plugin info <name>`
+starts the plugin to learn its version, protocol and capabilities, then closes it without
+recording a run.
+
+The child receives no arguments, starts in the current directory and gets a filtered
+environment. hrn removes its own `HRN_` variables and adds the guard's environment
+variables ([the guard for every backend](permissions.md#the-guard-for-every-backend)): variables
+named as secrets are withheld, the gh, cloud, container and npm logins point at an empty folder,
+and `git push` fails. The child still runs with the user's file access and network, so files
+under the home folder, such as ssh keys, stay readable. The child has its own process tree and
+starts without opening a console window.
+The handshake has a 10-second limit. After sending `cancel`, hrn gives the plugin two
+seconds to return a result. At close, hrn closes the input stream and gives the plugin
+three seconds to exit.
+
+`hrn plugin call <name> <capability>` accepts a JSON object via `--input` or `--input-file`.
+Use `--input-file -` to read standard input. The whole `call` line, with the input compacted,
+must fit in 4 MiB, so the input must be a little smaller than that. The call deadline defaults
+to 10 minutes. Use `--timeout 0` to disable it. The command prints progress and the run ID on
+standard error. Successful output goes to standard output. All three commands accept `--json`
+for machine-readable output. In JSON printed by these commands, the control characters JSON
+allows raw (U+007F to U+009F) and the bidirectional controls (U+061C, U+200E, U+200F,
+U+202A to U+202E and U+2066 to U+2069) are written as `\u` escapes, so the data is unchanged
+and a terminal cannot act on them.
+
+After a successful handshake, `hrn plugin call` saves a [run record](run-records.md#plugin-calls)
+with backend `plugin`. Plugin calls cannot be continued. A missing plugin, a refused handshake,
+invalid or oversized input, or a capability the plugin does not offer stops the command with
+no run recorded.
 
 ## Using the Go package
 

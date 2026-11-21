@@ -13,6 +13,9 @@ import (
 // test binary standing in for another program, keeps what it was started with.
 func TestMain(m *testing.M) {
 	name := strings.TrimSuffix(strings.ToLower(filepath.Base(os.Args[0])), ".exe")
+	if name, ok := strings.CutPrefix(name, "hrn-"); ok {
+		os.Exit(fakePluginMain(name))
+	}
 	if slices.Contains([]string{"claude", "codex", "gemini", "opencode", "agy"}, name) {
 		log := os.Getenv("HRN_ZERO_PROVIDER_SHIM_LOG")
 		if log == "" {

@@ -308,6 +308,40 @@ func TestAReviewWithoutABlockingFindingEarnsTwenty(t *testing.T) {
 	}
 }
 
+func TestAPluginCallEarnsNothingAndMarksNoRepository(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := filepath.Join(t.TempDir(), "app")
+	call := run(t, "p1", runlog.PluginBackend, dir, "2026-10-26T10:00:00Z", agent.StatusOK)
+	call.Task.Timeout = agent.Duration(10 * time.Minute)
+	agentRun := call
+	agentRun.ID, agentRun.Backend, agentRun.Result.Backend = "a1", "claude", "claude"
+	events, err := Derive(Records{Runs: []runlog.Record{writeRun(t, call)}})
+	if err != nil || len(events) != 0 {
+		t.Fatalf("plugin call derived %+v, %v; want nothing", events, err)
+	}
+	if got := derived(t, Records{Runs: []runlog.Record{writeRun(t, agentRun)}}, "ceiling:"); len(got) != 1 {
+		t.Fatalf("the same run on an agent backend derived %v, want one ceiling event", got)
+	}
+}
+
+func TestPracticeLeavesOutRepositoriesOnlyAPluginCallRanIn(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	called, worked := filepath.Join(t.TempDir(), "called"), filepath.Join(t.TempDir(), "worked")
+	writeRun(t, run(t, "p1", runlog.PluginBackend, called, "2026-10-26T10:00:00Z", agent.StatusOK))
+	writeRun(t, run(t, "a1", "claude", worked, "2026-10-26T10:00:00Z", agent.StatusOK))
+	src, err := NewGitHubSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roots []string
+	for _, root := range src.roots {
+		roots = append(roots, root)
+	}
+	if want := []string{repoRoot(worked)}; !reflect.DeepEqual(roots, want) {
+		t.Fatalf("practice roots %v, want %v", roots, want)
+	}
+}
+
 func TestARunInsideItsCeilingEarnsFive(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	dir := filepath.Join(t.TempDir(), "app")

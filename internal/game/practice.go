@@ -562,7 +562,7 @@ func NewGitHubSourceFrom(r Records) *GitHubSource {
 			roots[finder.repoName(root)] = root
 		}
 	}
-	for _, rec := range r.Runs {
+	for _, rec := range agentRuns(r.Runs) {
 		add(rec.Task.Dir)
 	}
 	for _, b := range r.Batches {

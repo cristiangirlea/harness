@@ -115,6 +115,7 @@ func (s *server) saveBackends(w http.ResponseWriter, r *http.Request) {
 	p.WorkMapRepos, p.WorkMapGitHub, p.WorkMapSessions, p.LocalAPI = had.WorkMapRepos, had.WorkMapGitHub, had.WorkMapSessions, had.LocalAPI
 	p.Billing, p.BillingMaxCostUSD, p.Providers = had.Billing, had.BillingMaxCostUSD, had.Providers
 	p.Accounts, p.AccountReservePercent = had.Accounts, had.AccountReservePercent
+	p.Plugins = had.Plugins
 
 	if org.Exists() {
 		if _, _, err := prefs.Merge(org, *p); err != nil {

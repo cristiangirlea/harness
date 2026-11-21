@@ -69,6 +69,7 @@ type ReleaseSource struct {
 	Token  string
 	GOOS   string
 	GOARCH string
+	Asset  func(tag, goos, goarch string) string
 }
 
 type releaseDoc struct {
@@ -112,22 +113,26 @@ func (s ReleaseSource) Fetch(ctx context.Context, dir string) (path, tag string,
 	}
 	body, err := s.get(ctx, client, api, "application/vnd.github+json", true)
 	if err != nil {
-		return "", "", fmt.Errorf("latest release: %w", err)
+		return "", "", fmt.Errorf("release: %w", err)
 	}
 	var doc releaseDoc
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return "", "", fmt.Errorf("latest release: %w", err)
+		return "", "", fmt.Errorf("release: %w", err)
 	}
 	if doc.TagName == "" {
-		return "", "", errors.New("latest release: no tag_name in the response")
+		return "", "", errors.New("release: no tag_name in the response")
 	}
 	// Untrusted tags must not redirect writes outside dir.
 	if strings.ContainsAny(doc.TagName, `/\`) || strings.Contains(doc.TagName, "..") {
-		return "", "", fmt.Errorf("latest release: tag %q is not a plain version tag", doc.TagName)
+		return "", "", fmt.Errorf("release: tag %q is not a plain version tag", doc.TagName)
 	}
-	name := AssetName(doc.TagName, goos, goarch)
-	if filepath.Base(name) != name {
-		return "", "", fmt.Errorf("latest release: tag %q is not a plain version tag", doc.TagName)
+	asset := s.Asset
+	if asset == nil {
+		asset = AssetName
+	}
+	name := asset(doc.TagName, goos, goarch)
+	if !filepath.IsLocal(name) || filepath.Base(name) != name || name == "." || strings.ContainsAny(name, `/\:`) {
+		return "", "", fmt.Errorf("release: invalid asset name %q for tag %q", name, doc.TagName)
 	}
 	var binURL, sumsURL string
 	for _, a := range doc.Assets {

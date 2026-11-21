@@ -189,6 +189,7 @@ func readAll(reads []func()) {
 }
 
 func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Familiarity, error) {
+	records.Runs = agentRuns(records.Runs)
 	roots := map[string]string{}
 	var order []string
 	touched := map[string]map[string]bool{}
