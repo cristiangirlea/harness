@@ -120,7 +120,8 @@ reached, some repositories were skipped`). Reads are kept in `familiarity-cache.
 next call gets further: a batch's evidence is kept while the batch record exists, since its
 full commit IDs fix it, and a batch whose commits git refuses (pruned) is read again after a
 day. A repository's recent commits are reused for 10 minutes, and a copy up to a day old
-stands in when a fresh read does not finish in time or git refuses it. Familiarity is
+stands in when a fresh read does not finish in time or git refuses it (a refusal is kept
+for 10 minutes like an answer). Familiarity is
 therefore usually up to 10 minutes old, and up to a day when a read runs out of time.
 
 ## Levels and badges

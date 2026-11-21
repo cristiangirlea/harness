@@ -531,13 +531,21 @@ func TestFamiliarityKeepsRefusedBatchEvidenceForADay(t *testing.T) {
 					t.Fatalf("refusal not dated: %+v", e)
 				}
 			}
+			before, err := os.Stat(filepath.Join(Dir(), familiarityCacheFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(20 * time.Millisecond)
 			reads.Store(0)
 			stubGit(t, refusingGit("", &reads))
-			if _, err := deriveFamiliarity(context.Background(), records, now.Add(time.Hour)); err != nil {
+			if _, err := deriveFamiliarity(context.Background(), records, now.Add(5*time.Minute)); err != nil {
 				t.Fatal(err)
 			}
 			if n := reads.Load(); n != 0 {
 				t.Fatalf("a refusal under a day old was read again %d times", n)
+			}
+			if after, err := os.Stat(filepath.Join(Dir(), familiarityCacheFile)); err != nil || !after.ModTime().Equal(before.ModTime()) {
+				t.Fatalf("cache rewritten for a kept refusal: %v", err)
 			}
 			if _, err := deriveFamiliarity(context.Background(), records, now.Add(25*time.Hour)); err != nil {
 				t.Fatal(err)
@@ -567,17 +575,31 @@ func TestFamiliarityRefusedRepositoryLogKeepsTheCachedCopy(t *testing.T) {
 	if got, err := deriveFamiliarity(context.Background(), Records{Runs: runs}, now); err != nil || len(got.Known) != 1 {
 		t.Fatalf("first: %+v %v", got, err)
 	}
+	var logs atomic.Int32
 	refuseLog := func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
 		if strings.Contains(strings.Join(cmd.Args, " "), " --all ") {
+			logs.Add(1)
 			return nil, &exec.ExitError{}
 		}
 		return cmd.Output()
 	}
-	stubGit(t, refuseLog)
-	got, err := deriveFamiliarity(context.Background(), Records{Runs: runs}, now.Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
+	twice := func(at time.Time) Familiarity {
+		t.Helper()
+		logs.Store(0)
+		var got Familiarity
+		for _, when := range []time.Time{at, at.Add(5 * time.Minute)} {
+			var err error
+			if got, err = deriveFamiliarity(context.Background(), Records{Runs: runs}, when); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if n := logs.Load(); n != 1 {
+			t.Fatalf("a refused log ran %d times in 10 minutes", n)
+		}
+		return got
 	}
+	stubGit(t, refuseLog)
+	got := twice(now.Add(time.Hour))
 	if got.Partial || len(got.Known) != 1 || got.Known[0].Area != "f" {
 		t.Fatalf("cached copy not used: %+v", got)
 	}
@@ -585,11 +607,8 @@ func TestFamiliarityRefusedRepositoryLogKeepsTheCachedCopy(t *testing.T) {
 		t.Fatalf("cached copy dropped: %+v", c.Repos)
 	}
 	t.Setenv("HRN_HOME", t.TempDir())
-	got, err = deriveFamiliarity(context.Background(), Records{Runs: runs}, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Partial || len(got.Known) != 0 || len(loadFamiliarityCache().Repos) != 0 {
+	got = twice(now)
+	if got.Partial || len(got.Known) != 0 || len(loadFamiliarityCache().Repos) != 1 {
 		t.Fatalf("refused with no copy: %+v, cache %+v", got, loadFamiliarityCache())
 	}
 }

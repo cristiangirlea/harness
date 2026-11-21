@@ -416,11 +416,16 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			if !rr.found.Checked.Equal(rr.cached.Checked) || !rr.hit {
 				dirty = true
 			}
+		case rr.refused:
+			// A refusal is kept like an answer, with a copy under a day old standing in for the commits.
+			commits := []authored{}
+			if rr.hit && !rr.cached.Checked.After(now) && now.Sub(rr.cached.Checked) < repoStale {
+				commits = rr.cached.Commits
+			}
+			rr.found, rr.settled = repoEvidence{Checked: now, Commits: commits}, true
+			dirty = true
 		case rr.hit && !rr.cached.Checked.After(now) && now.Sub(rr.cached.Checked) < repoStale:
 			rr.found, rr.settled = rr.cached, true
-		case rr.refused:
-			rr.found, rr.settled = repoEvidence{}, true
-			continue
 		default:
 			incomplete[name] = true
 			continue
