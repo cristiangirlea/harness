@@ -793,7 +793,7 @@ func mergedScriptRepo(t *testing.T, name string) string {
 	gitIn(t, repo, "config", "user.email", "fixture@example.org")
 	gitIn(t, repo, "config", "user.name", "Fixture")
 	gitIn(t, repo, "remote", "add", "origin", "https://github.com/"+name+".git")
-	writeFile(t, filepath.Join(repo, "base"), "base")
+	writeFile(t, filepath.Join(repo, "base"), name)
 	gitIn(t, repo, "add", ".")
 	gitIn(t, repo, "commit", "-qm", "base")
 	gitIn(t, repo, "checkout", "-qb", "feature")
@@ -907,5 +907,46 @@ func TestGitHubSourceNamesACheckoutAndItsWorktreeOnce(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
 		t.Fatalf("root %s: %v", root, err)
+	}
+}
+
+func TestMergedScriptAnswersKeepAnEmptyFileAndSurviveACutRead(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	first, second := mergedScriptRepo(t, "example/one"), mergedScriptRepo(t, "example/two")
+	gitIn(t, first, "checkout", "-qb", "empty")
+	writeFile(t, filepath.Join(first, "scripts", ".gitkeep"), "")
+	gitIn(t, first, "add", ".")
+	gitIn(t, first, "commit", "-qm", "empty")
+	gitIn(t, first, "checkout", "-q", "main")
+	gitIn(t, first, "merge", "--no-ff", "-qm", "merge empty", "empty")
+	gitIn(t, first, "update-ref", "refs/remotes/origin/main", "refs/heads/main")
+	both := Records{Runs: []runlog.Record{{Task: agent.Task{Dir: first}}, {Task: agent.Task{Dir: second}}}}
+	if keys := scriptKeys(t, both); len(keys) != 2 {
+		t.Fatalf("keys: %v", keys)
+	}
+	all := keptAnswers(t)
+	if len(all) != 3 {
+		t.Fatalf("an empty script file was not kept: %v", all)
+	}
+	secondRoot, err := filepath.Abs(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubGit(t, func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+		joined := strings.Join(cmd.Args, " ")
+		if strings.Contains(joined, " show ") {
+			t.Errorf("read again: %s", joined)
+		}
+		if strings.Contains(joined, secondRoot) && strings.Contains(joined, " log ") {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return cmd.Output()
+	})
+	if keys := scriptKeys(t, both); len(keys) != 1 {
+		t.Fatalf("with second's log cut short: %v", keys)
+	}
+	if got := keptAnswers(t); len(got) != 3 || !sameAnswers(all, got) {
+		t.Fatalf("answers after a cut read: %v", got)
 	}
 }

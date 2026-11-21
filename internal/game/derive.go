@@ -274,7 +274,7 @@ func mergedScripts(root, name string, known map[string]bool) (events []Event, an
 	if !strings.Contains(name, "/") {
 		return nil, answers, true
 	}
-	log, settled := gitRead(ctx, root, "log", "--first-parent", "--merges", "--diff-merges=first-parent", "--reverse", "--no-show-signature", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-filter=A", "--name-only", "-z", "--format=%x00hrn-merge %H %cI%x00", "refs/remotes/origin/HEAD", "--", "scripts/")
+	log, _, settled := gitRead(ctx, root, "log", "--first-parent", "--merges", "--diff-merges=first-parent", "--reverse", "--no-show-signature", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-filter=A", "--name-only", "-z", "--format=%x00hrn-merge %H %cI%x00", "refs/remotes/origin/HEAD", "--", "scripts/")
 	var oid string
 	var at time.Time
 	for _, token := range strings.Split(log, "\x00") {
@@ -292,9 +292,9 @@ func mergedScripts(root, name string, known map[string]bool) (events []Event, an
 		key := oid + ":" + file
 		kept, ok := known[key]
 		if !ok {
-			body, done := gitRead(ctx, root, "show", "--no-ext-diff", "--no-textconv", key)
-			// Keep only what git actually returned: a missing blob may arrive later.
-			if !done || body == "" {
+			body, answered, done := gitRead(ctx, root, "show", "--no-ext-diff", "--no-textconv", key)
+			// Keep only what git returned: a blob missing now may arrive later.
+			if !answered {
 				settled = settled && done
 				continue
 			}

@@ -69,17 +69,17 @@ func ReadFamiliarityFrom(ctx context.Context, r Records, now time.Time) (Familia
 }
 
 func gitEvidence(ctx context.Context, dir string, args ...string) string {
-	out, _ := gitRead(ctx, dir, args...)
+	out, _, _ := gitRead(ctx, dir, args...)
 	return out
 }
 
-// gitRead reports settled when git ran to its own exit, so the answer would be the same next time.
-func gitRead(ctx context.Context, dir string, args ...string) (out string, settled bool) {
+// gitRead reports answered when git exited 0, and settled when it ran to its own exit or was not run on purpose.
+func gitRead(ctx context.Context, dir string, args ...string) (out string, answered, settled bool) {
 	if !gitenv.SupportsNoLazyFetch() {
-		return "", true
+		return "", false, true
 	}
 	if ctx.Err() != nil {
-		return "", false
+		return "", false, false
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -89,10 +89,10 @@ func gitRead(ctx context.Context, dir string, args ...string) (out string, settl
 	cmd.WaitDelay = time.Second
 	b, err := runGit(ctx, cmd)
 	if err == nil {
-		return string(b), true
+		return string(b), true, true
 	}
 	var exit *exec.ExitError
-	return "", errors.As(err, &exit) && ctx.Err() == nil
+	return "", false, errors.As(err, &exit) && ctx.Err() == nil
 }
 
 func fileArea(file string) string {
@@ -219,7 +219,8 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 		repo, dir, base, key string
 		oids                 []string
 		found                batchEvidence
-		settled              bool
+		// answered is set when git returned both reads, so the evidence may be kept.
+		answered, settled bool
 	}
 	kept := loadFamiliarityCache()
 	var batchReads []*batchRead
@@ -256,7 +257,7 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			read.key = batchKey(findRoot(b.Dir), base, oids)
 		}
 		if found, ok := kept.Batches[read.key]; ok && read.key != "" {
-			read.found, read.settled = found, true
+			read.found, read.answered, read.settled = found, true, true
 		}
 		batchReads = append(batchReads, read)
 	}
@@ -292,13 +293,15 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			}
 			reads = append(reads, func() {
 				var found batchEvidence
+				answered := true
 				if br.base != "" {
 					args := append([]string{"rev-list", "--first-parent"}, br.oids...)
 					args = append(args, "^"+br.base, "--")
-					out, ok := gitRead(ctx, br.dir, args...)
-					if !ok {
+					out, ok, settled := gitRead(ctx, br.dir, args...)
+					if !settled {
 						return
 					}
+					answered = ok
 					found.Excluded = strings.Fields(out)
 				}
 				logArgs := append([]string{"log", "--no-show-signature", "--format=", "--name-only", "--no-renames"}, br.oids...)
@@ -308,8 +311,8 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 					logArgs = append(logArgs, "--no-walk")
 				}
 				logArgs = append(logArgs, "--")
-				out, ok := gitRead(ctx, br.dir, logArgs...)
-				if !ok {
+				out, ok, settled := gitRead(ctx, br.dir, logArgs...)
+				if !settled {
 					return
 				}
 				areas := map[string]bool{}
@@ -319,7 +322,7 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 						found.Areas = append(found.Areas, a)
 					}
 				}
-				br.found, br.settled = found, true
+				br.found, br.answered, br.settled = found, answered && ok, true
 			})
 		}
 		rr := repoReads[name]
@@ -327,14 +330,14 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			continue
 		}
 		reads = append(reads, func() {
-			email, ok := gitRead(ctx, rr.root, "config", "--get", "user.email")
+			email, _, ok := gitRead(ctx, rr.root, "config", "--get", "user.email")
 			if !ok {
 				return
 			}
 			email = strings.TrimSpace(email)
 			found := repoEvidence{Checked: now, Commits: []authored{}}
 			if email != "" {
-				out, ok := gitRead(ctx, rr.root, "log", "--no-show-signature", "--all", "--since="+now.AddDate(0, 0, -90).Format(time.RFC3339), "--until="+now.Format(time.RFC3339), "--format=%x1e%H%x00%ae%x00%ct", "--name-only", "--no-renames", "--")
+				out, _, ok := gitRead(ctx, rr.root, "log", "--no-show-signature", "--all", "--since="+now.AddDate(0, 0, -90).Format(time.RFC3339), "--until="+now.Format(time.RFC3339), "--format=%x1e%H%x00%ae%x00%ct", "--name-only", "--no-renames", "--")
 				if !ok {
 					return
 				}
@@ -371,7 +374,7 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			incomplete[br.repo] = true
 			continue
 		}
-		if br.key != "" {
+		if br.key != "" && br.answered {
 			if _, ok := kept.Batches[br.key]; !ok {
 				dirty = true
 			}

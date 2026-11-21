@@ -476,3 +476,45 @@ func TestFamiliarityCacheRejectsWhatItCannotTrust(t *testing.T) {
 		t.Fatalf("future-dated read was trusted: %+v", got)
 	}
 }
+
+func TestFamiliarityKeepsNoBatchEvidenceGitRefused(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := familiarityRepo(t)
+	base := strings.TrimSpace(gitOut(t, dir, "rev-parse", "HEAD"))
+	gitOut(t, dir, "checkout", "-b", "hrn/task")
+	gitOut(t, dir, "commit", "--allow-empty", "-m", "agent")
+	head := strings.TrimSpace(gitOut(t, dir, "rev-parse", "HEAD"))
+	records := Records{Batches: []batch.Result{{Dir: dir, Base: base, Tasks: []batch.TaskResult{{Branch: "hrn/task", Commit: head}}}}}
+	stubGit(t, func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+		if strings.Contains(strings.Join(cmd.Args, " "), " rev-list ") {
+			return nil, &exec.ExitError{}
+		}
+		return cmd.Output()
+	})
+	got, err := deriveFamiliarity(context.Background(), records, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Partial {
+		t.Fatalf("a refused read is an answer for this call: %+v", got)
+	}
+	if c := loadFamiliarityCache(); len(c.Batches) != 0 {
+		t.Fatalf("refused evidence kept: %+v", c.Batches)
+	}
+	stubGit(t, func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) { return cmd.Output() })
+	if _, err := deriveFamiliarity(context.Background(), records, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if c := loadFamiliarityCache(); len(c.Batches) != 1 {
+		t.Fatalf("answered evidence not kept: %+v", c.Batches)
+	}
+}
+
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return string(out)
+}
