@@ -126,7 +126,9 @@ type batchEvidence struct {
 }
 
 type repoEvidence struct {
+	// Checked is when git last answered; a refusal since then is dated apart, so the copy still ages.
 	Checked time.Time  `json:"checked"`
+	Refused time.Time  `json:"refused,omitzero"`
 	Commits []authored `json:"commits"`
 }
 
@@ -286,7 +288,11 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 	for _, name := range order {
 		rr := &repoRead{root: roots[name]}
 		rr.cached, rr.hit = kept.Repos[rr.root]
-		if rr.hit && !rr.cached.Checked.After(now) && now.Sub(rr.cached.Checked) < repoFresh {
+		last := rr.cached.Checked
+		if rr.cached.Refused.After(last) {
+			last = rr.cached.Refused
+		}
+		if rr.hit && !last.After(now) && now.Sub(last) < repoFresh {
 			rr.found, rr.settled = rr.cached, true
 		}
 		repoReads[name] = rr
@@ -418,12 +424,11 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			}
 		case rr.refused:
 			// A refusal is kept like an answer, with a copy under a day old standing in for the commits.
-			commits := []authored{}
+			rr.found = repoEvidence{Checked: now, Refused: now, Commits: []authored{}}
 			if rr.hit && !rr.cached.Checked.After(now) && now.Sub(rr.cached.Checked) < repoStale {
-				commits = rr.cached.Commits
+				rr.found.Checked, rr.found.Commits = rr.cached.Checked, rr.cached.Commits
 			}
-			rr.found, rr.settled = repoEvidence{Checked: now, Commits: commits}, true
-			dirty = true
+			rr.settled, dirty = true, true
 		case rr.hit && !rr.cached.Checked.After(now) && now.Sub(rr.cached.Checked) < repoStale:
 			rr.found, rr.settled = rr.cached, true
 		default:

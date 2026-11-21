@@ -606,6 +606,14 @@ func TestFamiliarityRefusedRepositoryLogKeepsTheCachedCopy(t *testing.T) {
 	if c := loadFamiliarityCache(); len(c.Repos) != 1 {
 		t.Fatalf("cached copy dropped: %+v", c.Repos)
 	}
+	for _, h := range []time.Duration{12, 23} {
+		if got := twice(now.Add(h * time.Hour)); len(got.Known) != 1 {
+			t.Fatalf("copy at +%dh: %+v", h, got)
+		}
+	}
+	if got := twice(now.Add(25 * time.Hour)); got.Partial || len(got.Known) != 0 {
+		t.Fatalf("a copy over a day old stood in for a refusal: %+v", got)
+	}
 	t.Setenv("HRN_HOME", t.TempDir())
 	got = twice(now)
 	if got.Partial || len(got.Known) != 0 || len(loadFamiliarityCache().Repos) != 1 {
