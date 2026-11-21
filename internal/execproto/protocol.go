@@ -169,6 +169,9 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 			if err != nil {
 				return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("run %s: %v", t.ContinueRunID, err))
 			}
+			if prev.Backend == runlog.PluginBackend {
+				return w.reject(req.AttemptID, "bad_request", fmt.Sprintf("run %s is a plugin call; plugin calls cannot be continued", prev.ID))
+			}
 			t.Backend = prev.Backend
 		}
 		routeNote = agent.ContinuationNote(t.ContinueRunID, "")

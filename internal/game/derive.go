@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -36,8 +37,14 @@ type Records struct {
 	Removing map[string]bool
 }
 
+// agentRuns drops plugin calls: no agent did that work, so it earns nothing and marks no repository.
+func agentRuns(runs []runlog.Record) []runlog.Record {
+	return slices.DeleteFunc(slices.Clone(runs), func(r runlog.Record) bool { return r.Backend == runlog.PluginBackend })
+}
+
 // Derive turns records into delivery events; it reads the events.jsonl of finished runs.
 func Derive(r Records) ([]Event, error) {
+	r.Runs = agentRuns(r.Runs)
 	var events []Event
 	seen := map[string]bool{}
 	names := map[string]string{}

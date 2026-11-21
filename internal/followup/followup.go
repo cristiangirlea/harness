@@ -128,6 +128,9 @@ func Make(req Request) (Plan, error) {
 		}
 	}
 	prev := chain[len(chain)-1]
+	if prev.Backend == runlog.PluginBackend {
+		return Plan{}, fmt.Errorf("run %s is a plugin call; plugin calls cannot be continued", prev.ID)
+	}
 	if !prev.Done {
 		return Plan{}, fmt.Errorf("run %s has no result: it is still running, or it stopped before it could record one", prev.ID)
 	}

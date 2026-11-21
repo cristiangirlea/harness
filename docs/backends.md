@@ -45,9 +45,9 @@ hrn backends reset
 
 For a build that registers `agy`, use `--only claude,agy` instead. A name need not
 be installed to be enabled, but it must be registered. `--default` is optional;
-when supplied it must appear in `--only`. `set` replaces the backend preference while keeping the work map keys.
-`reset` keeps the work map keys and restores today's default
-selection. A missing file or an empty enabled list with no default leaves all
+when supplied it must appear in `--only`. `set` replaces the backend preference while keeping the work map keys and plugin settings.
+`reset` restores today's default backend selection while keeping the work map
+keys and plugin settings. A missing file or an empty enabled list with no default leaves all
 backends enabled. A nonempty default without an enabled list is refused.
 
 The same file accepts `work_map_repos`, `work_map_github` and `work_map_sessions` for the
@@ -709,6 +709,32 @@ run results show names. The config home paths are never printed.
 
 Accounts are for seats and organisation accounts that each belong to the people or team using them. hrn does not check a provider's terms; using several logins of one person to pass a plan's limit may break them.
 
+#### Plugin settings
+
+The optional `plugins` block in `$HRN_HOME/backends.json` controls
+[`hrn plugin install`](plugins.md#plugins-in-hrn).
+
+```json
+{
+  "plugins": {
+    "install": "on",
+    "sources": {"echo": "example/hrn-echo"},
+    "allow": ["example/*", "another/hrn-search"]
+  }
+}
+```
+
+- `install` accepts `"on"`, `"off"` or an empty string. Installation is enabled by default.
+- `sources` maps short plugin names to GitHub repositories as `owner/repo`. Names start
+  with a lowercase letter and have up to 64 lowercase letters, digits and hyphens.
+  `server`, `worker` and `fixture-model` are reserved.
+- `allow` restricts installation to listed repositories or all repositories under a GitHub
+  account with `owner/*`. Matching ignores case. An empty or omitted list allows all sources.
+
+The organisation file accepts the same block and can lock it with `"locked": ["plugins"]`.
+When unlocked, a user block replaces the entire organisation block, including when the user
+sets `"plugins": {}`. A missing user block inherits the organisation block.
+
 #### Organisation settings
 
 hrn reads organisation settings from `/etc/hrn/backends.json` on non-Windows
@@ -716,7 +742,7 @@ systems and from `ProgramData\hrn\backends.json` on the Windows system volume.
 An unreadable or invalid organisation file stops runs.
 
 The organisation file can set `enabled`, `default`, `billing`, `providers`,
-`accounts`, and `local_api`. Its optional `locked` array names the groups the
+`accounts`, `local_api`, and `plugins`. Its optional `locked` array names the groups the
 organisation controls. `billing` includes `billing_max_cost_usd`, and
 `accounts` includes `account_reserve_percent`. Each pair moves together.
 
