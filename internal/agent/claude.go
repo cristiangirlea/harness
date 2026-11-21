@@ -232,6 +232,7 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, m *claudeMessag
 			if !init || l.APIKeySource != "apiKeyHelper" {
 				res.Status = StatusError
 				res.Error = gatewayRefusal
+				res.StartRefusal = true
 				return line != nil
 			}
 			if m != nil {
@@ -262,6 +263,7 @@ func parseClaudeLine(line []byte, emit func(Event), res *Result, m *claudeMessag
 				if l.APIKeySource != "" && l.APIKeySource != "none" {
 					res.Status = StatusError
 					res.Error = perTokenRefusal + " (apiKeySource " + strconv.Quote(l.APIKeySource) + "): refused; hrn runs claude on the plan login only"
+					res.StartRefusal = true
 					return true
 				}
 			}

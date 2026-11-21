@@ -243,7 +243,35 @@ an extra attempt that does not use up a `retry` entry, and an attempt meant for 
 whose limit is remembered starts on that partner (see [When a plan's usage limit is
 reached](backends.md#when-a-plans-usage-limit-is-reached)). When both are limited, the attempt is
 skipped, and a task with nothing left to run fails without starting an agent, its error
-saying why. `no_switch` turns this off.
+saying why. `no_switch` turns this off. With `wait_limit` set (a duration, on the spec or a
+task), the attempt waits instead for the soonest reset `limits.json` remembers for either
+backend, when that reset is within the limit, and then starts on that backend. The wait is an
+`info` event and a `waiting` decision step in the flow naming the backend and the reset time.
+With no remembered reset, or one further off than the limit, the attempt is skipped as before.
+An attempt that ends `limited` with no partner ready to carry it on (limited too, not
+installed, billing per token, or `no_switch` set) waits the same way, and its work is
+carried on on the backend and account that reset; with `no_switch` only its own backend's
+and account's reset counts. A task with a retrieval pin waits only for its own backend, since
+it cannot move to the partner. A partner kept out by more than its limit is never waited
+for. `wait_limit` bounds all of a task's waits together, over every `retry` entry and
+carry-on: the bound is a deadline set at the first wait, so the agents' working time between
+waits counts against it too, later waits get what is left, and once it is spent the task never
+waits again (a 1h wait before the first attempt under a 2h `wait_limit`, then a 1h attempt
+that ends `limited`, leaves nothing to wait with). Each wait lasts 30 seconds past the reset, counted against
+the bound, and the preferences are read again after it: a backend disabled meanwhile, or one
+that would now bill per token, is not started. Eval cells neither wait nor back off: each
+stays one attempt.
+
+An attempt that ends `error` before any gate ran (a crash, a network error) on a backend that
+is installed, and left nothing behind (no commit, no change in the worktree, nothing untracked
+but hidden files), is an infrastructure error: it is retried on the same backend and account,
+without routing again, after 5s, then 10s, then 20s, at most three times, before the `retry`
+list moves on. An attempt that left work, and a refusal before the agent started (a model
+name that is not one, an option the backend does not support, claude refusing to bill per
+token), go to the `retry` list at once. Each retry records the delay
+it waited as `backoff`, which `hrn batch show` prints; cancelling the batch stops the wait. A
+failed gate, a `limited` run, a gated run stopped because a command may have run ungated,
+and the other statuses in the table above are never backed off.
 
 A continued attempt commits as `<id>: <prompt> (attempt N)`, so the branch reads as a
 sequence of fixes. Each attempt records the prompt it was actually sent, whether it

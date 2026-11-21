@@ -583,6 +583,32 @@ the message gives one. Then:
   Under the plan policy, with a preference, the enabled installed plan backends stand in,
   in preference order, past any that is limited too. If no enabled
   partner is installed, or every one is limited, the run stays `limited` and says so.
+- `--wait-limit D` (field `wait_limit`, default 0) waits instead, when every eligible
+  backend (the run's and its partner's, or only the run's with `--no-switch` or no partner)
+  is limited: for the soonest reset that `limits.json` remembers, if it is within D, then
+  the run starts once on that backend. A run that would start on a limited backend waits
+  before it starts; a run that ends `limited` waits and is carried on by a follow-up run, as
+  above, on the backend that reset. A run with `--no-switch`, `--account` or `--continue`
+  does not wait before it starts: it starts, ends `limited`, and only then waits. With
+  `--no-switch` or `--account` that wait is only for the run's own backend and account,
+  never another account's or the partner's sooner reset. A run with a retrieval pin waits
+  only for its own backend, since the pin cannot move to the partner.
+  D bounds all of a run's waits together, the one before the start and the one after a
+  limited result: the bound is a deadline set at the first wait, so the agent's own working
+  time between two waits counts against it too. A later wait gets only what is left (a 1h
+  start wait under `--wait-limit 2h` followed by a 1h run leaves nothing for a wait after a
+  limited result), and once it is spent nothing waits again. The waits do not count against
+  `timeout`, which bounds each agent run. Every wait lasts 30 seconds past the reset, since CLIs report
+  resets to the minute; those 30 seconds count against D too. After the wait the
+  preferences are read again: a backend disabled meanwhile, an account no longer declared,
+  or a backend that would now bill per token is not started (a new run exits with the
+  reason, a carry-on is not made and the run stays `limited`).
+  The wait is shown as it starts (stderr, MCP progress)
+  and recorded as an info event, so a flow step, on the run that follows it; a batch
+  attempt shows it as a `waiting` step (see [Batches](batches.md)). Nothing waits without a
+  remembered reset, or for one further off than what is left of D: the run stays `limited`
+  and says why. Cancelling stops the wait. An hrn inside a guarded run refuses `wait_limit`
+  (see [Permissions](permissions.md)).
 - Under the plan policy, nothing moves automatically to a CLI that would bill per token.
   With `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
   or a `CLAUDE_CODE_USE_BEDROCK`/`_VERTEX`/`_FOUNDRY` switch set, claude prefers them to

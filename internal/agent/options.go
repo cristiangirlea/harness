@@ -49,6 +49,9 @@ func ValidateOptions(o Options) error {
 	if o.InheritEnv && tools.Guarded() {
 		return ErrGuardedInherit
 	}
+	if o.WaitLimit > 0 && tools.Guarded() {
+		return ErrGuardedWait
+	}
 	return o.ValidateShape()
 }
 
@@ -60,6 +63,9 @@ var ErrGuardedRun = errors.New("allow_dangerous is refused inside a guarded run:
 
 // ErrGuardedInherit refuses inherit_env inside a guarded run: it would hand the agent's runs the operator's whole environment, which only the operator may do.
 var ErrGuardedInherit = errors.New("inherit_env is refused inside a guarded run: only the operator can give an agent their environment")
+
+// ErrGuardedWait refuses wait_limit inside a guarded run: an agent could otherwise hold its own run, and the plans, waiting for hours.
+var ErrGuardedWait = errors.New("wait_limit is refused inside a guarded run: only the operator can make a run wait for a usage limit")
 
 // BindFlags uses o's current values as defaults.
 func BindFlags(fs *flag.FlagSet, o *Options) {

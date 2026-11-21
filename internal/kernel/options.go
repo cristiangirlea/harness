@@ -76,6 +76,9 @@ type Options struct {
 	// NoSwitch prevents continuation on a partner backend.
 	NoSwitch bool `json:"no_switch,omitempty" desc:"Stay on this backend when it reaches its usage limit, instead of carrying on on an enabled partner (claude and codex pair by default)."`
 
+	// WaitLimit bounds a wait for a remembered usage-limit reset; zero never waits.
+	WaitLimit Duration `json:"wait_limit,omitempty" flag:"wait-limit" desc:"When every eligible backend is at its usage limit, wait up to this long (e.g. 2h) for the soonest remembered reset, then start on that backend (default 0: end limited at once)."`
+
 	// Issue is leased for the run so that a second run for it is refused.
 	Issue    string `json:"issue,omitempty" desc:"GitHub issue this run works on (owner/name#N, its URL, or #N for this repository's origin); taken as a lease so a second run for it is refused."`
 	TakeOver bool   `json:"take_over,omitempty" flag:"take-over" desc:"Take the issue lease from its current holder."`
@@ -122,6 +125,9 @@ func (o Options) ValidateShape() error {
 	}
 	if math.IsNaN(o.MaxCostUSD) || math.IsInf(o.MaxCostUSD, 0) {
 		return fmt.Errorf("max cost must be finite")
+	}
+	if o.WaitLimit < 0 || time.Duration(o.WaitLimit) > MaxLimitWindow {
+		return fmt.Errorf("wait_limit %s: must be between 0 and %s", o.WaitLimit, time.Duration(MaxLimitWindow))
 	}
 	return ValidateLimits(time.Duration(o.Timeout), o.MaxCostUSD, o.TaskBudget)
 }

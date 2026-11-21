@@ -12,6 +12,7 @@ import (
 
 	"encoding/json"
 	"fmt"
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/ws"
@@ -588,5 +589,19 @@ func TestBatchMergeUnknownAndEarlyRefusalOutput(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestBatchShowSaysAnAttemptWasBackedOff(t *testing.T) {
+	res := batch.Result{ID: "backoff", Tasks: []batch.TaskResult{{ID: "one", Status: batch.StatusPass, Attempts: []batch.Attempt{
+		{Backend: "codex", Result: agent.Result{Status: agent.StatusError}},
+		{Backend: "codex", Backoff: agent.Duration(5 * time.Second)},
+	}}}}
+	var table strings.Builder
+	r := newRenderer(false)
+	r.out, r.color = &table, false
+	printBatch(r, res)
+	if !strings.Contains(table.String(), "attempt 2: retried on codex after a 5s backoff") {
+		t.Errorf("table does not say the backoff: %s", table.String())
 	}
 }

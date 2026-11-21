@@ -59,3 +59,17 @@ func TestRunToolRefusesToLiftTheGuardInsideAGuardedRun(t *testing.T) {
 		t.Errorf("run with allow_dangerous inside a guarded run = %q; want the guarded-run refusal", text)
 	}
 }
+
+// An agent inside a guarded run cannot make its nested runs wait for hours on the plans.
+func TestRunToolRefusesAWaitInsideAGuardedRun(t *testing.T) {
+	s := connect(t, t.TempDir())
+	t.Setenv(tools.GuardedVar, "1")
+	for tool, args := range map[string]string{
+		"run":   `{"prompt":"later","backend":"stub","wait_limit":"2h"}`,
+		"batch": `{"spec":{"wait_limit":"2h","tasks":[{"id":"a","prompt":"later"}]}}`,
+	} {
+		if text := refused(t, s, tool, args); !strings.Contains(text, "wait_limit is refused inside a guarded run") {
+			t.Errorf("%s with wait_limit inside a guarded run = %q; want the guarded-run refusal", tool, text)
+		}
+	}
+}

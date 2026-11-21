@@ -140,7 +140,7 @@ func TestAfterCarriesALimitedRunOnToItsPartner(t *testing.T) {
 	id := limitedRun(t, prev)
 	res := agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(time.Hour)}
 
-	next, why, err := After(id, "codex", prev, res)
+	next, why, err := After(id, "codex", prev, res, Waits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestAfterRefusesToRepinRetrievalOnThePartner(t *testing.T) {
 			if err := rec.Close(res); err != nil {
 				t.Fatal(err)
 			}
-			next, why, err := After(rec.ID(), "codex", prev, res)
+			next, why, err := After(rec.ID(), "codex", prev, res, Waits{})
 			if mode == "off" {
 				if err != nil || next == nil {
 					t.Fatalf("retrieval off should still carry on: %v %s", err, why)
@@ -230,7 +230,7 @@ func TestACarryOnAfterAFreshHandoverDoesNotReachPastIt(t *testing.T) {
 	if err := rec.Close(res); err != nil {
 		t.Fatal(err)
 	}
-	next, why, err := After(rec.ID(), "codex", prev, res)
+	next, why, err := After(rec.ID(), "codex", prev, res, Waits{})
 	if err != nil || next == nil {
 		t.Fatalf("no carry-on: %s err=%v", why, err)
 	}
@@ -246,19 +246,19 @@ func TestAfterLeavesARunAloneWhenItShould(t *testing.T) {
 	limited := agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit."}
 
 	id := limitedRun(t, agent.Task{Prompt: "x", Dir: dir})
-	if next, why, err := After(id, "codex", agent.Task{Prompt: "x", Dir: dir}, agent.Result{Status: agent.StatusError}); next != nil || why != "" || err != nil {
+	if next, why, err := After(id, "codex", agent.Task{Prompt: "x", Dir: dir}, agent.Result{Status: agent.StatusError}, Waits{}); next != nil || why != "" || err != nil {
 		t.Errorf("a run that was not limited: %v %q %v", next, why, err)
 	}
 	off := agent.Task{Prompt: "x", Dir: dir, Options: agent.Options{NoSwitch: true}}
-	if next, why, err := After(id, "codex", off, limited); next != nil || why != "" || err != nil {
+	if next, why, err := After(id, "codex", off, limited, Waits{}); next != nil || why != "" || err != nil {
 		t.Errorf("no_switch: %v %q %v", next, why, err)
 	}
-	if next, _, _ := After(id, "api", agent.Task{Prompt: "x", Dir: dir}, limited); next != nil {
+	if next, _, _ := After(id, "api", agent.Task{Prompt: "x", Dir: dir}, limited, Waits{}); next != nil {
 		t.Error("api has no partner")
 	}
 
 	_ = Note("claude", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)})
-	next, why, err := After(id, "codex", agent.Task{Prompt: "x", Dir: dir}, limited)
+	next, why, err := After(id, "codex", agent.Task{Prompt: "x", Dir: dir}, limited, Waits{})
 	if next != nil || err != nil {
 		t.Fatalf("claude is limited too, yet: %v %v", next, err)
 	}
@@ -303,7 +303,7 @@ func TestAPartnerThatWouldBillPerTokenDoesNotStandIn(t *testing.T) {
 			if err := rec.Close(res); err != nil {
 				t.Fatal(err)
 			}
-			next, why, err := After(rec.ID(), c.limited, prev, res)
+			next, why, err := After(rec.ID(), c.limited, prev, res, Waits{})
 			if err != nil || next != nil || !strings.Contains(why, "per token") {
 				t.Errorf("After = %v, %q, %v; want no carry-on and the reason", next, why, err)
 			}

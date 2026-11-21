@@ -158,6 +158,7 @@ func newClaudeGateParse(gate, policy string) func([]byte, func(Event), *Result) 
 		if line == nil {
 			if msg := g.unanswered(); msg != "" {
 				emit(Event{Time: time.Now(), Kind: EventError, Text: msg})
+				res.GateStop = true
 				if res.Status == "" || res.Status == StatusOK {
 					res.Status, res.Error = StatusError, msg
 				}
@@ -166,7 +167,7 @@ func newClaudeGateParse(gate, policy string) func([]byte, func(Event), *Result) 
 		}
 		// Replaces any earlier error, since the run goes on after a result line while a subagent works.
 		if msg := g.see(line); msg != "" {
-			res.Error = msg
+			res.Error, res.GateStop = msg, true
 		}
 		return parsed
 	}

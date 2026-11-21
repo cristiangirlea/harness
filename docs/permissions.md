@@ -121,7 +121,8 @@ An hrn that does see the guard refuses it too: the guarded environment sets `HRN
 and `hrn run --allow-dangerous` from an agent's shell is refused. A refused command tells
 the model only that the operator can lift the guard. `inherit_env` is refused inside a
 guarded run the same way: it would hand the agent's own hrn runs the operator's whole
-environment, which only the operator may do.
+environment, which only the operator may do. So is `wait_limit`: a wait can hold a run, and
+the plans it waits for, for hours, and only the operator decides that.
 
 Two things it does not cover, by design: tools from an MCP server are the server's
 business, and batch gate commands are not checked, because the operator wrote those.

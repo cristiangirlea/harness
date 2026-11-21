@@ -47,7 +47,7 @@ func TestAccountHomeReplacesTheChildEnvironment(t *testing.T) {
 					}
 					b.AccountHome = filepath.Join(home, "missing")
 					res = b.Run(t.Context(), task, func(Event) {})
-					if res.Status != StatusError || res.Error != "account team-a: its config home is missing" {
+					if res.Status != StatusError || res.Error != "account team-a: its config home is missing" || !res.StartRefusal {
 						t.Fatalf("missing home: %+v", res)
 					}
 				}

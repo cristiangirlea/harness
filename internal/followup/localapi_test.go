@@ -64,7 +64,7 @@ func TestTheLocalAPIComesAfterEveryPlanBackend(t *testing.T) {
 		t.Fatalf("choice %q (%s), want api", got, why)
 	}
 	prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
-	next, why, err := After(limitedRun(t, prev), "codex", prev, res)
+	next, why, err := After(limitedRun(t, prev), "codex", prev, res, Waits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestWithoutTheOptInAPIStaysOutOfTheChain(t *testing.T) {
 		t.Fatalf("api ready %v: %s", ok, why)
 	}
 	prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
-	if next, _, err := After(limitedRun(t, prev), "codex", prev, res); err != nil || next != nil {
+	if next, _, err := After(limitedRun(t, prev), "codex", prev, res, Waits{}); err != nil || next != nil {
 		t.Fatalf("carry-on %+v, %v", next, err)
 	}
 	b, err := Backend("api")
@@ -120,7 +120,7 @@ func TestAKeyKeepsTheLocalAPIOut(t *testing.T) {
 				t.Fatalf("api ready %v: %s", ok, why)
 			}
 			prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
-			next, why, err := After(limitedRun(t, prev), "codex", prev, res)
+			next, why, err := After(limitedRun(t, prev), "codex", prev, res, Waits{})
 			if err != nil || next != nil {
 				t.Fatalf("carry-on %+v, %v", next, err)
 			}

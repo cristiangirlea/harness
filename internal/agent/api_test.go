@@ -790,7 +790,7 @@ func TestAPISaysWhenCostCannotBeEnforced(t *testing.T) {
 					infos = append(infos, e.Text)
 				}
 			})
-			if res.Status != tc.status || res.Error != tc.wantError || len(fake.requests) != tc.requests {
+			if res.Status != tc.status || res.Error != tc.wantError || len(fake.requests) != tc.requests || res.StartRefusal != (tc.wantError != "") {
 				t.Errorf("result: %+v, requests: %d", res, len(fake.requests))
 			}
 			if strings.Join(infos, "\n") != tc.wantInfo {

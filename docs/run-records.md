@@ -64,6 +64,10 @@ it is omitted otherwise. Older attempts without the field keep their previous
 classification. Eval variant and task rows count these cells in the optional
 `did_not_start` integer, separately from `did_not_act`.
 
+A batch attempt that retried its backend after an infrastructure error carries `backoff`,
+the delay it waited first (`"5s"`); it is omitted otherwise, and in older records. A run's
+`task.json` keeps `wait_limit` when it was set.
+
 A batch attempt with `protect` globs carries an optional `protected` list: the
 protected files it changed or removed against the batch's base, as slash paths.
 Under `protect_mode: fail` the attempt also has a failed gate named `protect ...`, marked

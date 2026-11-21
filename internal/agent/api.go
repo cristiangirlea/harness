@@ -166,9 +166,13 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 		saveConversation()
 		return finish(&res, started)
 	}
+	refuse := func(err error) Result {
+		res.StartRefusal = true
+		return fail(StatusError, err)
+	}
 	if _, priced := priceOf(model); !priced {
 		if b.CostCeilingUSD > 0 {
-			return fail(StatusError, fmt.Errorf("cost ceiling cannot be enforced: no price known for %s", model))
+			return refuse(fmt.Errorf("cost ceiling cannot be enforced: no price known for %s", model))
 		}
 		text := fmt.Sprintf("no price known for %s: its cost is not estimated", model)
 		if maxCostUSD > 0 {
@@ -192,10 +196,10 @@ func (b *APIBackend) Run(ctx context.Context, task Task, emit func(Event)) Resul
 	var compaction apiCompaction
 
 	if task.Durable != nil && len(task.MCP) != 0 {
-		return fail(StatusError, errors.New("durable MCP execution requires an isolated executor; local MCP subprocesses are unsupported"))
+		return refuse(errors.New("durable MCP execution requires an isolated executor; local MCP subprocesses are unsupported"))
 	}
 	if task.Durable != nil && task.AllowDangerous {
-		return fail(StatusError, errors.New("allow_dangerous is not supported for durable jobs"))
+		return refuse(errors.New("allow_dangerous is not supported for durable jobs"))
 	}
 	client, err := b.client()
 	if err != nil {

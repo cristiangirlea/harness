@@ -422,6 +422,28 @@ func hasChanges(wt string) (bool, error) {
 	return len(lines) > 0, err
 }
 
+// cleanTree says the worktree holds no change and nothing untracked but files matching hide.
+func cleanTree(ctx context.Context, dir string, hide []string) bool {
+	g, err := newAgentGit(ctx, dir)
+	if err != nil {
+		return false
+	}
+	defer g.close()
+	status, err := g.stdout(ctx, "status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--ignore-submodules=all")
+	if err != nil {
+		return false
+	}
+	for entry := range strings.SplitSeq(status, "\x00") {
+		if entry == "" {
+			continue
+		}
+		if !strings.HasPrefix(entry, "?? ") || !slices.ContainsFunc(hide, func(g string) bool { return matchProtect(g, entry[3:]) }) {
+			return false
+		}
+	}
+	return true
+}
+
 func dirtyPaths(ctx context.Context, dir string, untracked bool) ([]string, error) {
 	g, err := newAgentGit(ctx, dir)
 	if err != nil {
