@@ -233,6 +233,10 @@ func (s *Session) handshake(ctx context.Context, hello []byte) error {
 		return err
 	}
 	frame, err := s.readFrame(ctx)
+	const channelHost = "this channel plugin runs under a channel host, not hrn"
+	if errors.Is(err, pluginproto.ErrChannelRequiresV2) {
+		return fmt.Errorf("%s: %w", channelHost, err)
+	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return fmt.Errorf("plugin exited before ready: %w", err)
 	}
@@ -241,10 +245,16 @@ func (s *Session) handshake(ctx context.Context, hello []byte) error {
 	}
 	switch frame := frame.(type) {
 	case *pluginproto.Error:
+		if frame.Code == pluginproto.CodeUnsupportedProtocol && !slices.ContainsFunc(frame.Protocols, func(v string) bool { return v != pluginproto.V2 }) {
+			return fmt.Errorf("refused with code %q, message %q, protocols %q: %s", frame.Code, frame.Message, frame.Protocols, channelHost)
+		}
 		return fmt.Errorf("refused with code %q, message %q, protocols %q", frame.Code, frame.Message, frame.Protocols)
 	case *pluginproto.Ready:
 		if frame.Seq != 1 {
 			return fmt.Errorf("ready sequence is %d, want 1", frame.Seq)
+		}
+		if frame.Protocol == pluginproto.V2 || frame.Kind == pluginproto.KindChannel {
+			return fmt.Errorf("ready selected protocol %q, want %q: %s", frame.Protocol, pluginproto.V1, channelHost)
 		}
 		if frame.Protocol != pluginproto.V1 {
 			return fmt.Errorf("ready selected protocol %q, want %q", frame.Protocol, pluginproto.V1)

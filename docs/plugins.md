@@ -1,4 +1,4 @@
-# Plugins: the plugin protocol, version 1
+# Plugins: the plugin protocol
 
 [← README](../README.md) · [Repository extraction](repository-extraction-spec.md)
 
@@ -25,7 +25,7 @@ are the `contracts/pluginproto` package of the nested module
 - A `null` value for an optional field means the field is absent. A required field is never
   `null`.
 
-## Sequence
+## Version 1 sequence
 
 ```text
 host    -> hello
@@ -146,11 +146,127 @@ present, follows the rule of `hello.protocols`. Only `unsupported_protocol` ends
 
 | Status | Meaning |
 |---|---|
-| 0 | stdin closed and nothing was in flight, or the last call was answered. |
+| 0 | stdin closed and nothing was in flight, or the last call was answered. For a channel, stdin closed and the plugin answered every delivery. |
 | 1 | The plugin failed for a reason of its own. |
 | 2 | The handshake was refused (`unsupported_protocol`). |
 
 A host treats the end of stdout before a call's `result` as that call having failed.
+If a channel's stdout ends before a delivery response, the delivery outcome is unknown.
+
+## Version 2: channel plugins
+
+A channel host such as Ada offers `["v2","v1"]`. A plugin that selects v2 declares its kind in
+`ready`. The default kind, `capability`, uses the v1 call, event, cancel and result sequence.
+A `channel` stays connected and can send messages before the host has sent it any work.
+
+```json
+{"type":"hello","protocols":["v2","v1"],"host":{"name":"ada","version":"1.0"}}
+```
+
+```json
+{"v":1,"seq":1,"type":"ready","protocol":"v2","plugin":{"name":"echo","version":"1.0"},"capabilities":[],"kind":"channel","channel":{"name":"echo","label":"Echo chat"}}
+```
+
+For a channel, `channel.name` is a stable identifier of 1 to 64 characters from
+`[a-z0-9-]`. Its optional display `label` is at most 128 bytes. A channel may omit
+`capabilities` or send an empty array. Any entries follow the v1 capability rules.
+A channel answers a `call` with an `error` whose code is `bad_request`.
+
+```text
+host    -> hello
+plugin  -> ready | error (refusal)
+plugin  -> inbound                 at any time after ready
+host    -> ack                     after durable storage
+host    -> deliver                 independently of inbound and ack
+plugin  -> delivered | delivery_failed
+plugin  -> status                  whenever the connection state changes
+host    closes stdin
+```
+
+The envelope stays at `v: 1` even when the selected protocol is `v2`. The plugin uses one
+sequence counter across all its frames, starting at 1 after each restart. Framing, line size,
+field names, duplicate keys and optional nulls follow v1.
+
+Channel IDs, names, labels, attachment MIME types and references, `status.text` and
+`delivery_failed.error.message` reject C0 controls (U+0000–U+001F), DEL (U+007F)
+and C1 controls (U+0080–U+009F). The same rule applies to `inbound.text` and
+`deliver.text`, except that both allow tab, line feed and carriage return.
+
+### Receiving and acknowledging messages
+
+```json
+{"v":1,"seq":2,"type":"inbound","id":"msg:17","time":"2026-01-15T10:30:00Z","sender":{"id":"user:3"},"chat":{"id":"room:8"},"text":"hello"}
+```
+
+```json
+{"type":"ack","id":"msg:17"}
+```
+
+The service supplies the inbound `id`, the `sender.id` and the `chat.id`. Each is 1 to
+128 bytes. `time` is an RFC 3339 timestamp. The optional sender `name` is at most 256 bytes.
+The optional chat `type` is `private`, `group` or `channel`.
+
+```json
+{"v":1,"seq":2,"type":"inbound","id":"msg:18","time":"2026-01-15T10:30:00Z","sender":{"id":"user:3","name":"Jo"},"chat":{"id":"room:8","type":"group"},"text":"","reply_to":"msg:17","action":{"delivery_id":"d1","button_id":"ok"},"attachments":[{"name":"notes.txt","mime":"text/plain","size":0,"ref":"file:42"}]}
+```
+
+`text` is required and limited to 256 KiB. It may be empty for a button press, where
+`action.delivery_id` and `action.button_id` identify the delivery and its button using
+the ID rules below. Optional `reply_to` is a service message ID of 1 to 128 bytes.
+A message may carry up to 16 attachments. Each has a `name` of 1 to 256 bytes, a `mime`
+of 1 to 128 bytes and a `ref` that follows the service ID rule (1 to 128 bytes).
+Its `size` is a non-negative integer in bytes.
+
+**Delivery guarantee.** The host durably stores the inbound under the unique pair
+`(channel.name, inbound.id)` before sending `ack` with that inbound ID. For a duplicate, the
+host leaves the stored message intact and acknowledges it again. The plugin advances its
+service read position only past acknowledged messages. An outstanding earlier message keeps
+the position from advancing past it. After a restart the plugin sends every unacknowledged
+inbound again with its original service ID, in order. If the host crashes before storing,
+the replay supplies the message. If it crashes between storage and acknowledgement, the
+unique key prevents a second insertion.
+
+### Sending a delivery
+
+```json
+{"type":"deliver","id":"d1","chat_id":"room:8","text":"hello","reply_to":"msg:17","buttons":[{"id":"ok","label":"Confirm"}]}
+```
+
+A host assigns a delivery `id` of 1 to 128 characters from `[A-Za-z0-9._-]`. The
+destination `chat_id` and optional `reply_to` follow the service ID rule.
+`text` is required and at most 256 KiB. Up to eight optional buttons each have an `id`
+of 1 to 64 characters from `[A-Za-z0-9._-]` and a `label` of 1 to 64 bytes.
+Button IDs are unique within a delivery so an inbound action identifies exactly one button.
+
+```json
+{"v":1,"seq":4,"type":"delivered","id":"d1","message_id":"msg:19"}
+```
+
+```json
+{"v":1,"seq":5,"type":"delivery_failed","id":"d2","error":{"code":"rate_limited","message":"try again later"},"retry_after_ms":0}
+```
+
+The plugin repeats the delivery ID in either response. On success, `message_id` is the
+service's ID for the sent message. On failure, `error` carries a code and a non-empty
+message. An optional non-negative integer `retry_after_ms` gives the delay in milliseconds
+and may be zero. The codes `rate_limited` (service throttle) and `unauthorised`
+(authorization failure) are available only in v2. A v2 capability plugin may use either
+code in a failed `result` or an `error` line.
+
+If the channel plugin exits or its stdout ends, every `deliver` still awaiting
+`delivered` or `delivery_failed` has an unknown outcome. The host may retry it with
+the same delivery ID. When the service lets the plugin recognize a previous send, the
+plugin should avoid sending that delivery to the service twice. It must answer every
+repeat with `delivered` or `delivery_failed`, even if it skips the service send.
+
+### Reporting connection state
+
+```json
+{"v":1,"seq":6,"type":"status","state":"reconnecting","text":"waiting for service"}
+```
+
+`state` is one of `connected`, `reconnecting`, `unauthorised` or `stopped`. The optional
+diagnostic `text` is at most 1,024 bytes.
 
 ## Compatibility
 
@@ -159,7 +275,11 @@ older plugin works with a newer host and the other way round. A new line `type`,
 field, a changed meaning or a new error code is a new version: the host adds it to
 `hello.protocols` and keeps offering `v1` for at least one release.
 
-Within version 1 an unknown `type` is an error. A plugin answers a host line of unknown type
+Version 2 adds the channel kind and its frames. Hosts that support v2 keep offering v1 for
+capability plugins. A v1 host refuses a v1 `ready` carrying `kind: "channel"`.
+hrn offers only v1 and directs a v2-only plugin to a channel host.
+
+Within either version an unknown `type` is an error. A plugin answers a host line of unknown type
 with `error` code `bad_request` and keeps reading. A host that reads a plugin line of unknown
 type stops the plugin and fails the call in flight.
 
@@ -235,8 +355,14 @@ that a single line can break. Rules that span lines are the caller's to check: `
 1 and increasing by one, `ready.protocol` being a version the host offered, a `capability` from
 `ready.capabilities`, one call in flight, and a `cancel` that names it.
 
+Use `ParseHostLine` for the initial offer and `ParsePluginLine` for the handshake response.
+After a v2 handshake, call `ParseHostLineV2(line, ready.Kind)` or
+`ParsePluginLineV2(line, ready.Kind)` to apply the rules for the negotiated kind. The empty
+Go string represents an omitted kind. The host tracks sequence continuity, delivery IDs
+and durable inbound acknowledgements across lines.
+
 The package starts no process and reads no file: a plugin in any language needs only this page
-and the fixtures under `contracts/pluginproto/testdata/v1`, one line per file, which a
+and the fixtures under `contracts/pluginproto/testdata/{v1,v2}`, one line per file, which a
 conforming implementation reads and writes byte for byte.
 
 The module is standard library only and has no dependency on hrn. hrn's own copy of the package
