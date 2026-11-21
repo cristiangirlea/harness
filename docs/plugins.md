@@ -189,7 +189,8 @@ and creates no run record. With `--json`, stdout contains `name`, `version`, `ta
 `path`, `sha256` and `capabilities`.
 
 Installation can be disabled or restricted to approved repositories in the plugin settings.
-You can also place a plugin executable in one of the usual search locations.
+You can also place a plugin executable in one of the usual search locations. The settings
+govern installation only: hrn still runs a plugin it finds on `PATH` or one installed earlier.
 
 `hrn plugin list` lists the executables it finds without starting them and shows the repository
 for installed plugins with readable installation metadata. `hrn plugin info <name>`
@@ -198,7 +199,9 @@ recording a run.
 
 The child receives no arguments, starts in the current directory and gets a filtered
 environment. hrn removes its own `HRN_` variables and adds the guard's environment
-variables. The child has its own process tree and starts without opening a console window.
+variables, which withhold secrets and point login directories at an empty folder. The child
+still runs with the user's file access and network. The child has its own process tree and
+starts without opening a console window.
 The handshake has a 10-second limit. After sending `cancel`, hrn gives the plugin two
 seconds to return a result. At close, hrn closes the input stream and gives the plugin
 three seconds to exit.

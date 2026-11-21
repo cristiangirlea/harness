@@ -180,6 +180,27 @@ func hangingGit(ctx context.Context, _ *exec.Cmd) ([]byte, error) {
 	return nil, ctx.Err()
 }
 
+func TestFamiliarityLeavesOutRepositoriesOnlyAPluginCallRanIn(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	var calls atomic.Int32
+	stubGit(t, func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+		calls.Add(1)
+		return cmd.Output()
+	})
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	runs := []runlog.Record{{Backend: runlog.PluginBackend, Task: agent.Task{Dir: repo}}}
+	got, err := deriveFamiliarity(context.Background(), Records{Runs: runs}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Unseen) != 0 || len(got.Known) != 0 || got.Partial || calls.Load() != 0 {
+		t.Fatalf("got %+v after %d git calls", got, calls.Load())
+	}
+}
+
 func TestFamiliarityLeavesOutFoldersOutsideRepositories(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	var calls atomic.Int32

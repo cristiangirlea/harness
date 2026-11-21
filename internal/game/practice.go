@@ -551,7 +551,7 @@ func NewGitHubSource() (*GitHubSource, error) {
 		return nil, err
 	}
 	roots := map[string]string{}
-	for _, r := range runs {
+	for _, r := range agentRuns(runs) {
 		root := repoRoot(r.Task.Dir)
 		if root != "" {
 			roots[repoName(root)] = root

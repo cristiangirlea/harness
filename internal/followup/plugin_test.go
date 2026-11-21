@@ -3,9 +3,16 @@ package followup
 import (
 	"testing"
 
+	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
+
+func TestNoAgentBackendIsNamedPlugin(t *testing.T) {
+	if _, err := agent.Get(runlog.PluginBackend); err == nil {
+		t.Fatalf("an agent backend is named %q: its runs would be refused as plugin calls", runlog.PluginBackend)
+	}
+}
 
 func TestPluginCallsCannotBeContinuedEvenWithABackendOverride(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())

@@ -331,6 +331,25 @@ func TestBackendsResetKeepsOnlyPluginPolicyOrRemovesTheFile(t *testing.T) {
 	}
 }
 
+func TestBackendsSetKeepsThePluginPolicy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	prefstest.OrgPath(t)
+	path := filepath.Join(home, "backends.json")
+	plugins := `"plugins":{"install":"off","allow":["owner/*"]}`
+	prefstest.Write(t, path, `{"enabled":["claude"],`+plugins+`}`)
+	if _, err := captureStdout(t, func() error { return cmdBackends([]string{"set", "--only", "codex"}) }); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"enabled":["codex"],` + plugins + `}`; !jsonEqual(data, want) {
+		t.Fatalf("set = %s, want %s", data, want)
+	}
+}
+
 func TestBackendsSetsShowsAndResetsTheLocalAPI(t *testing.T) {
 	t.Setenv("HRN_HOME", t.TempDir())
 	t.Setenv("ANTHROPIC_API_KEY", "")
