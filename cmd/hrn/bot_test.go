@@ -572,3 +572,47 @@ func TestBotStatsSaysWhenFamiliarityWasCutShort(t *testing.T) {
 		t.Fatalf("json: %s", b)
 	}
 }
+
+func TestBotStatsJSONFoldsNewRecordsIntoTheLedger(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	runID, _, _ := oldRecords(t, home)
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats", "--json"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ledgerEvent(t, "review:"+runID); !ok {
+		t.Errorf("hrn bot stats --json left review:%s out of the ledger", runID)
+	}
+	var got struct {
+		XP int `json:"xp"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("hrn bot stats --json printed %q: %v", out, err)
+	}
+	if got.XP == 0 {
+		t.Errorf("hrn bot stats --json shows 0 xp after new records:\n%s", out)
+	}
+}
+
+func TestBotStatsJSONFoldsNewRecordsWhenTheGameIsOff(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := os.MkdirAll(game.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(game.Dir(), "settings.json"), []byte(`{"enabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runID, _, _ := oldRecords(t, home)
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats", "--json"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(out)) != `{"version":1,"enabled":false}` {
+		t.Errorf("hrn bot stats --json with the game off printed %s", out)
+	}
+	if _, ok := ledgerEvent(t, "review:"+runID); !ok {
+		t.Errorf("hrn bot stats --json with the game off left review:%s out of the ledger", runID)
+	}
+}

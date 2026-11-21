@@ -258,6 +258,14 @@ func jsonFamiliarity(f game.Familiarity) *statsFamiliarity {
 
 // cmdBotStatsJSON prints the stats; given a repository it adds that repository's delivery and skips familiarity.
 func cmdBotStatsJSON(repo string) error {
+	// Readers of the JSON form get current numbers, so new records are folded in; the practice rebuild stays with the text form.
+	records, err := game.LoadRecords()
+	if err != nil {
+		return err
+	}
+	if err := game.Fold(records); err != nil {
+		return err
+	}
 	settings, err := game.LoadSettings()
 	if err != nil {
 		return err
@@ -304,7 +312,7 @@ func cmdBotStatsJSON(repo string) error {
 	var familiarity *statsFamiliarity
 	// Familiarity walks every run record; a caller asking for one repository wants a quick answer.
 	if repo == "" {
-		familiarity = readStatsFamiliarity(now)
+		familiarity = readStatsFamiliarity(records, now)
 	}
 	result := struct {
 		Version   int    `json:"version"`
@@ -340,8 +348,8 @@ func cmdBotStatsJSON(repo string) error {
 }
 
 // readStatsFamiliarity is nil when familiarity cannot be read, with the reason on stderr.
-func readStatsFamiliarity(now time.Time) *statsFamiliarity {
-	f, err := game.ReadFamiliarity(context.Background(), now)
+func readStatsFamiliarity(records game.Records, now time.Time) *statsFamiliarity {
+	f, err := game.ReadFamiliarityFrom(context.Background(), records, now)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hrn bot stats: familiarity: %v\n", err)
 		return nil
