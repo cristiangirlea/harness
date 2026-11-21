@@ -258,16 +258,26 @@ func jsonFamiliarity(f game.Familiarity) *statsFamiliarity {
 
 // cmdBotStatsJSON prints the stats; given a repository it adds that repository's delivery and skips familiarity.
 func cmdBotStatsJSON(repo string) error {
-	// Readers of the JSON form get current numbers, so new records are folded in; the practice rebuild stays with the text form.
 	records, err := game.LoadRecords()
 	if err != nil {
 		return err
 	}
-	if err := game.Fold(records); err != nil {
-		return err
-	}
 	settings, err := game.LoadSettings()
 	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	// Familiarity needs only the records, so it runs beside the fold to keep the call within readers' timeouts.
+	familiarityDone := make(chan *statsFamiliarity, 1)
+	// Familiarity walks every run record; a caller asking for one repository wants a quick answer.
+	if settings.On() && repo == "" {
+		go func() { familiarityDone <- readStatsFamiliarity(records, now) }()
+	} else {
+		familiarityDone <- nil
+	}
+	// Readers of the JSON form get current numbers, so new records are folded in; the practice rebuild stays with the text form.
+	if err := game.Fold(records); err != nil {
+		<-familiarityDone
 		return err
 	}
 	if !settings.On() {
@@ -283,7 +293,6 @@ func cmdBotStatsJSON(repo string) error {
 	if unreadable > 0 {
 		fmt.Fprintf(os.Stderr, "hrn bot stats: %d ledger lines could not be read and were left out\n", unreadable)
 	}
-	now := time.Now().UTC()
 	totals := game.Sum(events)
 	week := game.WeekStart(now)
 	weekly := totals.Since(week)
@@ -309,11 +318,7 @@ func cmdBotStatsJSON(repo string) error {
 	for _, badge := range totals.Badges {
 		badges = append(badges, game.BadgeName(badge.Key))
 	}
-	var familiarity *statsFamiliarity
-	// Familiarity walks every run record; a caller asking for one repository wants a quick answer.
-	if repo == "" {
-		familiarity = readStatsFamiliarity(records, now)
-	}
+	familiarity := <-familiarityDone
 	result := struct {
 		Version   int    `json:"version"`
 		Enabled   bool   `json:"enabled"`
