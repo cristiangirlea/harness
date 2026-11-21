@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -59,9 +58,14 @@ func ReadFamiliarity(ctx context.Context, now time.Time) (Familiarity, error) {
 	if err != nil {
 		return Familiarity{}, err
 	}
+	return ReadFamiliarityFrom(ctx, Records{Runs: runs, Batches: batches}, now)
+}
+
+// ReadFamiliarityFrom is ReadFamiliarity over records already loaded.
+func ReadFamiliarityFrom(ctx context.Context, r Records, now time.Time) (Familiarity, error) {
 	ctx, cancel := context.WithTimeout(ctx, familiarityBudget)
 	defer cancel()
-	return deriveFamiliarity(ctx, Records{Runs: runs, Batches: batches}, now)
+	return deriveFamiliarity(ctx, Records{Runs: r.Runs, Batches: r.Batches}, now)
 }
 
 func gitEvidence(ctx context.Context, dir string, args ...string) string {
@@ -127,13 +131,11 @@ type authored struct {
 	Areas []string `json:"areas"`
 }
 
-func familiarityCachePath() string { return filepath.Join(Dir(), "familiarity-cache.json") }
+const familiarityCacheFile = "familiarity-cache.json"
 
 func loadFamiliarityCache() familiarityCache {
 	var c familiarityCache
-	if data, err := os.ReadFile(familiarityCachePath()); err == nil && json.Unmarshal(data, &c) != nil {
-		c = familiarityCache{}
-	}
+	readGameFile(familiarityCacheFile, &c)
 	if c.Batches == nil {
 		c.Batches = map[string]batchEvidence{}
 	}
@@ -143,21 +145,7 @@ func loadFamiliarityCache() familiarityCache {
 	return c
 }
 
-func saveFamiliarityCache(c familiarityCache) {
-	data, err := json.Marshal(c)
-	if err != nil || os.MkdirAll(Dir(), 0700) != nil {
-		return
-	}
-	f, err := os.CreateTemp(Dir(), ".familiarity-*")
-	if err != nil {
-		return
-	}
-	_, werr := f.Write(data)
-	cerr := f.Close()
-	if werr != nil || cerr != nil || os.Rename(f.Name(), familiarityCachePath()) != nil {
-		os.Remove(f.Name())
-	}
-}
+func saveFamiliarityCache(c familiarityCache) { writeGameFile(familiarityCacheFile, c) }
 
 func batchKey(root, base string, oids []string) string {
 	sorted := append([]string(nil), oids...)
@@ -191,49 +179,14 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 	var order []string
 	touched := map[string]map[string]bool{}
 	excluded := map[string]map[string]bool{}
-	rootOf := map[string]string{}
-	nameOf := map[string]string{}
-	findRoot := func(dir string) string {
-		abs, err := filepath.Abs(dir)
-		if err != nil {
-			return ""
-		}
-		var walked []string
-		root := ""
-		for d := abs; ; {
-			if r, ok := rootOf[d]; ok {
-				root = r
-				break
-			}
-			walked = append(walked, d)
-			if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
-				root = d
-				break
-			}
-			parent := filepath.Dir(d)
-			if parent == d {
-				break
-			}
-			d = parent
-		}
-		for _, d := range walked {
-			rootOf[d] = root
-		}
-		return root
-	}
+	finder := newRootFinder()
+	findRoot := finder.root
 	addRoot := func(dir string) string {
-		if dir == "" {
-			return ""
-		}
 		root := findRoot(dir)
 		if root == "" {
 			return ""
 		}
-		name, ok := nameOf[root]
-		if !ok {
-			name = repoName(root)
-			nameOf[root] = name
-		}
+		name := finder.repoName(root)
 		if name != "" {
 			if _, seen := roots[name]; !seen {
 				order = append(order, name)

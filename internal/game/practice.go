@@ -550,20 +550,25 @@ func NewGitHubSource() (*GitHubSource, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewGitHubSourceFrom(Records{Runs: runs, Batches: batches}), nil
+}
+
+// NewGitHubSourceFrom finds the local checkouts of the repositories in r; folders outside a checkout have none.
+func NewGitHubSourceFrom(r Records) *GitHubSource {
+	finder := newRootFinder()
 	roots := map[string]string{}
-	for _, r := range runs {
-		root := repoRoot(r.Task.Dir)
-		if root != "" {
-			roots[repoName(root)] = root
+	add := func(dir string) {
+		if root := finder.root(dir); root != "" {
+			roots[finder.repoName(root)] = root
 		}
 	}
-	for _, b := range batches {
-		root := repoRoot(b.Dir)
-		if root != "" {
-			roots[repoName(root)] = root
-		}
+	for _, rec := range r.Runs {
+		add(rec.Task.Dir)
 	}
-	return &GitHubSource{roots: roots}, nil
+	for _, b := range r.Batches {
+		add(b.Dir)
+	}
+	return &GitHubSource{roots: roots}
 }
 func bounded(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

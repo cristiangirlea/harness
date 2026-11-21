@@ -115,6 +115,18 @@ func TestAdaCreditsScriptsAddedByMerges(t *testing.T) {
 	if !ok || len(got) != 1 || e.Track != TrackAda || e.XP != 10 || e.At.IsZero() {
 		t.Fatalf("scripts = %+v", got)
 	}
+	if err := os.WriteFile(trace, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if again := derived(t, r, "ada:"); len(again) != 1 {
+		t.Fatalf("second read: %+v", again)
+	}
+	if traceData, err = os.ReadFile(trace); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(traceData), " show ") {
+		t.Fatalf("second read showed script files again: %s", traceData)
+	}
 	gitIn(t, repo, "remote", "set-url", "origin", "https://gitlab.com/example/app.git")
 	if got := derived(t, r, "ada:script:"); len(got) != 0 {
 		t.Fatalf("non-GitHub scripts = %+v", got)
@@ -733,5 +745,41 @@ func TestABatchBeingRemovedDecidesItsUnfinishedAttemptsAsFailed(t *testing.T) {
 	got := derived(t, r, "routed:")
 	if e, ok := got["routed:roC"]; !ok || e.Kind != "routed_failed" || e.XP != 0 {
 		t.Fatalf("routed:roC = %+v (%v); want routed_failed, since its batch record goes and its gates never finished", e, ok)
+	}
+}
+
+func TestFoldersOutsideACheckoutKeepTheirNameAndSkipGit(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	plain := filepath.Join(t.TempDir(), "0278c.task.r1")
+	if err := os.MkdirAll(plain, 0700); err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(t.TempDir(), "removed", "work")
+	for _, dir := range []string{plain, gone} {
+		w, err := runlog.Create("fake", agent.Task{Dir: dir}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(agent.Result{Status: agent.StatusOK}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source, err := NewGitHubSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(source.roots) != 0 {
+		t.Fatalf("roots outside a checkout: %v", source.roots)
+	}
+	r := Records{Runs: []runlog.Record{
+		{Done: true, Task: agent.Task{Dir: plain}, Result: agent.Result{Status: agent.StatusOK}, ID: "a"},
+		{Done: true, Task: agent.Task{Dir: gone}, Result: agent.Result{Status: agent.StatusOK}, ID: "b"},
+	}}
+	for i := range r.Runs {
+		r.Runs[i].Task.Timeout = agent.Duration(time.Minute)
+	}
+	got := derived(t, r, "ceiling:")
+	if got["ceiling:a"].Repo != "0278c.task.r1" || got["ceiling:b"].Repo != "work" {
+		t.Fatalf("repo names: %+v", got)
 	}
 }

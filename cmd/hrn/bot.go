@@ -86,7 +86,12 @@ func cmdBotStats(args []string) error {
 	if jsonOut {
 		return cmdBotStatsJSON(repo)
 	}
-	if err := game.Rebuild(); err != nil {
+	records, err := game.LoadRecords()
+	if err != nil {
+		return err
+	}
+	source := game.NewGitHubSourceFrom(records)
+	if err := game.RebuildFrom(records, source); err != nil {
 		var recordErr *game.PracticeRecordError
 		if !errors.As(err, &recordErr) {
 			return err
@@ -111,10 +116,6 @@ func cmdBotStats(args []string) error {
 	totals := game.Sum(events)
 	level := game.Level(totals.Person)
 	fmt.Printf("level %d, %d xp (%d more for level %d)\n", level, totals.Person, 50*(level+1)*(level+1)-totals.Person, level+1)
-	source, err := game.NewGitHubSource()
-	if err != nil {
-		return err
-	}
 	streak, days, err := game.NewPractice(source, time.Now()).Streak()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hrn bot stats: streak: %v\n", err)
@@ -141,7 +142,7 @@ func cmdBotStats(args []string) error {
 		badges = append(badges, "none yet")
 	}
 	fmt.Printf("badges: %s\n", strings.Join(badges, ", "))
-	familiarity, err := game.ReadFamiliarity(context.Background(), time.Now())
+	familiarity, err := game.ReadFamiliarityFrom(context.Background(), records, time.Now())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hrn bot stats: familiarity: %v\n", err)
 		return nil

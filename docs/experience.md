@@ -157,7 +157,9 @@ card. It uses the same formula over the `ada` track only.
 A rule nobody measured earns her nothing. Lesson admission verdicts live in the control
 service, so `ada:lesson` derives nothing from local records. Script events use first-parent
 merges in the locally known `origin/HEAD` history of repositories named by runs or batches;
-a repository without that reference yields no script events.
+a repository without that reference yields no script events. Whether a file added at a commit
+carries the header never changes, so the answer is kept in `merged-scripts.json` and each file
+is read once. Records whose folder is not inside a Git checkout name no repository here.
 
 ## The ledger
 
@@ -175,6 +177,8 @@ a repository without that reference yields no script events.
 - `settings.json`: `enabled` (the game switch); voice preferences are planned.
 - `familiarity-cache.json`: Git reads kept for familiarity (commit IDs, their dates and
   areas). Safe to delete; the next read rebuilds it.
+- `merged-scripts.json`: for each script file added by a merge (commit ID and path), whether
+  it carries the kept-script header. Safe to delete; the next rebuild reads the files again.
 
 The rules that make it rebuildable and safe to prune:
 
