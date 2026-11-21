@@ -607,7 +607,7 @@ func TestFamiliarityRefusedRepositoryLogKeepsTheCachedCopy(t *testing.T) {
 		t.Fatalf("cached copy dropped: %+v", c.Repos)
 	}
 	for _, h := range []time.Duration{12, 23} {
-		if got := twice(now.Add(h * time.Hour)); len(got.Known) != 1 {
+		if got := twice(now.Add(h * time.Hour)); got.Partial || len(got.Known) != 1 {
 			t.Fatalf("copy at +%dh: %+v", h, got)
 		}
 	}
@@ -618,6 +618,12 @@ func TestFamiliarityRefusedRepositoryLogKeepsTheCachedCopy(t *testing.T) {
 	got = twice(now)
 	if got.Partial || len(got.Known) != 0 || len(loadFamiliarityCache().Repos) != 1 {
 		t.Fatalf("refused with no copy: %+v, cache %+v", got, loadFamiliarityCache())
+	}
+	stubGit(t, hangingGit)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if got, err := deriveFamiliarity(ctx, Records{Runs: runs}, now.Add(15*time.Minute)); err != nil || !got.Partial {
+		t.Fatalf("a refusal stood in as a copy for a cut read: %+v %v", got, err)
 	}
 }
 

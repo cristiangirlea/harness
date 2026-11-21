@@ -424,7 +424,7 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			}
 		case rr.refused:
 			// A refusal is kept like an answer, with a copy under a day old standing in for the commits.
-			rr.found = repoEvidence{Checked: now, Refused: now, Commits: []authored{}}
+			rr.found = repoEvidence{Refused: now, Commits: []authored{}}
 			if rr.hit && !rr.cached.Checked.After(now) && now.Sub(rr.cached.Checked) < repoStale {
 				rr.found.Checked, rr.found.Commits = rr.cached.Checked, rr.cached.Commits
 			}
