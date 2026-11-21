@@ -117,10 +117,11 @@ Git reads stop 3 seconds after the records are loaded, with up to six at once. T
 evidence of a repository not fully read in time is left out (its practice reads still
 count), and `hrn bot stats` says so (`familiarity: time limit
 reached, some repositories were skipped`). Reads are kept in `familiarity-cache.json` so the
-next call gets further: a batch's evidence that git returned is kept while the batch record
-exists, since its full commit IDs fix it; a repository's recent commits are reused for 10 minutes, and a copy up
-to a day old stands in when a fresh read does not finish in time. Familiarity is therefore
-usually up to 10 minutes old, and up to a day when a read runs out of time.
+next call gets further: a batch's evidence is kept while the batch record exists, since its
+full commit IDs fix it, and a batch whose commits git refuses (pruned) is read again after a
+day. A repository's recent commits are reused for 10 minutes, and a copy up to a day old
+stands in when a fresh read does not finish in time or git refuses it. Familiarity is
+therefore usually up to 10 minutes old, and up to a day when a read runs out of time.
 
 ## Levels and badges
 

@@ -110,13 +110,19 @@ func fileArea(file string) string {
 
 // familiarityCache keeps git reads between calls: batch evidence for good, since commit IDs fix it, and repository reads for a while.
 type familiarityCache struct {
+	Version int                      `json:"version"`
 	Batches map[string]batchEvidence `json:"batches"`
 	Repos   map[string]repoEvidence  `json:"repos"`
 }
 
+// familiarityCacheVersion drops caches from builds that kept evidence git had refused.
+const familiarityCacheVersion = 2
+
 type batchEvidence struct {
 	Excluded []string `json:"excluded"`
 	Areas    []string `json:"areas"`
+	// Refused is when git refused the reads; such evidence is read again after repoStale.
+	Refused time.Time `json:"refused,omitzero"`
 }
 
 type repoEvidence struct {
@@ -136,6 +142,9 @@ const familiarityCacheFile = "familiarity-cache.json"
 func loadFamiliarityCache() familiarityCache {
 	var c familiarityCache
 	readGameFile(familiarityCacheFile, &c)
+	if c.Version != familiarityCacheVersion {
+		c = familiarityCache{}
+	}
 	if c.Batches == nil {
 		c.Batches = map[string]batchEvidence{}
 	}
@@ -145,7 +154,10 @@ func loadFamiliarityCache() familiarityCache {
 	return c
 }
 
-func saveFamiliarityCache(c familiarityCache) { writeGameFile(familiarityCacheFile, c) }
+func saveFamiliarityCache(c familiarityCache) {
+	c.Version = familiarityCacheVersion
+	writeGameFile(familiarityCacheFile, c)
+}
 
 func batchKey(root, base string, oids []string) string {
 	sorted := append([]string(nil), oids...)
@@ -256,8 +268,8 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 		if fixed {
 			read.key = batchKey(findRoot(b.Dir), base, oids)
 		}
-		if found, ok := kept.Batches[read.key]; ok && read.key != "" {
-			read.found, read.answered, read.settled = found, true, true
+		if found, ok := kept.Batches[read.key]; ok && read.key != "" && (found.Refused.IsZero() || !found.Refused.After(now) && now.Sub(found.Refused) < repoStale) {
+			read.found, read.answered, read.settled = found, found.Refused.IsZero(), true
 		}
 		batchReads = append(batchReads, read)
 	}
@@ -267,6 +279,8 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 		hit     bool
 		found   repoEvidence
 		settled bool
+		// refused is set when git refused the log, which a cached copy may stand in for.
+		refused bool
 	}
 	repoReads := map[string]*repoRead{}
 	for _, name := range order {
@@ -330,15 +344,19 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			continue
 		}
 		reads = append(reads, func() {
-			email, _, ok := gitRead(ctx, rr.root, "config", "--get", "user.email")
-			if !ok {
+			email, _, settled := gitRead(ctx, rr.root, "config", "--get", "user.email")
+			if !settled {
 				return
 			}
 			email = strings.TrimSpace(email)
 			found := repoEvidence{Checked: now, Commits: []authored{}}
 			if email != "" {
-				out, _, ok := gitRead(ctx, rr.root, "log", "--no-show-signature", "--all", "--since="+now.AddDate(0, 0, -90).Format(time.RFC3339), "--until="+now.Format(time.RFC3339), "--format=%x1e%H%x00%ae%x00%ct", "--name-only", "--no-renames", "--")
-				if !ok {
+				out, answered, settled := gitRead(ctx, rr.root, "log", "--no-show-signature", "--all", "--since="+now.AddDate(0, 0, -90).Format(time.RFC3339), "--until="+now.Format(time.RFC3339), "--format=%x1e%H%x00%ae%x00%ct", "--name-only", "--no-renames", "--")
+				if !settled {
+					return
+				}
+				if !answered {
+					rr.refused = true
 					return
 				}
 				for _, entry := range strings.Split(out, "\x1e") {
@@ -374,11 +392,15 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			incomplete[br.repo] = true
 			continue
 		}
-		if br.key != "" && br.answered {
-			if _, ok := kept.Batches[br.key]; !ok {
+		if br.key != "" {
+			found := br.found
+			if !br.answered && found.Refused.IsZero() {
+				found.Refused = now
+			}
+			if old, ok := kept.Batches[br.key]; !ok || !old.Refused.Equal(found.Refused) {
 				dirty = true
 			}
-			next.Batches[br.key] = br.found
+			next.Batches[br.key] = found
 		}
 		for _, h := range br.found.Excluded {
 			excluded[br.repo][h] = true
@@ -396,6 +418,9 @@ func deriveFamiliarity(ctx context.Context, records Records, now time.Time) (Fam
 			}
 		case rr.hit && !rr.cached.Checked.After(now) && now.Sub(rr.cached.Checked) < repoStale:
 			rr.found, rr.settled = rr.cached, true
+		case rr.refused:
+			rr.found, rr.settled = repoEvidence{}, true
+			continue
 		default:
 			incomplete[name] = true
 			continue
