@@ -103,6 +103,10 @@ func codexGateEnvNames(t Task) []string {
 			names = append(names, name)
 		}
 	}
+	// The run's proxy is set on codex after these are read, so the operator's environment may not name it.
+	if len(t.Egress) > 0 {
+		names = append(names, egressProxyNames...)
+	}
 	slices.Sort(names)
 	return slices.Compact(names)
 }
@@ -173,11 +177,11 @@ func seeCodexGateItem(line []byte, res *Result) {
 	// An item whose type cannot be read is as unknown as a new one.
 	_ = json.Unmarshal(l.Item, &item)
 	if item.Type == "command_execution" {
-		res.Error = gateUnrouted + "codex ran a command through its own shell tool, outside the gate"
+		res.Error, res.GateStop = gateUnrouted+"codex ran a command through its own shell tool, outside the gate", true
 		return
 	}
 	if !slices.Contains(codexKnownItems, item.Type) {
-		res.Error = gateUnrouted + fmt.Sprintf("codex used a tool hrn does not know (item %q), which may run outside the gate", item.Type)
+		res.Error, res.GateStop = gateUnrouted+fmt.Sprintf("codex used a tool hrn does not know (item %q), which may run outside the gate", item.Type), true
 	}
 }
 

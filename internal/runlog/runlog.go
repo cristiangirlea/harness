@@ -318,6 +318,13 @@ func LoadFor(v owner.Viewer, id string) (Record, error) {
 	return rec, nil
 }
 
+// ListMatching lists up to limit runs keep accepts, newest first, opening only folders started since.
+// The day of clock slack ListSince allows applies too; callers filter by recorded time.
+func ListMatching(since time.Time, limit int, keep func(Record) bool) ([]Record, error) {
+	recs, _, err := list(since, limit, keep)
+	return recs, err
+}
+
 // ListSince lists recent runs and unreadable counts with a day of clock slack.
 // Ids start with the local start time, so older ones are skipped unopened; callers filter by recorded time.
 func ListSince(since time.Time) ([]Record, int, error) {

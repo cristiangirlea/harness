@@ -619,3 +619,127 @@ func TestRunToolContinuesOnANamedNearlySpentBackend(t *testing.T) {
 		t.Error("the follow-up does not warn that codex is nearly spent")
 	}
 }
+
+func TestRunToolWaitsForTheResetWhenBothPlansAreOut(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	slept := fakeWait(t)
+	var calls atomic.Int32
+	agent.Register(scripted{"codex", func(agent.Task) agent.Result {
+		if calls.Add(1) == 1 {
+			return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(20 * time.Second)}
+		}
+		return agent.Result{Status: agent.StatusOK, Final: "finished after the reset", Turns: 1}
+	}})
+	if err := limits.Note("claude", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	res := s.call(t, "run", `{"prompt":"fix it","backend":"codex","mode":"auto","wait_limit":"1m"}`)
+	if res.IsError || !strings.Contains(res.Text(), "finished after the reset") || calls.Load() != 2 {
+		t.Fatalf("calls = %d, result: %s", calls.Load(), res.Text())
+	}
+	id, _ := res.StructuredContent.(map[string]any)["run_id"].(string)
+	rec, err := runlog.Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Backend != "codex" || rec.Continues == "" || rec.Task.WaitLimit != agent.Duration(time.Minute) {
+		t.Fatalf("run %s on %s continues %q, wait_limit %s", id, rec.Backend, rec.Continues, rec.Task.WaitLimit)
+	}
+	if !strings.Contains(res.Text(), "waited for codex's usage limit to reset") {
+		t.Errorf("text = %q, want the wait named", res.Text())
+	}
+	if len(*slept) != 1 {
+		t.Errorf("slept %v, want one wait for codex's reset", *slept)
+	}
+}
+
+// fakeWait replaces the reset wait's sleep for one test and records what it was asked for.
+func fakeWait(t *testing.T) *[]time.Duration {
+	t.Helper()
+	var slept []time.Duration
+	orig := followup.WaitSleep
+	followup.WaitSleep = func(ctx context.Context, d time.Duration) error {
+		slept = append(slept, d)
+		return ctx.Err()
+	}
+	t.Cleanup(func() { followup.WaitSleep = orig })
+	return &slept
+}
+
+func TestRunToolWaitsBeforeStartingWhenBothPlansAreOut(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	slept := fakeWait(t)
+	var calls atomic.Int32
+	agent.Register(scripted{"codex", func(agent.Task) agent.Result {
+		calls.Add(1)
+		return agent.Result{Status: agent.StatusOK, Final: "finished after the reset", Turns: 1}
+	}})
+	for b, in := range map[string]time.Duration{"codex": 20 * time.Second, "claude": time.Hour} {
+		if err := limits.Note(b, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(in)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res := s.call(t, "run", `{"prompt":"fix it","backend":"codex","mode":"auto","wait_limit":"1m"}`)
+	if res.IsError || calls.Load() != 1 || len(*slept) != 1 {
+		t.Fatalf("calls = %d, slept %v, result: %s", calls.Load(), *slept, res.Text())
+	}
+	id, _ := res.StructuredContent.(map[string]any)["run_id"].(string)
+	rec, err := runlog.Load(id)
+	if err != nil || rec.Backend != "codex" {
+		t.Fatalf("run %s: %v", id, err)
+	}
+}
+
+func TestRunToolStartsNothingOnABackendDisabledDuringTheWait(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	var slept int
+	orig := followup.WaitSleep
+	followup.WaitSleep = func(context.Context, time.Duration) error {
+		slept++
+		return prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude"}})
+	}
+	t.Cleanup(func() { followup.WaitSleep = orig })
+	var calls atomic.Int32
+	for _, name := range []string{"codex", "claude"} {
+		agent.Register(scripted{name, func(agent.Task) agent.Result {
+			calls.Add(1)
+			return agent.Result{Status: agent.StatusOK, Final: "finished", Turns: 1}
+		}})
+	}
+	for b, in := range map[string]time.Duration{"codex": 20 * time.Second, "claude": time.Hour} {
+		if err := limits.Note(b, agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(in)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res := s.call(t, "run", `{"prompt":"fix it","backend":"codex","mode":"auto","wait_limit":"1m"}`)
+	if !res.IsError || calls.Load() != 0 || slept != 1 || !strings.Contains(res.Text(), "codex is no longer enabled") {
+		t.Fatalf("calls = %d, slept %d, error %v: %s", calls.Load(), slept, res.IsError, res.Text())
+	}
+}
+
+func TestRunToolDoesNotCarryOnOnABackendDisabledDuringTheWaitAfterALimit(t *testing.T) {
+	s := connect(t, t.TempDir())
+	standIn(t)
+	var slept int
+	orig := followup.WaitSleep
+	followup.WaitSleep = func(context.Context, time.Duration) error {
+		slept++
+		return prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude"}})
+	}
+	t.Cleanup(func() { followup.WaitSleep = orig })
+	var calls atomic.Int32
+	agent.Register(scripted{"codex", func(agent.Task) agent.Result {
+		calls.Add(1)
+		return agent.Result{Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(20 * time.Second)}
+	}})
+	if err := limits.Note("claude", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	res := s.call(t, "run", `{"prompt":"fix it","backend":"codex","mode":"auto","wait_limit":"1m"}`)
+	if calls.Load() != 1 || slept != 1 || !strings.Contains(res.Text(), "not carried on: not started after the wait: codex is no longer enabled") {
+		t.Fatalf("calls = %d, slept %d: %s", calls.Load(), slept, res.Text())
+	}
+}

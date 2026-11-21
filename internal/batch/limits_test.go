@@ -643,3 +643,95 @@ func TestAnAttemptStaysOnANearlySpentBackendWhenThePartnerCannotTakeOver(t *test
 		t.Errorf("info events = %q, want the low quota and why claude was passed over", s)
 	}
 }
+
+// disableDuringWait replaces the reset wait's sleep with one that leaves only claude enabled.
+func disableDuringWait(t *testing.T) *[]time.Duration {
+	t.Helper()
+	var slept []time.Duration
+	orig := followup.WaitSleep
+	followup.WaitSleep = func(_ context.Context, d time.Duration) error {
+		slept = append(slept, d)
+		return prefs.Save(runlog.Home(), prefs.Prefs{EnabledNames: []string{"claude"}})
+	}
+	t.Cleanup(func() { followup.WaitSleep = orig })
+	return &slept
+}
+
+func TestABackendDisabledDuringTheStartWaitGetsNoAttempt(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	slept := disableDuringWait(t)
+	noteResets(t, map[string]time.Duration{"codex": 20 * time.Second, "claude": time.Hour})
+	var calls atomic.Int32
+	agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
+		calls.Add(1)
+		return agent.Result{Backend: "codex", Status: agent.StatusOK, Final: "finished", Turns: 1}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Options: agent.Options{WaitLimit: agent.Duration(time.Minute)},
+		Tasks: []Task{{ID: "changed", Prompt: "write it"}}})
+	tr := res.Tasks[0]
+	if len(*slept) != 1 || calls.Load() != 0 || len(tr.Attempts) != 0 || tr.Status != StatusFail || !strings.Contains(tr.Error, "codex is no longer enabled") {
+		t.Fatalf("slept %v, codex ran %d times, task = %s with %d attempts (%q); want no attempt, saying why", *slept, calls.Load(), tr.Status, len(tr.Attempts), tr.Error)
+	}
+	if !strings.Contains(eventsText(t, res.ID), "codex is no longer enabled") {
+		t.Error("the flow does not record why codex was not started")
+	}
+}
+
+func TestABackendDisabledDuringTheWaitAfterALimitIsNotCarriedOn(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	slept := disableDuringWait(t)
+	noteResets(t, map[string]time.Duration{"claude": time.Hour})
+	var calls atomic.Int32
+	agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
+		calls.Add(1)
+		return agent.Result{Backend: "codex", Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(20 * time.Second)}
+	}})
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Options: agent.Options{WaitLimit: agent.Duration(time.Minute)},
+		Tasks: []Task{{ID: "changed", Prompt: "write it"}}})
+	tr := res.Tasks[0]
+	if len(*slept) != 1 || calls.Load() != 1 || len(tr.Attempts) != 1 {
+		t.Fatalf("slept %v, codex ran %d times, %d attempts; want no attempt after the wait", *slept, calls.Load(), len(tr.Attempts))
+	}
+	if !strings.Contains(eventsText(t, res.ID), "not carried on") || !strings.Contains(eventsText(t, res.ID), "codex is no longer enabled") {
+		t.Errorf("flow reasons = %q, want the refused carry-on explained", eventsText(t, res.ID))
+	}
+}
+
+func TestANoSwitchTaskWaitsForItsOwnAccountAndRunsOnIt(t *testing.T) {
+	dir := initRepo(t)
+	standIn(t)
+	slept := fakeWait(t)
+	pref := prefs.Prefs{Accounts: map[string][]prefs.Account{"codex": {{Name: "a", Home: t.TempDir()}, {Name: "b", Home: t.TempDir()}}}}
+	if err := prefs.Save(runlog.Home(), pref); err != nil {
+		t.Fatal(err)
+	}
+	if err := limits.NoteAccount("codex", "b", agent.Result{Status: agent.StatusLimited, LimitResets: time.Now().Add(10 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	agent.Register(stub{"codex", func(context.Context, agent.Task) agent.Result {
+		calls.Add(1)
+		return agent.Result{Backend: "codex", Account: "a", Status: agent.StatusLimited, Error: "You've hit your usage limit.", LimitResets: time.Now().Add(20 * time.Second)}
+	}})
+	// The stub cannot bind an account, so the one asked for is what it reports.
+	var asked []string
+	orig := backendForAccount
+	backendForAccount = func(name, account string) (agent.Backend, error) {
+		asked = append(asked, name+"@"+account)
+		return stub{name, func(context.Context, agent.Task) agent.Result {
+			return agent.Result{Backend: name, Account: account, Status: agent.StatusOK, Final: "finished", Turns: 1}
+		}}, nil
+	}
+	t.Cleanup(func() { backendForAccount = orig })
+	res, _ := run(t, Spec{Dir: dir, Backend: "codex", Options: agent.Options{NoSwitch: true, WaitLimit: agent.Duration(time.Minute)},
+		Tasks: []Task{{ID: "own", Prompt: "write it"}}})
+	tr := res.Tasks[0]
+	if len(*slept) != 1 || (*slept)[0] < 15*time.Second || len(asked) != 1 || asked[0] != "codex@a" || calls.Load() != 1 {
+		t.Fatalf("slept %v, accounts asked %v, first stub ran %d times; want one wait for a's own reset, not b's sooner one", *slept, asked, calls.Load())
+	}
+	if tr.Status != StatusPass || len(tr.Attempts) != 2 || tr.Attempts[1].Result.Account != "a" {
+		t.Fatalf("task = %s with %d attempts (%q), want the carry-on on codex@a", tr.Status, len(tr.Attempts), tr.Error)
+	}
+}

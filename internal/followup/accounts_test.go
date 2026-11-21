@@ -120,7 +120,7 @@ func TestAccountContinuationAndCarryOn(t *testing.T) {
 		t.Fatalf("fresh = %q, %v", plan.Account, err)
 	}
 	agent.Register(stub{"codex", true})
-	next, why, err := After(rec.ID(), "codex", task, res)
+	next, why, err := After(rec.ID(), "codex", task, res, Waits{})
 	if err != nil || next == nil || next.To != "codex" || !next.Plan.Fresh || next.Plan.Account != "b" {
 		t.Fatalf("carry-on = %+v, %q, %v", next, why, err)
 	}
@@ -130,7 +130,7 @@ func TestAccountContinuationAndCarryOn(t *testing.T) {
 	if err := limits.NoteAccount("codex", "b", res); err != nil {
 		t.Fatal(err)
 	}
-	next, why, err = After(rec.ID(), "codex", task, res)
+	next, why, err = After(rec.ID(), "codex", task, res, Waits{})
 	if err != nil || next == nil || next.To != "claude" {
 		t.Fatalf("partner carry-on = %+v, %q, %v", next, why, err)
 	}

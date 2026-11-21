@@ -46,8 +46,8 @@ func TestPickMovesANearlySpentBackendToItsPartner(t *testing.T) {
 					t.Errorf("why = %q, want it to contain %q", why, want)
 				}
 			}
-			if pick, why := ChooseFor("codex", false); pick != "claude" || why == "" {
-				t.Errorf("ChooseFor(codex, unnamed) = %q, %q; want claude and a reason", pick, why)
+			if pick, why, _ := ChooseWaiting("codex", false); pick != "claude" || why == "" {
+				t.Errorf("ChooseWaiting(codex, unnamed) = %q, %q; want claude and a reason", pick, why)
 			}
 		})
 	}
@@ -116,16 +116,16 @@ func TestANamedBackendIsWarnedAboutNotMoved(t *testing.T) {
 	standIn(t, true, true)
 	now := time.Now()
 	fakeQuota(t, map[string]quota.Quota{"codex": {FiveHour: window(2, now.Add(time.Hour))}})
-	pick, why := ChooseFor("codex", true)
+	pick, why, _ := ChooseWaiting("codex", true)
 	if pick != "codex" || !strings.Contains(why, "codex has") || !strings.Contains(why, "named") {
-		t.Errorf("ChooseFor(codex, named) = %q, %q; want codex and a warning", pick, why)
+		t.Errorf("ChooseWaiting(codex, named) = %q, %q; want codex and a warning", pick, why)
 	}
 	// A remembered limit still moves a named backend: that run would fail at once.
 	if err := Note("codex", agent.Result{Status: agent.StatusLimited, LimitResets: now.Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	if pick, _ := ChooseFor("codex", true); pick != "claude" {
-		t.Errorf("ChooseFor(limited codex, named) = %q, want claude", pick)
+	if pick, _, _ := ChooseWaiting("codex", true); pick != "claude" {
+		t.Errorf("ChooseWaiting(limited codex, named) = %q, want claude", pick)
 	}
 }
 

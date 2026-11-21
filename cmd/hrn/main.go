@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/followup"
+	"github.com/cristiangirlea/harness/internal/game"
 	"github.com/cristiangirlea/harness/internal/hrnmcp"
 	"github.com/cristiangirlea/harness/internal/limits"
 	"github.com/cristiangirlea/harness/internal/mask"
@@ -179,7 +181,11 @@ Run flags:
                        lift the guard: agents may push, merge and deploy with your credentials
                        (every backend), and run_command may run sudo, rm -rf / and the like
       --inherit-env    start agent CLIs with your whole environment instead of an allowlisted one
+      --egress HOSTS   point agent CLIs at a proxy of the run's own that tunnels HTTPS only to these
+                       exact host names (comma list, repeatable) and the backend's own; advisory
       --no-switch      stay on this backend at its usage limit instead of using an enabled partner
+      --wait-limit D   when every eligible backend is at its usage limit, wait up to D (e.g. 2h) for the
+                       soonest remembered reset, then start on that backend (default 0: end limited)
       --issue REF      the GitHub issue this run works on (owner/name#N, its URL, or #N for origin's
                        repository), leased so a second run for it is refused, and claimed on GitHub
       --take-over      take the issue lease from its current holder
@@ -413,9 +419,23 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	if *continueID != "" {
 		routeNote = agent.ContinuationNote(*continueID, routed)
 	}
+	// One bound for the wait before the start and the wait after a limited result together.
+	waits := followup.NewBudget(time.Duration(opts.WaitLimit))
 	if !opts.NoSwitch && *account == "" && *continueID == "" {
 		meant := backend
-		if backend, routed = followup.ChooseFor(backend, named); backend != meant {
+		var bothOut bool
+		backend, routed, bothOut = followup.ChooseWaiting(backend, named)
+		if bothOut && opts.WaitLimit > 0 {
+			waited, err := waitToStart(parent, meant, routed, waits)
+			if err != nil {
+				return 1, err
+			}
+			routed = waited.note
+			if waited.ok {
+				backend = waited.backend
+			}
+		}
+		if backend != meant {
 			if routedBy != nil {
 				opts.Effort = "" // the row measured the limited backend, not its partner
 			}
@@ -479,12 +499,11 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	}
 	defer releaseRunIssue(ctx, issue, "run "+rec.ID()+" ended")
 
-	var emit func(agent.Event)
+	var show func(agent.Event)
 	var r *renderer
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
-		emit = func(e agent.Event) {
-			rec.Event(e)
+		show = func(e agent.Event) {
 			if !e.Partial {
 				if e.Time.IsZero() {
 					e.Time = time.Now()
@@ -494,8 +513,9 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		}
 	} else {
 		r = newRenderer(thinking)
-		emit = func(e agent.Event) { rec.Event(e); r.Event(e) }
+		show = r.Event
 	}
+	emit := func(e agent.Event) { rec.Event(e); show(e) }
 
 	if routed != "" {
 		emit(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: routed})
@@ -524,9 +544,16 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 	var next *followup.CarryOn
 	var why string
 	if ctx.Err() == nil {
-		next, why, err = followup.After(rec.ID(), backend, task, res)
+		next, why, err = followup.After(rec.ID(), backend, task, res, followup.Waits{Budget: waits, KeepAccount: *account != ""})
 	} else if err := followup.Note(backend, res); err != nil {
 		fmt.Fprintln(os.Stderr, "hrn: the limit was not remembered:", err)
+	}
+	if next != nil && next.Waiting != "" {
+		// The limited run's record is closed: the wait is shown now and recorded on the carry-on.
+		show(agent.Event{Time: time.Now(), Kind: agent.EventInfo, Text: next.Waiting})
+		if werr := next.Wait(ctx); werr != nil {
+			next, why = nil, "not carried on: "+werr.Error()
+		}
 	}
 	switch {
 	case err != nil:
@@ -573,6 +600,34 @@ func cmdRunContext(parent context.Context, args []string) (int, error) {
 		return 1, nil
 	}
 	return 0, nil
+}
+
+type waitedStart struct {
+	ok            bool
+	backend, note string
+}
+
+// waitToStart waits for the soonest remembered reset when a new run's backend and partner are both limited; one that cannot wait starts as before.
+func waitToStart(parent context.Context, meant, why string, waits *followup.Budget) (waitedStart, error) {
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer stop()
+	def := resolve.DefaultBackendNameIn(runlog.Home())
+	r, err := followup.WaitFor(ctx, followup.WaitScope{Backend: cmp.Or(meant, def), Partner: true}, nil, waits, func(r followup.Reset) {
+		fmt.Fprintf(os.Stderr, "hrn: %s; waiting for %s\n", why, r)
+	})
+	switch {
+	case err == nil:
+		b := r.Backend
+		if meant == "" && b == def {
+			b = "" // still the default, not a switch
+		}
+		return waitedStart{true, b, fmt.Sprintf("%s; waited for %s", why, r)}, nil
+	case ctx.Err() != nil:
+		return waitedStart{}, errors.New("run: canceled while waiting for a usage limit to reset")
+	case errors.Is(err, followup.ErrChanged):
+		return waitedStart{}, fmt.Errorf("run: %w", err)
+	}
+	return waitedStart{note: why + "; not waiting: " + err.Error()}, nil
 }
 
 var backendNoticeOnce sync.Once
@@ -786,12 +841,38 @@ func cmdRuns(args []string) error {
 	}
 	fs := flag.NewFlagSet("runs", flag.ContinueOnError)
 	n := fs.Int("n", 20, "")
+	jsonOut := fs.Bool("json", false, "")
+	repo := fs.String("repo", "", "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	recs, err := runlog.List(*n)
+	// flag stops at the first word that is not a flag, so a misplaced one would be dropped without a word.
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q: hrn runs takes flags only", fs.Arg(0))
+	}
+	repoSet := false
+	fs.Visit(func(f *flag.Flag) { repoSet = repoSet || f.Name == "repo" })
+	if repoSet && !game.RepoName(*repo) {
+		return fmt.Errorf("--repo wants OWNER/NAME, got %q", *repo)
+	}
+	if repoSet && !*jsonOut {
+		return errors.New("--repo needs --json")
+	}
+	var recs []runlog.Record
+	var err error
+	if repoSet {
+		want := "github.com/" + *repo
+		since := time.Now().Add(-runsRepoWindow)
+		// Listing every record takes tens of seconds on a large home, so one repository's runs come from recent folders only.
+		recs, err = runlog.ListMatching(since, *n, func(r runlog.Record) bool { return strings.EqualFold(r.Repo, want) && !r.Started.Before(since) })
+	} else {
+		recs, err = runlog.List(*n)
+	}
 	if err != nil {
 		return err
+	}
+	if *jsonOut {
+		return printRunsJSON(recs)
 	}
 	if len(recs) == 0 {
 		fmt.Println("no runs yet")
@@ -806,6 +887,35 @@ func cmdRuns(args []string) error {
 			rec.Result.Duration.Round(time.Second), printable(tools.OneLine(mask.Text(rec.Task.Prompt), 70)))
 	}
 	return nil
+}
+
+// runsRepoWindow is how far back hrn runs --repo looks.
+const runsRepoWindow = 14 * 24 * time.Hour
+
+type runJSON struct {
+	ID         string    `json:"id"`
+	Backend    string    `json:"backend"`
+	Status     string    `json:"status"`
+	Started    time.Time `json:"started"`
+	DurationMS int64     `json:"duration_ms"`
+	Repo       string    `json:"repo"`
+	Branch     string    `json:"branch"`
+}
+
+// printRunsJSON prints runs without their prompts or answers.
+func printRunsJSON(recs []runlog.Record) error {
+	runs := []runJSON{}
+	for _, rec := range recs {
+		r := runJSON{ID: rec.ID, Backend: rec.Backend, Status: "running", Started: rec.Started, Repo: rec.Repo, Branch: rec.Branch}
+		if rec.Done {
+			r.Status, r.DurationMS = string(rec.Result.Status), rec.Result.Duration.Milliseconds()
+		}
+		runs = append(runs, r)
+	}
+	return json.NewEncoder(os.Stdout).Encode(struct {
+		Version int       `json:"version"`
+		Runs    []runJSON `json:"runs"`
+	}{1, runs})
 }
 
 func cmdShow(args []string) error {

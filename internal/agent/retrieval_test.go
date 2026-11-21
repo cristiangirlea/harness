@@ -176,7 +176,7 @@ func TestRetrievalRefusesDurableExecutionBeforeAnyRequest(t *testing.T) {
 	calls := 0
 	task := Task{Prompt: "durable", Options: retrievalOptions(), Knowledge: knowledgeFactory, Durable: &DurableExecution{}, RunDir: t.TempDir()}
 	result := Run(context.Background(), retrievalBackend{"api", &seen, &calls}, task, func(Event) {})
-	if result.Status != StatusError || !strings.Contains(result.Error, "retrieval is unsupported for durable execution") || calls != 0 {
+	if result.Status != StatusError || !strings.Contains(result.Error, "retrieval is unsupported for durable execution") || !result.StartRefusal || calls != 0 {
 		t.Fatalf("durable retrieval was not refused: result=%+v backend calls=%d", result, calls)
 	}
 }
@@ -270,7 +270,7 @@ func TestRetrievalRefusesNativeSessionContinuationBeforeSearch(t *testing.T) {
 	calls := 0
 	task := Task{Prompt: "follow up", Options: retrievalOptions(), Knowledge: knowledgeFactory, ForkSession: "prior-session", RunDir: t.TempDir()}
 	result := Run(context.Background(), retrievalBackend{"codex", &seen, &calls}, task, func(Event) {})
-	if result.Status != StatusError || calls != 0 || network.Load() != 0 || !strings.Contains(result.Error, "native session") {
+	if result.Status != StatusError || calls != 0 || network.Load() != 0 || !strings.Contains(result.Error, "native session") || !result.StartRefusal {
 		t.Fatalf("native continuation: result=%+v calls=%d network=%d", result, calls, network.Load())
 	}
 }
@@ -290,8 +290,8 @@ func TestRetrievalKeepsThePinThroughAFailedReplay(t *testing.T) {
 	task.RetrievalState, task.RunDir, task.RetrievalRepair = first.Retrieval, t.TempDir(), true
 	task.Prompt = "task\nGate failed: ERR_REAL_FAILURE"
 	second := Run(context.Background(), b, task, func(Event) {})
-	if second.Status != StatusError || !strings.Contains(second.Error, "retrieval request rejected or unavailable") {
-		t.Fatal("repair search did not fail", second)
+	if second.Status != StatusError || !strings.Contains(second.Error, "retrieval request rejected or unavailable") || !second.StartRefusal {
+		t.Fatal("repair search failure was not a refusal", second)
 	}
 	_, network = retrievalServer(t, 200, "verified fixture")
 	task.Knowledge = knowledgeFactory

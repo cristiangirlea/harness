@@ -28,7 +28,7 @@ func TestCLIRefusesAModelThatIsNotAModelID(t *testing.T) {
 	t.Setenv("HRN_CLI_HELPER", "sleep")
 	res := helperCLI(parseOpencodeStream).Run(context.Background(),
 		Task{Prompt: "go", Dir: t.TempDir(), Options: Options{Mode: ModeAsk, Model: "x&calc", Timeout: Duration(5 * time.Second)}}, func(Event) {})
-	if res.Status != StatusError || !strings.Contains(res.Error, "is not a model id") {
+	if res.Status != StatusError || !strings.Contains(res.Error, "is not a model id") || !res.StartRefusal {
 		t.Fatalf("status = %s, error %q", res.Status, res.Error)
 	}
 }

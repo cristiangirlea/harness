@@ -25,7 +25,7 @@
 | `hrn retrieval corpus-digest FILE` | Read JSON corpus entries from an import request or knowledge inspect response and print the SHA-256 of compact, unescaped UTF-8 JSON rows `[key, source, content_sha256]`, sorted by those three fields, without a newline in the hashed bytes. Refuse a file with no entries or invalid UTF-8 in entry fields. |
 | `hrn version` | Print the hrn version, the Go version, and the commit it was built from (a `go install` build shows its module version instead; Go does not stamp builds made inside a `git worktree`). |
 | `hrn update [--main \| --ref REF \| --file PATH] [--dry-run] [--rollback]` | Replace every hrn copy on this computer with the newest release, a build of a ref or a file, each under a backup, and restart a running `hrn watch`; `--rollback` puts the backups back (see [hrn update](#hrn-update)). |
-| `hrn runs [-n N]` | List recent runs. |
+| `hrn runs [-n N] [--json [--repo OWNER/NAME]]` | List recent runs. `--json` prints `{version: 1, runs: [...]}`, newest first, each with `id`, `backend`, `status` (`running` while a run has no result), `started`, `duration_ms` (0 while running), `repo` and `branch`, never a prompt or an answer. `--repo` keeps the runs whose recorded repository is `github.com/OWNER/NAME` (any case), opens only run folders from the last 14 days, and counts only those runs toward `-n`. |
 | `hrn runs prune --older-than 30d [--keep N] [--dry-run]` | Remove old runs, batch records and eval records; first fold what it removes into the experience ledger, removing nothing if that fails (see [Run records](run-records.md#the-experience-ledger)). |
 | `hrn show [--json] <id>` | Replay a recorded run. |
 | `hrn flow <run-or-batch-id> [--level simple\|technical\|debug] [--json]` | Show the recorded execution tree for a run or batch; `technical` is the default and includes tool steps, while `debug` adds info steps and IDs. |
@@ -33,7 +33,7 @@
 | `hrn show --usage [--json] <id>` | A run's model calls, one row each: tokens, the context each carried, the cache reads so far, and compactions recorded or probable (see [Usage per turn](run-records.md#usage-per-turn)). |
 | `hrn watch [--addr HOST:PORT] [--lan[=NAME]] [--voice PROGRAM [--voice-arg ARG ...]] [--public https://HOST --access-team TEAM.cloudflareaccess.com --access-aud TAG [--owner-email ADDR ...]]` | Follow runs and batches live and view the [Backends card](watch.md#backends); loopback and verified public viewers can change backend preferences. Public mode keeps the loopback listener and verifies Cloudflare Access on every request; it cannot be combined with `--lan` (see [Behind Cloudflare Access](watch.md#behind-cloudflare-access)). `--owner-email` (repeatable) names the verified emails that see this install's runs and batches; other verified visitors see only records they own. `--voice` (a full path) speaks Ada's sentences through a speech program on this computer, with `--voice-arg` (repeatable) as its arguments: one sentence on standard input, a WAV file on standard output, no shell, 30 seconds a sentence, this computer's browser only; it cannot be combined with `--public` (see [A local voice](watch.md#a-local-voice)). |
 | `hrn bot [--addr HOST:PORT] [--voice PROGRAM [--voice-arg ARG ...]]` | Open Ada, hrn watch's bot, in a small window, serving hrn watch on loopback unless one already does; `--voice` and `--voice-arg` as for `hrn watch` (see [Ada, the bot](watch.md#ada-the-bot)). |
-| `hrn bot stats [--json]` | Show your level, this week's experience, practice streak and badges; `--json` prints a read-only, versioned JSON object (see [Experience](experience.md)). |
+| `hrn bot stats [--json [--repo OWNER/NAME]]` | Show your level, this week's experience, practice streak and badges; `--json` prints a read-only, versioned JSON object, and `--repo` adds one repository's delivery and the week's top repositories without reading familiarity (see [Experience](experience.md#json-stats)). |
 | `hrn bot practice [swap\|answer [--file PATH]\|mark got_it\|partly\|missed\|read owner/repo#n]` | Show or swap today's exercise, answer from stdin or a file, mark it, or start a read of an open pull request. |
 | `hrn mcp` | Serve hrn as an MCP server on stdio (see [MCP](mcp.md#mcp)). |
 | `hrn batch [flags] <tasks.json>` | Run tasks in parallel git worktrees with gates and retries; each task may declare `purpose` (see [Batches](batches.md#batches)). |
@@ -163,7 +163,12 @@ at most 16 KiB), `--no-skills` (claude: skills off; see
 [Harness variants](evaluations.md#harness-variants)),
 `--allow-dangerous`, `--inherit-env` (CLI backends: your whole environment; see
 [A clean environment for CLI workers](backends.md#a-clean-environment-for-cli-workers)),
-`--no-switch` (see
+`--egress HOSTS` (CLI backends: a comma list, repeatable, of exact host names the run's
+proxy tunnels HTTPS to, besides the backend's own; advisory, see
+[Egress allowlist](permissions.md#egress-allowlist-advisory)),
+`--no-switch` and `--wait-limit D` (wait up to D, e.g. `2h`, for the soonest remembered reset
+when every eligible backend is at its usage limit, then start on that backend; default 0 ends
+the run `limited` as before; see
 [When a plan's usage limit is reached](backends.md#when-a-plans-usage-limit-is-reached)),
 `--issue REF` (the GitHub issue the run works on: `owner/name#N`, its URL, or `#N` for the
 workspace's origin; leased before the agent starts, so a second run for it exits 2 naming the

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/cristiangirlea/harness/internal/egress"
 )
 
 // Options shares CLI, batch, and MCP configuration.
@@ -59,6 +61,9 @@ type Options struct {
 	// instead of the allowlisted one (sanitizedEnv); the guard still applies.
 	InheritEnv bool `json:"inherit_env,omitempty" flag:"inherit-env" desc:"Start agent CLIs with your whole environment instead of an allowlisted one; the guard still applies (CLI backends)."`
 
+	// Egress starts an allowlisting proxy for an agent CLI; the backend's own hosts are added to these.
+	Egress HostList `json:"egress,omitempty" desc:"Point agent CLIs at a proxy of the run's own that tunnels HTTPS only to these exact host names, plus the backend's own; advisory: a process that ignores proxy variables is not stopped (CLI backends; default off)."`
+
 	// Timeout ends the run when it passes; zero means no deadline.
 	Timeout Duration `json:"timeout,omitempty" desc:"Stop the run after this long, e.g. 20m."`
 
@@ -70,6 +75,9 @@ type Options struct {
 
 	// NoSwitch prevents continuation on a partner backend.
 	NoSwitch bool `json:"no_switch,omitempty" desc:"Stay on this backend when it reaches its usage limit, instead of carrying on on an enabled partner (claude and codex pair by default)."`
+
+	// WaitLimit bounds a wait for a remembered usage-limit reset; zero never waits.
+	WaitLimit Duration `json:"wait_limit,omitempty" flag:"wait-limit" desc:"When every eligible backend is at its usage limit, wait up to this long (e.g. 2h) for the soonest remembered reset, then start on that backend (default 0: end limited at once)."`
 
 	// Issue is leased for the run so that a second run for it is refused.
 	Issue    string `json:"issue,omitempty" desc:"GitHub issue this run works on (owner/name#N, its URL, or #N for this repository's origin); taken as a lease so a second run for it is refused."`
@@ -108,8 +116,18 @@ func (o Options) ValidateShape() error {
 	if err := o.CompactWindow.Check(); err != nil {
 		return err
 	}
+	// An empty list in a batch task would quietly drop the spec's proxy.
+	if o.Egress != nil && len(o.Egress) == 0 {
+		return fmt.Errorf("egress is an empty list; leave it out to run without the proxy")
+	}
+	if err := egress.ValidateHosts(o.Egress); err != nil {
+		return err
+	}
 	if math.IsNaN(o.MaxCostUSD) || math.IsInf(o.MaxCostUSD, 0) {
 		return fmt.Errorf("max cost must be finite")
+	}
+	if o.WaitLimit < 0 || time.Duration(o.WaitLimit) > MaxLimitWindow {
+		return fmt.Errorf("wait_limit %s: must be between 0 and %s", o.WaitLimit, time.Duration(MaxLimitWindow))
 	}
 	return ValidateLimits(time.Duration(o.Timeout), o.MaxCostUSD, o.TaskBudget)
 }

@@ -173,7 +173,7 @@ func TestChooseAndAfterUseOnlyAnEnabledInstalledPartner(t *testing.T) {
 			}
 			prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
 			id := limitedRun(t, prev)
-			next, why, err := After(id, "codex", prev, res)
+			next, why, err := After(id, "codex", prev, res, Waits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -240,7 +240,7 @@ func TestAnEnabledAPIAheadOfAPlanBackendIsSkippedAsAPartner(t *testing.T) {
 		t.Fatalf("choice %q, want claude", got)
 	}
 	prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
-	next, why, err := After(limitedRun(t, prev), "codex", prev, res)
+	next, why, err := After(limitedRun(t, prev), "codex", prev, res, Waits{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestTheChoiceContinuesPastALimitedOrMeteredPartner(t *testing.T) {
 			}
 			prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
 			res := agent.Result{Backend: "codex", Status: agent.StatusLimited, LimitResets: now.Add(time.Hour)}
-			next, why, err := After(limitedRun(t, prev), "codex", prev, res)
+			next, why, err := After(limitedRun(t, prev), "codex", prev, res, Waits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -357,7 +357,7 @@ func TestAnAgyLimitWithNoPartnerEndsLimitedAndIsRemembered(t *testing.T) {
 			until := time.Now().Add(167 * time.Hour).Truncate(time.Second)
 			res := agent.Result{Backend: "agy", Status: agent.StatusLimited, LimitResets: until}
 			prev := agent.Task{Prompt: "hello", Dir: t.TempDir()}
-			next, why, err := After(limitedRun(t, prev), "agy", prev, res)
+			next, why, err := After(limitedRun(t, prev), "agy", prev, res, Waits{})
 			if err != nil || next != nil {
 				t.Fatalf("carry-on %+v, %q, %v; want none without a partner", next, why, err)
 			}

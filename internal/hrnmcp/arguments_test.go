@@ -56,8 +56,10 @@ func TestToolArgumentsAcceptEveryOfferedSchemaProperty(t *testing.T) {
 			if _, ok := args["compact_window"]; ok {
 				args["compact_window"] = "auto"
 			}
-			if _, ok := args["timeout"]; ok {
-				args["timeout"] = "0s"
+			for _, d := range []string{"timeout", "wait_limit"} {
+				if _, ok := args[d]; ok {
+					args[d] = "0s"
+				}
 			}
 			raw, err := json.Marshal(args)
 			if err != nil {

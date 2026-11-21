@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cristiangirlea/harness/internal/egress"
 	"github.com/cristiangirlea/harness/internal/envpolicy"
 	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/nowindow"
@@ -207,36 +208,40 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventError, Text: err.Error()})
 		return finish(&res, started)
 	}
+	refuse := func(err error) Result {
+		res.StartRefusal = true
+		return fail(StatusError, err)
+	}
 
 	BindBackendAccount(c, &task)
 	if task.AccountHome != "" {
 		res.Account = c.Account
 		info, err := os.Stat(task.AccountHome)
 		if err != nil || !info.IsDir() {
-			return fail(StatusError, fmt.Errorf("account %s: its config home is missing", c.Account))
+			return refuse(fmt.Errorf("account %s: its config home is missing", c.Account))
 		}
 	}
 	if task.ForkSession != "" && !c.forks {
-		return fail(StatusError, fmt.Errorf("the %s backend cannot resume a session", c.name))
+		return refuse(fmt.Errorf("the %s backend cannot resume a session", c.name))
 	}
 	// Disk-sourced session IDs must not become CLI flags.
 	if task.ForkSession != "" && !sessionID.MatchString(task.ForkSession) {
-		return fail(StatusError, fmt.Errorf("session id %q is not one the %s CLI issues", task.ForkSession, c.name))
+		return refuse(fmt.Errorf("session id %q is not one the %s CLI issues", task.ForkSession, c.name))
 	}
 	if task.Model != "" && !ValidModel(task.Model) {
-		return fail(StatusError, fmt.Errorf("model %q is not a model id", task.Model))
+		return refuse(fmt.Errorf("model %q is not a model id", task.Model))
 	}
 
 	// A CLI whose commands cannot reach the gate is refused rather than run ungated.
 	if task.Gate && c.gateRoute == nil {
-		return fail(StatusError, fmt.Errorf("gate: the %s backend's commands do not run through %s yet; use the api, claude or codex backend, or run without --gate", c.name, tools.GateName))
+		return refuse(fmt.Errorf("gate: the %s backend's commands do not run through %s yet; use the api, claude or codex backend, or run without --gate", c.name, tools.GateName))
 	}
 	if task.NoTools && !c.mapsNoTools {
-		return fail(StatusError, fmt.Errorf("no_tools is not supported by the %s backend", c.name))
+		return refuse(fmt.Errorf("no_tools is not supported by the %s backend", c.name))
 	}
 	if c.mapsCompact {
 		if err := CheckCompactWindow(c.name, task.CompactWindow); err != nil {
-			return fail(StatusError, err)
+			return refuse(err)
 		}
 	}
 	bin, err := c.Detect()
@@ -245,7 +250,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	// cmd.exe treats free-text metacharacters as shell syntax.
 	if task.AppendSystemPrompt != "" && c.mapsSystemPrompt && isBatchFile(bin) {
-		return fail(StatusError, fmt.Errorf("append_system_prompt cannot be passed safely through %s; install the native %s CLI", filepath.Base(bin), c.name))
+		return refuse(fmt.Errorf("append_system_prompt cannot be passed safely through %s; install the native %s CLI", filepath.Base(bin), c.name))
 	}
 	var promptFile string
 	if !c.promptStdin {
@@ -289,7 +294,7 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 	}
 	if c.name == "codex" {
 		if err := codexBatchArgsError(bin, args); err != nil {
-			return fail(StatusError, err)
+			return refuse(err)
 		}
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
@@ -333,6 +338,22 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		key := accountHomeEnv(c.name)
 		cmd.Env = append(withoutEnv(cmd.Env, key), key+"="+task.AccountHome)
 	}
+	// After the allowlist and before the guard: the operator's own proxy is replaced and the guard keeps these.
+	var egressLine string
+	if len(task.Egress) > 0 {
+		hosts := egressHosts(c.name, task.Egress)
+		refusals := &egressRefusals{}
+		proxy, err := egress.Start(ctx, egress.Options{Hosts: hosts, OnDeny: refusals.add})
+		if err != nil {
+			return fail(StatusError, err)
+		}
+		defer func() {
+			proxy.Close()
+			refusals.report(emit)
+		}()
+		cmd.Env = withEgressProxy(cmd.Env, proxy.URL(), egressDefaults[c.name].node)
+		egressLine = fmt.Sprintf("egress: advisory; %d hosts allowed; a process that ignores proxy variables is not stopped", len(hosts))
+	}
 	guarded := !task.AllowDangerous
 	if guarded {
 		guardDir, err := os.MkdirTemp("", "hrn-guard-*")
@@ -372,6 +393,9 @@ func (c *CLIBackend) run(ctx context.Context, task Task, emit func(Event)) Resul
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: gateLine})
 	}
 	emit(Event{Time: time.Now(), Kind: EventInfo, Text: envLine})
+	if egressLine != "" {
+		emit(Event{Time: time.Now(), Kind: EventInfo, Text: egressLine})
+	}
 	if task.AccountHome != "" {
 		emit(Event{Time: time.Now(), Kind: EventInfo, Text: "account: " + c.Account})
 	}

@@ -3,6 +3,7 @@ package hrnmcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -292,9 +293,32 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			if args.ContinueRunID != "" {
 				routeNote = agent.ContinuationNote(args.ContinueRunID, routed)
 			}
+			// One bound for the wait before the start and the wait after a limited result together.
+			waits := followup.NewBudget(time.Duration(args.WaitLimit))
 			if !args.NoSwitch && args.Account == "" && args.ContinueRunID == "" {
 				meant := args.Backend
-				if args.Backend, routed = followup.ChooseFor(args.Backend, named); args.Backend != meant {
+				var bothOut bool
+				args.Backend, routed, bothOut = followup.ChooseWaiting(args.Backend, named)
+				if bothOut && args.WaitLimit > 0 {
+					def := resolve.DefaultBackendNameIn(runlog.Home())
+					r, err := followup.WaitFor(ctx, followup.WaitScope{Backend: cmp.Or(meant, def), Partner: true}, nil, waits, func(r followup.Reset) {
+						call.Progress(printableNote(routed+"; waiting for "+r.String(), 400))
+					})
+					switch {
+					case err == nil:
+						if args.Backend = r.Backend; meant == "" && r.Backend == def {
+							args.Backend = "" // still the default, not a switch
+						}
+						routed += "; waited for " + r.String()
+					case ctx.Err() != nil:
+						return text("run: canceled while waiting for a usage limit to reset", nil, true), nil
+					case errors.Is(err, followup.ErrChanged):
+						return text("run: "+err.Error(), nil, true), nil
+					default:
+						routed += "; not waiting: " + err.Error()
+					}
+				}
+				if args.Backend != meant {
 					if routedBy != nil {
 						args.Options.Effort = "" // the row measured the limited backend, not its partner
 					}
@@ -380,9 +404,16 @@ func runTool(defaultDir string, allowDangerous bool) mcp.Tool {
 			var next *followup.CarryOn
 			var why string
 			if ctx.Err() == nil {
-				next, why, err = followup.After(rec.ID(), args.Backend, task, res)
+				next, why, err = followup.After(rec.ID(), args.Backend, task, res, followup.Waits{Budget: waits, KeepAccount: args.Account != ""})
 			} else if err := followup.Note(args.Backend, res); err != nil {
-				notes = append(notes, "the limit was not remembered: "+err.Error())
+				notes = append(notes, "the usage-limit reset could not be saved")
+			}
+			if next != nil && next.Waiting != "" {
+				// The limited run's record is closed: the wait is reported now and recorded on the carry-on.
+				call.Progress(printableNote(next.Waiting, 400))
+				if werr := next.Wait(ctx); werr != nil {
+					next, why = nil, "not carried on: "+werr.Error()
+				}
 			}
 			switch {
 			case err != nil:

@@ -444,3 +444,131 @@ func TestBotStatsJSON(t *testing.T) {
 		t.Fatal(obj)
 	}
 }
+
+func TestBotStatsJSONWithRepoAddsThatRepositorysDeliveryAndSkipsFamiliarity(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	now := time.Now().UTC()
+	if _, err := game.Append([]game.Event{
+		{Key: "review:r1", Kind: "review_clean", Track: game.TrackDelivery, XP: 20, At: now, Repo: "example/app"},
+		{Key: "bug:b1", Kind: "bug_squashed", Track: game.TrackDelivery, XP: 15, At: now, Repo: "Example/App"},
+		{Key: "review:r2", Kind: "review_clean", Track: game.TrackDelivery, XP: 20, At: now, Repo: "example/other"},
+		{Key: "review:r3", Kind: "review_clean", Track: game.TrackDelivery, XP: 20, At: now, Repo: "a-run-folder"},
+		{Key: "rep:today", Kind: "daily_practice", Track: game.TrackPractice, XP: 30, At: now, Repo: "example/app"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	decode := func(args ...string) map[string]any {
+		t.Helper()
+		out, err := captureStdout(t, func() error { return cmdBot(append([]string{"stats"}, args...)) })
+		if err != nil {
+			t.Fatalf("hrn bot stats %v: %v", args, err)
+		}
+		var obj map[string]any
+		if err := json.Unmarshal(out, &obj); err != nil {
+			t.Fatalf("hrn bot stats %v printed %s: %v", args, out, err)
+		}
+		return obj
+	}
+	for _, c := range []struct {
+		args []string
+		name string
+	}{{[]string{"--json", "--repo", "EXAMPLE/app"}, "EXAMPLE/app"}, {[]string{"--repo=example/app", "--json"}, "example/app"}} {
+		args := c.args
+		obj := decode(args...)
+		if obj["version"] != float64(1) || obj["familiarity"] != nil || obj["level"] != float64(1) {
+			t.Fatalf("%v: version %v, familiarity %v, level %v; want 1, null and the totals unchanged", args, obj["version"], obj["familiarity"], obj["level"])
+		}
+		repo, ok := obj["repo"].(map[string]any)
+		if !ok {
+			t.Fatalf("%v: no repo object in %v", args, obj)
+		}
+		days := repo["days"].([]any)
+		if repo["name"] != c.name {
+			t.Errorf("%v: name %v, want the name as given", args, repo["name"])
+		}
+		if repo["week"] != float64(35) || len(days) != 35 || days[34] != float64(35) {
+			t.Errorf("%v: week %v, days %v; want 35 this week, 35 today", args, repo["week"], days)
+		}
+		if kinds := repo["kinds"].(map[string]any); len(kinds) != 2 || kinds["review_clean"] != float64(1) || kinds["bug_squashed"] != float64(1) {
+			t.Errorf("%v: kinds %v", args, kinds)
+		}
+		if share := repo["share"].(float64); share < 0.4666 || share > 0.4667 {
+			t.Errorf("%v: share %v, want 35/75", args, share)
+		}
+		top, _ := json.Marshal(obj["top"])
+		if string(top) != `[{"repo":"example/app","week":35},{"repo":"example/other","week":20}]` {
+			t.Errorf("%v: top %s; want this repository in its most used spelling, then the other, and no run folder", args, top)
+		}
+	}
+	plain := decode("--json")
+	if _, has := plain["repo"]; has {
+		t.Errorf("--json alone printed a repo object: %v", plain)
+	}
+	if _, has := plain["top"]; has {
+		t.Errorf("--json alone printed top: %v", plain)
+	}
+	if plain["familiarity"] == nil {
+		t.Errorf("--json alone lost familiarity: %v", plain)
+	}
+}
+
+func TestBotStatsJSONWithRepoListsAnEmptyTopAsAnArray(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats", "--json", "--repo", "example/app"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out, []byte(`"top":[]`)) || !bytes.Contains(out, []byte(`"kinds":{}`)) || !bytes.Contains(out, []byte(`"share":0`)) {
+		t.Fatalf("empty ledger: %s; want an empty top array, empty kinds and a zero share", out)
+	}
+}
+
+func TestBotStatsRefusesABadRepo(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"stats", "--repo", "example/app"}, "--repo needs --json"},
+		{[]string{"stats", "--json", "--repo", "app"}, "OWNER/NAME"},
+		{[]string{"stats", "--json", "--repo", "../x"}, "OWNER/NAME"},
+		{[]string{"stats", "--json", "--repo"}, "--repo needs a value"},
+		{[]string{"stats", "--json", "--repo="}, "OWNER/NAME"},
+		{[]string{"stats", "--json", "--json"}, "unexpected argument"},
+		{[]string{"stats", "--json", "--repo", "a/b", "--repo", "c/d"}, "once"},
+		{[]string{"stats", "--json", "extra"}, "unexpected argument"},
+	} {
+		out, err := captureStdout(t, func() error { return cmdBot(c.args) })
+		if err == nil || !strings.Contains(err.Error(), c.want) || len(out) != 0 {
+			t.Errorf("hrn bot %v: err %v, stdout %q; want an error with %q and no output", c.args, err, out, c.want)
+		}
+	}
+}
+
+func TestBotStatsSaysWhenFamiliarityWasCutShort(t *testing.T) {
+	f := game.Familiarity{Known: []game.AreaExposure{{Repo: "owner/repo", Area: "docs", Count: 2}}, Partial: true}
+	var text bytes.Buffer
+	printFamiliarity(&text, f)
+	if !strings.Contains(text.String(), "areas you know: owner/repo/docs (2)") || !strings.Contains(text.String(), "familiarity: time limit reached, some repositories were skipped") {
+		t.Fatalf("text: %s", text.String())
+	}
+	text.Reset()
+	printFamiliarity(&text, game.Familiarity{})
+	if strings.Contains(text.String(), "time limit") {
+		t.Fatalf("complete read: %s", text.String())
+	}
+	b, err := json.Marshal(jsonFamiliarity(f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"partial":true`) {
+		t.Fatalf("json: %s", b)
+	}
+	b, err = json.Marshal(jsonFamiliarity(game.Familiarity{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"partial":false`) {
+		t.Fatalf("json: %s", b)
+	}
+}

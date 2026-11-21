@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -211,4 +212,17 @@ type UsageMetadata struct {
 	Status         string `json:"status"`                // reported, estimated, missing
 	CostStatus     string `json:"cost_status,omitempty"` // reported, estimated, missing
 	Calls          *int   `json:"calls,omitempty"`
+}
+
+// HostList is a list of host names; as a flag it takes a comma list and may repeat.
+type HostList []string
+
+func (h HostList) String() string { return strings.Join(h, ",") }
+
+// Set appends each comma-separated name, trimmed; validation is ValidateShape's.
+func (h *HostList) Set(s string) error {
+	for _, name := range strings.Split(s, ",") {
+		*h = append(*h, strings.TrimSpace(name))
+	}
+	return nil
 }

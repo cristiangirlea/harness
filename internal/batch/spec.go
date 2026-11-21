@@ -43,6 +43,8 @@ type Spec struct {
 	Base string `json:"-"`
 	// NoTurnDefault keeps eval cells comparable across backends.
 	NoTurnDefault bool `json:"-"`
+	// SingleAttempt keeps an eval cell to one attempt: an error or a limit is measured, not backed off or waited out.
+	SingleAttempt bool `json:"-"`
 }
 
 const (
@@ -159,6 +161,8 @@ type Attempt struct {
 	Continued bool   `json:"continued,omitempty"`
 	// SwitchedFrom identifies the backend replaced after a usage limit.
 	SwitchedFrom string `json:"switched_from,omitempty"`
+	// Backoff is how long this attempt waited after an infrastructure error on the same backend.
+	Backoff agent.Duration `json:"backoff,omitempty"`
 	// Protected lists changed or removed protected files against the base.
 	Protected []string `json:"protected,omitempty"`
 	// Hidden counts the files kept out of the worktree while the agent ran.

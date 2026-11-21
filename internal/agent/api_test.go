@@ -570,6 +570,20 @@ func TestAPIReportsNoSkillsAsNotEnforced(t *testing.T) {
 	}
 }
 
+func TestAPISaysItDoesNotApplyEgress(t *testing.T) {
+	_, events, _ := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: t.TempDir(),
+		Options: Options{Mode: ModeAsk, NoInstructions: true, Egress: []string{"example.com"}}})
+	var infos []string
+	for _, e := range events {
+		if e.Kind == EventInfo {
+			infos = append(infos, e.Text)
+		}
+	}
+	if !slices.Contains(infos, "egress: not applied by the api backend; run_command children are not proxied") {
+		t.Errorf("info events = %v", infos)
+	}
+}
+
 func TestAPILoopWithoutProjectInstructions(t *testing.T) {
 	dir := t.TempDir()
 	_, _, fake := runFake(t, [][]string{textTurn("ok")}, Task{Prompt: "go", Dir: dir, Options: Options{Mode: ModeAsk}})
@@ -776,7 +790,7 @@ func TestAPISaysWhenCostCannotBeEnforced(t *testing.T) {
 					infos = append(infos, e.Text)
 				}
 			})
-			if res.Status != tc.status || res.Error != tc.wantError || len(fake.requests) != tc.requests {
+			if res.Status != tc.status || res.Error != tc.wantError || len(fake.requests) != tc.requests || res.StartRefusal != (tc.wantError != "") {
 				t.Errorf("result: %+v, requests: %d", res, len(fake.requests))
 			}
 			if strings.Join(infos, "\n") != tc.wantInfo {

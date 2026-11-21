@@ -230,6 +230,9 @@ func attemptReason(atts []Attempt, i int) string {
 	if a.Continued {
 		verb = "retry continuing the same session"
 	}
+	if a.Backoff > 0 {
+		verb += " after a " + a.Backoff.String() + " backoff"
+	}
 	return fmt.Sprintf("%s because attempt %d ended: %s", verb, i, why)
 }
 

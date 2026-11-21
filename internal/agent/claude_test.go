@@ -94,10 +94,10 @@ func TestClaudeProviderChecksInitKeySource(t *testing.T) {
 				}
 			})
 			if tc.refuse {
-				if res.Status != StatusError || res.Error != refusal || len(text) != 0 || res.Final != "" {
+				if res.Status != StatusError || res.Error != refusal || len(text) != 0 || res.Final != "" || !res.StartRefusal {
 					t.Fatalf("want the CLI run refused before using output: status %s, error %q, text %q, final %q", res.Status, res.Error, text, res.Final)
 				}
-			} else if res.Status != StatusOK || res.Final != "done" || !slices.Equal(text, tc.wantText) {
+			} else if res.Status != StatusOK || res.Final != "done" || !slices.Equal(text, tc.wantText) || res.StartRefusal {
 				t.Fatalf("want the run to finish with text %q: status %s, error %q, text %q, final %q", tc.wantText, res.Status, res.Error, text, res.Final)
 			}
 		})
@@ -144,7 +144,7 @@ func TestClaudeRefusesPerTokenBillingAtInit(t *testing.T) {
 					}
 				})
 			if tc.refuse {
-				if res.Status != StatusError || !strings.Contains(res.Error, tc.source) || !strings.Contains(res.Error, "refused") {
+				if res.Status != StatusError || !strings.Contains(res.Error, tc.source) || !strings.Contains(res.Error, "refused") || !res.StartRefusal {
 					t.Fatalf("key source %q: want billing refusal, got %+v", tc.source, res)
 				}
 				if len(text) != 0 || res.Final != "" {

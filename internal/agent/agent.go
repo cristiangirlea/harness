@@ -131,9 +131,14 @@ func Run(ctx context.Context, b Backend, task Task, emit func(Event)) Result {
 		emit(Event{Time: time.Now(), Kind: EventError, Text: ErrGuardedInherit.Error()})
 		return Result{Backend: b.Name(), Status: StatusRefused, Error: ErrGuardedInherit.Error()}
 	}
+	if task.WaitLimit > 0 && tools.Guarded() {
+		emit(Event{Time: time.Now(), Kind: EventError, Text: ErrGuardedWait.Error()})
+		return Result{Backend: b.Name(), Status: StatusRefused, Error: ErrGuardedWait.Error()}
+	}
 	prepared, state, err := prepareRetrieval(ctx, b.Name(), task)
 	if err != nil {
-		return Result{Backend: b.Name(), Status: StatusError, Error: err.Error(), Retrieval: state}
+		var r retrievalRefusal
+		return Result{Backend: b.Name(), Status: StatusError, Error: err.Error(), Retrieval: state, StartRefusal: errors.As(err, &r)}
 	}
 	task = prepared
 	// After retrieval, so the block is not part of its query.

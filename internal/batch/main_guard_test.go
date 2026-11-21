@@ -30,6 +30,8 @@ func TestMain(m *testing.M) {
 		os.Setenv("HRN_HOME", home)
 		// Routing reads codex's sessions for its quota; the user's must not move a test's run.
 		os.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
+		// Tests of other retries use an erring stub; the backoff tests turn it back on.
+		maxBackoffs = 0
 		code := m.Run()
 		os.RemoveAll(home)
 		if repoTemplate != "" {
