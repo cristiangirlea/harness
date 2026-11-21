@@ -199,8 +199,10 @@ recording a run.
 
 The child receives no arguments, starts in the current directory and gets a filtered
 environment. hrn removes its own `HRN_` variables and adds the guard's environment
-variables, which withhold secrets and point login directories at an empty folder. The child
-still runs with the user's file access and network. The child has its own process tree and
+variables ([the guard for every backend](permissions.md#the-guard-for-every-backend)): variables
+named as secrets are withheld, the gh, cloud, container and npm logins point at an empty folder,
+and `git push` fails. The child still runs with the user's file access and network, so files
+under the home folder, such as ssh keys, stay readable. The child has its own process tree and
 starts without opening a console window.
 The handshake has a 10-second limit. After sending `cancel`, hrn gives the plugin two
 seconds to return a result. At close, hrn closes the input stream and gives the plugin
