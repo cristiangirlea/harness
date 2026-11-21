@@ -350,7 +350,7 @@ func TestFetchReleaseSendsNoTokenToTheAssetHost(t *testing.T) {
 
 func TestFetchReleaseRefusesUnsafeCustomAssetNames(t *testing.T) {
 	srv, _ := fakeGitHub(t, nil, "")
-	for _, name := range []string{"../x", "a:b", ""} {
+	for _, name := range []string{"../x", "a:b", "", "."} {
 		t.Run(strconv.Quote(name), func(t *testing.T) {
 			src := ReleaseSource{
 				API: srv.URL + "/repos/cristiangirlea/harness/releases/latest", Client: srv.Client(),
