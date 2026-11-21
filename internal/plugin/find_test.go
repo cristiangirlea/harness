@@ -35,10 +35,10 @@ func TestFindReturnsAPluginFromPathWhenItIsNotInstalled(t *testing.T) {
 	assertFound(t, found, "echo", exe, false)
 }
 
-func TestFindReportsAMissingPluginWithAnInstallHint(t *testing.T) {
+func TestFindReportsAMissingPluginByNameAndLeavesHintsToTheCaller(t *testing.T) {
 	pluginHome(t)
 	_, err := Find("missing-plugin")
-	if !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "hrn plugin install missing-plugin") {
+	if !errors.Is(err, ErrNotFound) || err.Error() != "plugin not found: missing-plugin" {
 		t.Fatalf("Find() error = %v", err)
 	}
 }
@@ -142,6 +142,7 @@ func TestListSortsPluginsAndKeepsTheFirstLocationForEachName(t *testing.T) {
 	home := pluginHome(t)
 	first, second := t.TempDir(), t.TempDir()
 	installed := installFake(t, home, "echo")
+	installFake(t, home, ".staging-123")
 	copyFake(t, first, "echo")
 	stubborn := copyFake(t, first, "stubborn")
 	copyFake(t, second, "stubborn")

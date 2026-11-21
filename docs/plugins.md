@@ -168,9 +168,31 @@ type stops the plugin and fails the call in flight.
 hrn looks for `$HRN_HOME/plugins/<name>/hrn-<name>` first, then in the absolute directories
 on `PATH`. The executable has an `.exe` suffix on Windows. On Unix the file must be
 executable. The names `server`, `worker` and `fixture-model` are reserved for hrn.
-`hrn plugin install` is unavailable. Place the executable in one of the search locations.
+`hrn plugin install <name|owner/repo>[@tag] [--name NAME] [--json]` installs a binary from a
+GitHub release. With a repository, hrn derives the plugin name from the repository name by
+removing a leading `hrn-`. Use `--name` to specify another name. A short name needs a repository
+in the effective [plugin settings](backends.md#plugin-settings). Use `@tag` to select a release.
+Without it, hrn uses the latest release. The tag can contain up to 64 ASCII letters, digits,
+dots, underscores, plus signs and hyphens, and cannot start with a dot.
 
-`hrn plugin list` lists the executables it finds without starting them. `hrn plugin info <name>`
+Publish `hrn-<name>_<version>_<os>_<arch>` with an `.exe` suffix on Windows, plus a
+`SHA256SUMS` file listing the binary's digest. The version in the asset name is the release tag
+with a leading `v` removed. hrn verifies the checksum, stages the executable under
+`$HRN_HOME/plugins/`, and starts it for a handshake that must report the requested name.
+A failed download, checksum or handshake cleans up staging and leaves any previous
+installation in place.
+
+A successful install can replace an existing copy. It writes `install.json` beside the
+executable with the source repository, release tag, asset name, SHA-256 digest and UTC
+installation time. The command prints the installed release, executable path and capabilities
+and creates no run record. With `--json`, stdout contains `name`, `version`, `tag`, `source`,
+`path`, `sha256` and `capabilities`.
+
+Installation can be disabled or restricted to approved repositories in the plugin settings.
+You can also place a plugin executable in one of the usual search locations.
+
+`hrn plugin list` lists the executables it finds without starting them and shows the repository
+for installed plugins with readable installation metadata. `hrn plugin info <name>`
 starts the plugin to learn its version, protocol and capabilities, then closes it without
 recording a run.
 

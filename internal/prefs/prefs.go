@@ -36,6 +36,8 @@ type Prefs struct {
 
 	// LocalAPI opts an unmetered api endpoint in as the last carry-on partner.
 	LocalAPI string `json:"local_api,omitempty"`
+
+	Plugins *PluginPrefs `json:"plugins,omitempty"`
 }
 
 type Org struct {
@@ -130,7 +132,7 @@ func LoadOrg() (Org, error) {
 	seen := map[string]bool{}
 	for _, field := range p.Locked {
 		switch field {
-		case "enabled", "default", "billing", "providers", "accounts", "local_api":
+		case "enabled", "default", "billing", "providers", "accounts", "local_api", "plugins":
 		default:
 			return Org{}, fmt.Errorf("%w: unknown locked field", ErrOrganisation)
 		}
@@ -194,6 +196,9 @@ func combine(org Org, user Prefs) (p Prefs, sets, ignored []string) {
 	}
 	if useOrg("local_api", user.LocalAPI != "", user.LocalAPI == org.LocalAPI, org.LocalAPI != "") {
 		p.LocalAPI = org.LocalAPI
+	}
+	if useOrg("plugins", user.Plugins != nil, equalPluginPrefs(user.Plugins, org.Plugins), org.Plugins != nil) {
+		p.Plugins = org.Plugins
 	}
 	return p, sets, ignored
 }
@@ -321,6 +326,9 @@ func (p Prefs) validateUser(inheritsEnabled bool) error {
 	}
 
 	if err := p.validateAccounts(); err != nil {
+		return err
+	}
+	if err := p.Plugins.validate(); err != nil {
 		return err
 	}
 	if p.LocalAPI != "" {

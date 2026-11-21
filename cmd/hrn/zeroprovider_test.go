@@ -438,7 +438,7 @@ func TestReadsWorkWithoutAProvider(t *testing.T) {
 		prepareZeroProviderCommand(cmd)
 		cmd.Env = env
 		out, err := cmd.CombinedOutput()
-		if ctx.Err() != nil || err == nil || !strings.Contains(string(out), "hrn plugin install missing") {
+		if ctx.Err() != nil || err == nil || !strings.Contains(string(out), "plugin not found: missing") || !strings.Contains(string(out), "hrn plugin install") {
 			t.Fatalf("plugin call: %v (%v)\n%s", err, ctx.Err(), out)
 		}
 	})

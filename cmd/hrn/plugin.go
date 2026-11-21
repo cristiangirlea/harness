@@ -26,6 +26,7 @@ import (
 
 const pluginUsage = `usage: hrn plugin list [--json]
        hrn plugin info <name> [--json]
+       hrn plugin install <name|owner/repo>[@tag] [--name NAME] [--json]
        hrn plugin call <name> <capability> [--input JSON | --input-file FILE] [--timeout D] [--json]`
 
 func cmdPlugin(args []string) (int, error) {
@@ -46,7 +47,7 @@ func cmdPluginContext(ctx context.Context, stdin io.Reader, stdout, stderr io.Wr
 	var positional int
 	switch command {
 	case "list":
-	case "info":
+	case "info", "install":
 		positional = 1
 	case "call":
 		positional = 2
@@ -65,8 +66,11 @@ func cmdPluginContext(ctx context.Context, stdin io.Reader, stdout, stderr io.Wr
 	fs := flag.NewFlagSet("plugin "+command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOut := fs.Bool("json", false, "")
-	var input, inputFile *string
+	var input, inputFile, installName *string
 	var timeout time.Duration
+	if command == "install" {
+		fs.Func("name", "", func(value string) error { installName = &value; return nil })
+	}
 	if command == "call" {
 		fs.Func("input", "", func(value string) error { input = &value; return nil })
 		fs.Func("input-file", "", func(value string) error { inputFile = &value; return nil })
@@ -77,6 +81,9 @@ func cmdPluginContext(ctx context.Context, stdin io.Reader, stdout, stderr io.Wr
 	}
 	if fs.NArg() != 0 {
 		return 2, fmt.Errorf("unexpected argument %q\n%s", fs.Arg(0), pluginUsage)
+	}
+	if command == "install" {
+		return installCommandPluginRelease(ctx, stdout, args[0], installName, *jsonOut)
 	}
 	if command == "list" {
 		if err := listCommandPlugins(stdout, *jsonOut); err != nil {
@@ -98,6 +105,9 @@ func cmdPluginContext(ctx context.Context, stdin io.Reader, stdout, stderr io.Wr
 	}
 	found, err := plugin.Find(args[0])
 	if err != nil {
+		if errors.Is(err, plugin.ErrNotFound) {
+			err = missingCommandPlugin(args[0], err)
+		}
 		return 1, err
 	}
 	dir, err := os.Getwd()
@@ -178,10 +188,11 @@ func listCommandPlugins(stdout io.Writer, jsonOut bool) error {
 			Name      string `json:"name"`
 			Path      string `json:"path"`
 			Installed bool   `json:"installed"`
+			Source    string `json:"source,omitempty"`
 		}
 		rows := make([]row, 0, len(found))
 		for _, p := range found {
-			rows = append(rows, row{Name: p.Name, Path: p.Path, Installed: p.Installed})
+			rows = append(rows, row{Name: p.Name, Path: p.Path, Installed: p.Installed, Source: installedPluginSource(p)})
 		}
 		return encodeTerminalSafeJSON(stdout, struct {
 			Plugins []row `json:"plugins"`
@@ -192,11 +203,14 @@ func listCommandPlugins(stdout io.Writer, jsonOut bool) error {
 		return err
 	}
 	for _, p := range found {
-		source := "path"
+		location := "path"
 		if p.Installed {
-			source = "installed"
+			location = "installed"
 		}
-		if _, err := fmt.Fprintf(stdout, "%s  %s  %s\n", p.Name, source, printable(mask.Text(p.Path))); err != nil {
+		if source := installedPluginSource(p); source != "" {
+			location += " (" + source + ")"
+		}
+		if _, err := fmt.Fprintf(stdout, "%s  %s  %s\n", p.Name, location, printable(mask.Text(p.Path))); err != nil {
 			return err
 		}
 	}
@@ -221,7 +235,11 @@ func printCommandPluginInfo(stdout io.Writer, info plugin.Info, jsonOut bool) er
 		info.Name, info.Version, info.Protocol, printable(mask.Text(info.Path)), info.SHA256); err != nil {
 		return err
 	}
-	for _, capability := range info.Capabilities {
+	return printCommandPluginCapabilities(stdout, info.Capabilities)
+}
+
+func printCommandPluginCapabilities(stdout io.Writer, capabilities []pluginproto.Capability) error {
+	for _, capability := range capabilities {
 		line := capability.Name
 		if capability.Description != "" {
 			line += "  " + printable(mask.Text(capability.Description))
