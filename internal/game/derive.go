@@ -293,8 +293,9 @@ func mergedScripts(root, name string, known map[string]bool) (events []Event, an
 		kept, ok := known[key]
 		if !ok {
 			body, done := gitRead(ctx, root, "show", "--no-ext-diff", "--no-textconv", key)
-			if !done {
-				settled = false
+			// Keep only what git actually returned: a missing blob may arrive later.
+			if !done || body == "" {
+				settled = settled && done
 				continue
 			}
 			kept = keptHeader(body)

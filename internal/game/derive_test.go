@@ -2,6 +2,7 @@ package game
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -781,5 +782,130 @@ func TestFoldersOutsideACheckoutKeepTheirNameAndSkipGit(t *testing.T) {
 	got := derived(t, r, "ceiling:")
 	if got["ceiling:a"].Repo != "0278c.task.r1" || got["ceiling:b"].Repo != "work" {
 		t.Fatalf("repo names: %+v", got)
+	}
+}
+
+// mergedScriptRepo is a GitHub-named repository whose origin/HEAD merged one kept script.
+func mergedScriptRepo(t *testing.T, name string) string {
+	t.Helper()
+	repo := t.TempDir()
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "config", "user.email", "fixture@example.org")
+	gitIn(t, repo, "config", "user.name", "Fixture")
+	gitIn(t, repo, "remote", "add", "origin", "https://github.com/"+name+".git")
+	writeFile(t, filepath.Join(repo, "base"), "base")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-qm", "base")
+	gitIn(t, repo, "checkout", "-qb", "feature")
+	writeFile(t, filepath.Join(repo, "scripts", "kept.sh"), "#!/bin/sh\n# name: kept\n# summary: Kept.\n# effects: read\n# parameters: none\n# example: true\n# hash: value\n")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-qm", "scripts")
+	gitIn(t, repo, "checkout", "-q", "main")
+	gitIn(t, repo, "merge", "--no-ff", "-qm", "merge feature", "feature")
+	gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "refs/heads/main")
+	gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	return repo
+}
+
+func scriptKeys(t *testing.T, r Records) []string {
+	t.Helper()
+	events, err := Derive(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, e := range events {
+		if strings.HasPrefix(e.Key, "ada:script:") {
+			keys = append(keys, e.Key)
+		}
+	}
+	return keys
+}
+
+func keptAnswers(t *testing.T) map[string]bool {
+	t.Helper()
+	answers := map[string]bool{}
+	readGameFile(mergedScriptsFile, &answers)
+	return answers
+}
+
+func TestMergedScriptAnswersKeepOnlyWhatGitReturned(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	repo := mergedScriptRepo(t, "example/app")
+	r := Records{Runs: []runlog.Record{{Task: agent.Task{Dir: repo}}}}
+	stubGit(t, func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+		if strings.Contains(strings.Join(cmd.Args, " "), " show ") {
+			return nil, &exec.ExitError{}
+		}
+		return cmd.Output()
+	})
+	if keys := scriptKeys(t, r); len(keys) != 0 {
+		t.Fatalf("credited without the file: %v", keys)
+	}
+	if answers := keptAnswers(t); len(answers) != 0 {
+		t.Fatalf("a failed read was kept: %v", answers)
+	}
+	stubGit(t, func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) { return cmd.Output() })
+	if keys := scriptKeys(t, r); len(keys) != 1 || keys[0] != "ada:script:example/app/kept.sh" {
+		t.Fatalf("once readable: %v", keys)
+	}
+}
+
+func TestMergedScriptAnswersAcrossRepositories(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	first, second := mergedScriptRepo(t, "example/one"), mergedScriptRepo(t, "example/two")
+	both := Records{Runs: []runlog.Record{{Task: agent.Task{Dir: second}}, {Task: agent.Task{Dir: first}}}}
+	want := scriptKeys(t, both)
+	if len(want) != 2 || len(keptAnswers(t)) != 2 {
+		t.Fatalf("keys %v, answers %v", want, keptAnswers(t))
+	}
+	for range 3 {
+		if got := scriptKeys(t, both); strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("order changed: %v then %v", want, got)
+		}
+	}
+	if err := os.Remove(filepath.Join(Dir(), mergedScriptsFile)); err != nil {
+		t.Fatal(err)
+	}
+	if keys := scriptKeys(t, Records{Runs: []runlog.Record{{Task: agent.Task{Dir: first}}}}); len(keys) != 1 || len(keptAnswers(t)) != 1 {
+		t.Fatalf("first only: %v", keptAnswers(t))
+	}
+	firstAnswers := keptAnswers(t)
+	stubGit(t, func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+		if strings.Contains(strings.Join(cmd.Args, " "), " show ") {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return cmd.Output()
+	})
+	ctxLess := scriptKeys(t, both)
+	if len(ctxLess) != 1 {
+		t.Fatalf("with second's read cut short: %v", ctxLess)
+	}
+	if got := keptAnswers(t); len(got) != 1 || !sameAnswers(firstAnswers, got) {
+		t.Fatalf("earlier answers after an unsettled read: %v", got)
+	}
+	stubGit(t, func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) { return cmd.Output() })
+	scriptKeys(t, both)
+	if len(keptAnswers(t)) != 2 {
+		t.Fatalf("both: %v", keptAnswers(t))
+	}
+	scriptKeys(t, Records{Runs: []runlog.Record{{Task: agent.Task{Dir: second}}}})
+	if got := keptAnswers(t); len(got) != 1 || sameAnswers(firstAnswers, got) {
+		t.Fatalf("answers for a repository no record names were kept: %v", got)
+	}
+}
+
+func TestGitHubSourceNamesACheckoutAndItsWorktreeOnce(t *testing.T) {
+	repo := mergedScriptRepo(t, "example/app")
+	wt := filepath.Join(t.TempDir(), "worktree")
+	gitIn(t, repo, "worktree", "add", "-q", "--detach", wt)
+	source := NewGitHubSourceFrom(Records{Runs: []runlog.Record{{Task: agent.Task{Dir: repo}}, {Task: agent.Task{Dir: filepath.Join(wt, "sub")}}}})
+	root, ok := source.roots["example/app"]
+	if len(source.roots) != 1 || !ok {
+		t.Fatalf("roots: %v", source.roots)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
+		t.Fatalf("root %s: %v", root, err)
 	}
 }

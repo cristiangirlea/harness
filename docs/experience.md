@@ -158,8 +158,9 @@ A rule nobody measured earns her nothing. Lesson admission verdicts live in the 
 service, so `ada:lesson` derives nothing from local records. Script events use first-parent
 merges in the locally known `origin/HEAD` history of repositories named by runs or batches;
 a repository without that reference yields no script events. Whether a file added at a commit
-carries the header never changes, so the answer is kept in `merged-scripts.json` and each file
-is read once. Records whose folder is not inside a Git checkout name no repository here.
+carries the header never changes, so the answer is kept in `merged-scripts.json` and a file is
+read again only when no answer is kept for it; a file git could not return is not kept.
+Records whose folder is not inside a Git checkout name no repository here or for practice.
 
 ## The ledger
 
