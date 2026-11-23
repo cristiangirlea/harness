@@ -4,7 +4,7 @@
 # effects: read, exec, network
 # parameters: --pin:bool=false
 # example: bash scripts/plugin-pin.sh --pin | grep -Eq '^cristiangirlea/hrn-search@v[0-9]+[.][0-9]+[.][0-9]+$'
-# hash: 0acd0378770651455f8c7f74c844f7ba3d1b855930ca2f32d9ffb9dbf2a7ae33
+# hash: 7f39c34484b89cf3692cd059dbaf94c6967b77504c0765a70486cea64fda537d
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # A broken plugin release is a pin that does not move: change it only in a pull request.
@@ -35,10 +35,13 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 # Refuse a changed release before hrn runs anything from it: install starts the plugin.
 if ! sums=$(curl -fsSL --max-time 60 "https://github.com/$source/releases/download/$tag/SHA256SUMS" 2>&1); then
+  printf '%s\n' "$sums" | tail -n 5 >&2
   printf '{"error":"could not read the release checksums","pin":"%s@%s"}\n' "$source" "$tag" >&2
   exit 1
 fi
-if ! grep -qE "^$want [ *]?$asset\$" <<< "$sums"; then
+# Read the first line naming the asset, exactly as hrn's checksum check does.
+listed=$(awk -v a="$asset" 'NF == 2 { n = $2; sub(/^\*/, "", n); if (n == a) { print tolower($1); exit } }' <<< "$sums")
+if [[ $listed != "$want" ]]; then
   printf '{"error":"the release checksum differs from the pinned hash","asset":"%s"}\n' "$asset" >&2
   exit 1
 fi

@@ -352,7 +352,9 @@ this checkout's hrn, installs the pinned `hrn-search` release into a scratch `HR
 verdict and that the run record names the installed executable's SHA-256. The script also pins
 each platform's SHA-256: it compares the release's `SHA256SUMS` with the pin before hrn installs
 (installing starts the plugin for its handshake) and the installed executable after, so a moved
-tag or a replaced asset fails instead of running. CI runs it on Linux and Windows, and so does
+tag or a replaced asset fails instead of running. hrn fetches the release a second time to
+install it; an asset swapped between the two fetches runs once, for the handshake, before the
+check of the installed executable fails. CI runs it on Linux and Windows, and so does
 the check skill. A broken plugin release does not move the pin; the tag and the hashes change
 only in a pull request.
 
