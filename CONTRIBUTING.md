@@ -4,7 +4,7 @@
 
 ## Build from source
 
-Use the Go version pinned in `go.mod` (currently 1.26.10):
+Use the Go version pinned in `go.mod` (currently 1.26.11):
 
 ```bash
 git clone https://github.com/cristiangirlea/harness.git
