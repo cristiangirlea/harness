@@ -11,6 +11,7 @@ go build ./...
 go test -count=1 -timeout 40m ./...
 (cd contracts && go vet ./... && go build ./... && go test -count=1 ./...)
 bash scripts/gate-guard.sh
+bash scripts/plugin-pin.sh
 go test -run='^$' -fuzz=FuzzParseSSE -fuzztime=150000x -fuzzminimizetime=200x -parallel=4 ./internal/agent
 go test -run='^$' -fuzz=FuzzCodec -fuzztime=500000x -fuzzminimizetime=200x -parallel=4 ./internal/mcp
 go test -run='^$' -fuzz=FuzzSummarize -fuzztime=14000x -fuzzminimizetime=200x -parallel=4 ./internal/shape

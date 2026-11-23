@@ -343,6 +343,19 @@ with backend `plugin`. Plugin calls cannot be continued. A missing plugin, a ref
 invalid or oversized input, or a capability the plugin does not offer stops the command with
 no run recorded.
 
+### The pinned plugin
+
+The first plugin, `hrn-search` ([cristiangirlea/hrn-search](https://github.com/cristiangirlea/hrn-search)),
+offers the capability `search`, a bounded expression synthesizer. `scripts/plugin-pin.sh` builds
+this checkout's hrn, installs the pinned `hrn-search` release into a scratch `HRN_HOME` through a
+`plugins.sources` short name and an allow list, calls `search` on a fixed task and checks the
+verdict and that the run record names the installed executable's SHA-256. The script also pins
+each platform's SHA-256: it compares the release's `SHA256SUMS` with the pin before hrn installs
+(installing starts the plugin for its handshake) and the installed executable after, so a moved
+tag or a replaced asset fails instead of running. CI runs it on Linux and Windows, and so does
+the check skill. A broken plugin release does not move the pin; the tag and the hashes change
+only in a pull request.
+
 ## Using the Go package
 
 ```go

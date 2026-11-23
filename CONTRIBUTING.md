@@ -34,6 +34,9 @@ their steps skipped, and the other jobs are skipped. Any other `.md` file counts
 A new `Fuzz*` target is added to both `ci.yml` and `.claude/skills/check/SKILL.md`, and every
 action in the workflows is pinned to a full commit hash with its version in a comment;
 `internal/archtest` fails otherwise.
+CI also installs the pinned release of the first plugin, `hrn-search`, and calls it
+(`scripts/plugin-pin.sh`, [The pinned plugin](docs/plugins.md#the-pinned-plugin)); it needs
+network access to GitHub's releases, and it pins the release's bytes as well as its tag.
 The `vuln` workflow runs a pinned `govulncheck` on both modules every Monday and on demand; CI
 fetches the tool with `go run`, so it adds nothing to `go.mod`. It stays off pull requests, so an
 advisory published overnight does not block unrelated work.
