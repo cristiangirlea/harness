@@ -7,11 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
 	"regexp"
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/cristiangirlea/harness/internal/eval"
 	"github.com/cristiangirlea/harness/internal/remote"
@@ -25,6 +25,16 @@ func (r *admissionRuns) Set(s string) error { *r = append(*r, s); return nil }
 
 var admissionRunID = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$`)
 
+func admissionRunIDs(text string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for token := range strings.FieldsFuncSeq(text, func(r rune) bool { return !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r == '-') }) {
+			if admissionRunID.MatchString(token) && !yield(token) {
+				return
+			}
+		}
+	}
+}
+
 func admissionSourceRuns(entries []retrieval.Entry, flags []string) ([]string, error) {
 	seen := map[string]bool{}
 	for _, id := range flags {
@@ -34,10 +44,8 @@ func admissionSourceRuns(entries []retrieval.Entry, flags []string) ([]string, e
 		seen[id] = true
 	}
 	for _, e := range entries {
-		for _, id := range strings.FieldsFunc(e.Evidence, func(r rune) bool { return !(unicode.IsDigit(r) && r < 128 || r >= 'a' && r <= 'f' || r == '-') }) {
-			if admissionRunID.MatchString(id) {
-				seen[id] = true
-			}
+		for id := range admissionRunIDs(e.Evidence) {
+			seen[id] = true
 		}
 	}
 	if len(seen) == 0 {

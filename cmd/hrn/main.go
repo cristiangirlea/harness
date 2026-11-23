@@ -57,6 +57,8 @@ Usage:
                                  use the durable control API
   hrn knowledge import|search|inspect|active|activate|disable|rollback request.json
                                  manage approved project knowledge through the control API
+  ` + proposeUsage + `
+                                 draft project knowledge from successful runs
   hrn retrieval fixture|compare [flags]
                                  compare saved evidence without model calls
   hrn version                     print the hrn version, Go version and commit

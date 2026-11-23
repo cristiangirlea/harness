@@ -18,6 +18,7 @@
 | `hrn remote cancel --tenant ID --project ID JOB_ID` | Request cancellation of a remote job. |
 | `hrn knowledge import\|search\|inspect\|active\|activate\|disable\|rollback request.json` | Manage approved project knowledge through the control service (see [Project knowledge](#project-knowledge)). |
 | `hrn knowledge markdown -request base.json [-min-words 100] [-max-words 800] [-overlap-words 40] FILE...` | Build a JSON import request from Markdown headings without calling the service. |
+| `hrn knowledge propose -request base.json -b claude\|codex [-run ID]... [-repo host/owner/name] [-purpose P] [-since DURATION\|DATE] [-limit N] [-o FILE]` | Draft knowledge entries from successful runs and carry forward the active entries. |
 | `hrn knowledge admit --version ID --spec FILE -b BACKEND [--held-out SHARE --seed N --source-run ID]` | Compare a candidate with active knowledge and record the gated verdict. |
 | `hrn retrieval fixture [--json]` | Compare bundled synthetic accounting samples without a model call; the fixture proves no real savings. |
 | `hrn retrieval compare --manifest FILE --samples FILE [--baseline-preparation FILE] [--candidate-preparation FILE] [--reuse N] [--runs] [--json]` | Compare saved retrieval evidence and verify measured run references locally, without a model call. Match each run on the requested model in `task.json`; a run without a requested model matches only when its reported result model exactly equals the variant model. Text output shows a differing provider-reported model. |
@@ -415,6 +416,19 @@ characters (U+0080 to U+009F) and invalid UTF-8 are printed as `\u` escapes, so
 the terminal never reads them as control sequences.
 
 ### Project knowledge
+
+`hrn knowledge propose` reviews named runs or searches an exact repository (by default,
+the last seven days and up to ten runs, with a maximum `-limit` of 25). It uses a read-only Claude or Codex review for
+each completed `ok` run, excluding its own reviews. For a batch run, every task that
+records it must have status `pass`, and a retry candidate must be the winner. An attempt error, a failure to start, or a failed
+gate for that run also excludes it.
+The draft adds distinct entries to the active entries. Each new entry keeps only
+identifiers of at least three bytes found verbatim in the task prompt, final answer,
+changed files, commits, or gate commands and outputs. The source run ID cannot serve
+as an identifier. Entries that cite another run in their content or evidence are dropped.
+The draft's review fields are empty, so a maintainer must read and edit it and fill in `origin`,
+`reviewed_by`, and `review_evidence`. After import, only a passing `knowledge admit`
+verdict activates the candidate in this workflow.
 
 `hrn knowledge markdown -request base.json FILE...` reads only the named files,
 resolved inside the repository root with files under `.git` refused, and writes
