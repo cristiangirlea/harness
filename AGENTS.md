@@ -109,6 +109,7 @@ non-zero exit and an error object; be safe to re-run; call other scripts, never 
 - `scripts/install.ps1`: Install a checksum-verified hrn release on Windows.
 - `scripts/install.sh`: Install a checksum-verified hrn release on Linux or macOS.
 - `scripts/install_test.go`: Exercise both release installers against a loopback server.
+- `scripts/plugin-pin.sh`: Install the pinned hrn-search release with this checkout's hrn and run one call through it.
 - `scripts/privacy-check.sh`: Check tracked text files for personal folders, local work paths and narration of a person.
 - `scripts/privacy-check/main.go`: Check tracked text files for personal folders, local work paths and narration of a person.
 - `scripts/privacy-check/main_test.go`: Check the personal folder, local path and narration rules on fixture files.

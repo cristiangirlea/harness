@@ -112,6 +112,9 @@ jobs:
         # Not on Windows: its hosted runner is elevated, and the gate refuses to run elevated.
         if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
         run: bash scripts/gate-guard.sh
+      - name: the pinned plugin release
+        if: needs.changes.outputs.code == 'true'
+        run: bash scripts/plugin-pin.sh
       - name: test with the race detector
         if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
         run: go test -race -count=1 -timeout 40m ./...
