@@ -297,6 +297,17 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-23: #982, plugin protocol v2 with a channel kind (PR #986). v2 keeps all of v1 and
+  adds `kind: channel` for long-lived plugins that send `inbound` messages on their own; the host
+  answers `ack` once it has stored one, sends `deliver` (text, reply, up to 8 buttons) and reads
+  `delivered`, `delivery_failed` (codes `rate_limited` and `unauthorised`, v2 only) and `status`.
+  The delivery guarantee: a plugin advances its service position only after an ack and resends
+  every un-acked inbound after a restart; the host stores before acking and drops duplicates by
+  channel and inbound id; an unanswered deliver after an exit has an unknown outcome and may be
+  resent with the same id. Short untrusted strings refuse control characters; message text keeps
+  LF, CR and TAB. A reference echo channel in `contracts/pluginproto` tests a restart with acks
+  out of order. hrn's own host stays on v1 and refuses a channel plugin, naming a channel host;
+  the first channel host is Ada (cristiangirlea/adanext-ada), which imports `contracts`.
 - 2026-11-21: #881, the plugin host (PR #983), the second code slice of #878, built as the
   feature branch `plugin-host` in three pieces: the host library `internal/plugin` (PR #965),
   `hrn plugin list|info|call` with run records (PR #972) and `hrn plugin install` (PR #976).
