@@ -549,6 +549,39 @@ func TestAContinuationOfARecordWithABadModelIsRejectedWithoutARecord(t *testing.
 	}
 }
 
+func TestAContinuationOfAPluginCallIsRejectedWithoutARecord(t *testing.T) {
+	name := registerFake(t, nil)
+	dir := t.TempDir()
+	prev, err := runlog.CreatePlugin(agent.Task{Prompt: "plugin fixture: echo", Dir: dir}, runlog.PluginRun{Name: "fixture", Capability: "echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prev.Close(agent.Result{Backend: runlog.PluginBackend, Status: agent.StatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	for _, backend := range []string{"", name} {
+		t.Run("backend "+backend, func(t *testing.T) {
+			h := openHarness(t, nil)
+			h.next(t, "hello")
+			req := start(dir, backend)
+			task := req["task"].(map[string]any)
+			task["continue_run_id"] = prev.ID()
+			if backend == "" {
+				delete(task, "backend")
+			}
+			h.send(t, req)
+			msg := h.next(t, "rejected")
+			if e := msg["error"].(map[string]any); e["code"] != "bad_request" || !strings.Contains(e["message"].(string), "plugin calls cannot be continued") {
+				t.Fatalf("bad rejection: %+v", msg)
+			}
+			h.exit(t, 2)
+		})
+	}
+	if recs, err := runlog.List(0); err != nil || len(recs) != 1 {
+		t.Fatalf("records = %+v %v, want only the plugin call", recs, err)
+	}
+}
+
 type forkingFake struct{ fakeBackend }
 
 func TestContinuationWarnsInAcceptedNotesAndRecordsOneInfoEventOnlyAboveTheThreshold(t *testing.T) {

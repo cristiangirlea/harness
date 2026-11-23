@@ -9,7 +9,7 @@ var layers = map[string]int{
 	"internal/gitenv":          0, "internal/gitretry": 0, "internal/mask": 0, "internal/owner": 0, "internal/prefs": 0, "internal/purpose": 0, "internal/qr": 0, "internal/retrieval": 0, "internal/route/table": 0, "internal/runpaths": 0, "internal/scripthint": 0, "internal/shape": 0, "internal/envpolicy": 0, "internal/egress": 0, "internal/watchaddr": 0, "internal/nowindow": 0,
 	"internal/kernel": 1, "internal/runlog": 1, "internal/flow": 1, "internal/quota": 1, "internal/limits": 1,
 	"internal/mcp": 2, "internal/tools": 2, "internal/remote": 2, "internal/ws": 2,
-	"internal/agent": 3, "internal/resolve": 4,
+	"internal/agent": 3, "internal/plugin": 3, "internal/resolve": 4,
 	"internal/workmap": 5, "internal/batch": 5, "internal/followup": 5, "internal/gc": 5, "internal/report": 5, "internal/flowview": 5,
 	"internal/eval": 6, "internal/route": 6, "internal/game": 7,
 	"internal/execproto": 8, "internal/hrnmcp": 8, "internal/watch": 8, "internal/update": 8, "internal/archtest": 8, "cmd/hrn": 8,

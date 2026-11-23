@@ -36,6 +36,23 @@ func Root() string { return runpaths.Root() }
 
 type RoutedBy = table.RoutedBy
 
+// PluginBackend is reserved for plugin calls and must never name an agent backend.
+const PluginBackend = "plugin"
+
+type PluginRun struct {
+	Name           string          `json:"name"`
+	Version        string          `json:"version,omitempty"`
+	Protocol       string          `json:"protocol,omitempty"`
+	Capability     string          `json:"capability"`
+	SHA256         string          `json:"sha256,omitempty"`
+	Path           string          `json:"path,omitempty"`
+	Installed      bool            `json:"installed,omitempty"`
+	Input          json.RawMessage `json:"input,omitempty"`
+	InputTruncated bool            `json:"input_truncated,omitempty"`
+	// Reported holds evidence claimed by the plugin, separate from verified result evidence.
+	Reported []kernel.Evidence `json:"reported_evidence,omitempty"`
+}
+
 type Record struct {
 	StartHead string `json:"start_head,omitempty"`
 	// Repo is the run's remote as host/path, never its URL; Branch is empty on a detached HEAD.
@@ -57,7 +74,8 @@ type Record struct {
 	RecordError   string `json:"record_error,omitempty"`
 	Done          bool   `json:"-"`
 
-	Setup *kernel.Setup `json:"setup,omitempty"`
+	Setup  *kernel.Setup `json:"setup,omitempty"`
+	Plugin *PluginRun    `json:"plugin,omitempty"`
 }
 
 type Writer struct {
@@ -74,7 +92,18 @@ type Writer struct {
 
 // Create starts a run record.
 func Create(backend string, task kernel.Task, setup *kernel.Setup) (*Writer, error) {
-	return create(backend, task, setup, "", "", nil, "")
+	return create(backend, task, setup, "", "", nil, "", nil)
+}
+
+// CreatePlugin starts a run record with bounded plugin input.
+func CreatePlugin(task kernel.Task, run PluginRun) (*Writer, error) {
+	if len(run.Input) > 256<<10 {
+		run.Input = nil
+		run.InputTruncated = true
+	}
+	run.Input = bytes.Clone(run.Input)
+	run.Reported = slices.Clone(run.Reported)
+	return create(PluginBackend, task, nil, "", "", nil, "", &run)
 }
 
 // CreateContinuing records a continuation.
@@ -83,7 +112,7 @@ func CreateContinuing(backend string, task kernel.Task, setup *kernel.Setup, con
 	if len(routed) > 0 {
 		by = routed[0]
 	}
-	return create(backend, task, setup, continues, "", by, "")
+	return create(backend, task, setup, continues, "", by, "", nil)
 }
 
 // RouteFreshHandover means a new session briefed from the record.
@@ -100,7 +129,7 @@ func CreateContinuingRoute(backend string, task kernel.Task, setup *kernel.Setup
 
 // CreateRouted records route selection evidence alongside the task.
 func CreateRouted(backend string, task kernel.Task, setup *kernel.Setup, continues, route string, routed *RoutedBy, note string) (*Writer, error) {
-	return create(backend, task, setup, continues, route, routed, note)
+	return create(backend, task, setup, continues, route, routed, note, nil)
 }
 
 var createEventsFile = func(path string) (io.WriteCloser, error) {
@@ -108,7 +137,7 @@ var createEventsFile = func(path string) (io.WriteCloser, error) {
 }
 
 // Failed starts must leave no partial record.
-func create(backend string, task kernel.Task, setup *kernel.Setup, continues, route string, routed *RoutedBy, note string) (w *Writer, err error) {
+func create(backend string, task kernel.Task, setup *kernel.Setup, continues, route string, routed *RoutedBy, note string, plugin *PluginRun) (w *Writer, err error) {
 	if _, err := ResolveHome(); err != nil {
 		return nil, err
 	}
@@ -123,7 +152,7 @@ func create(backend string, task kernel.Task, setup *kernel.Setup, continues, ro
 		}
 	}()
 	w = &Writer{dir: dir, rec: Record{ID: id, Owner: owner.Local(), Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
-		Setup: setup, RouteNote: note}}
+		Setup: setup, RouteNote: note, Plugin: plugin}}
 	w.gitRoot, w.rec.StartHead = startGit(task.Dir)
 	if w.gitRoot != "" {
 		w.rec.Repo, w.rec.Branch = startRepo(w.gitRoot)
@@ -145,6 +174,15 @@ func create(backend string, task kernel.Task, setup *kernel.Setup, continues, ro
 
 func (w *Writer) ID() string  { return w.rec.ID }
 func (w *Writer) Dir() string { return w.dir }
+
+// SetPluginReported saves the plugin's evidence for Close.
+func (w *Writer) SetPluginReported(e []kernel.Evidence) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.rec.Plugin != nil {
+		w.rec.Plugin.Reported = slices.Clone(e)
+	}
+}
 
 // Event records whole events, skipping fragments.
 func (w *Writer) Event(e kernel.Event) {

@@ -297,6 +297,33 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-23: #982, plugin protocol v2 with a channel kind (PR #986). v2 keeps all of v1 and
+  adds `kind: channel` for long-lived plugins that send `inbound` messages on their own; the host
+  answers `ack` once it has stored one, sends `deliver` (text, reply, up to 8 buttons) and reads
+  `delivered`, `delivery_failed` (codes `rate_limited` and `unauthorised`, v2 only) and `status`.
+  The delivery guarantee: a plugin advances its service position only after an ack and resends
+  every un-acked inbound after a restart; the host stores before acking and drops duplicates by
+  channel and inbound id; an unanswered deliver after an exit has an unknown outcome and may be
+  resent with the same id. Short untrusted strings refuse control characters; message text keeps
+  LF, CR and TAB. A reference echo channel in `contracts/pluginproto` tests a restart with acks
+  out of order. hrn's own host stays on v1 and refuses a channel plugin, naming a channel host;
+  the first channel host is Ada (cristiangirlea/adanext-ada), which imports `contracts`.
+- 2026-11-21: #881, the plugin host (PR #983), the second code slice of #878, built as the
+  feature branch `plugin-host` in three pieces: the host library `internal/plugin` (PR #965),
+  `hrn plugin list|info|call` with run records (PR #972) and `hrn plugin install` (PR #976).
+  Discovery looks in `$HRN_HOME/plugins/<name>/` first, then in absolute `PATH` directories; the
+  child gets the filtered and guarded environment, no `HRN_` variable, its own process tree, and
+  is refused before any call when the handshake fails. A call is a run record with backend
+  `plugin` and a `plugin` block (name, version, protocol, capability, sha256, input up to 256
+  KiB, reported evidence apart from verified); it cannot be continued. Decision (a) of #878, on
+  a maintainer's word: the install source is explicit (`owner/repo[@tag]`, no implicit
+  registry), with a lockable `plugins` block in the backend preferences and organisation file
+  for short names, an allow list and an off switch; a download must pass `SHA256SUMS` and a
+  handshake naming the requested plugin before it becomes discoverable. `hrn backends reset`
+  keeps the plugin settings. The settings govern installation only: a plugin on `PATH` still
+  runs, and the egress proxy does not apply to plugin children. The review of the whole branch
+  found plugin calls earning game XP (every call records a deadline); the game now leaves them
+  out. Next: #882, the first plugin in its own repository.
 - 2026-11-20: #880, the plugin protocol v1 and the contracts module (PR #958), the first code
   slice of #878. `docs/plugins.md` is the contract: JSON lines, the host speaks first (`hello`,
   then the plugin's `ready` with the version it chose), one call in flight per process,

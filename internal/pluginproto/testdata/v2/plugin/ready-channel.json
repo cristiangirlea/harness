@@ -1,0 +1,1 @@
+{"v":1,"seq":1,"type":"ready","protocol":"v2","plugin":{"name":"echo","version":"1.0"},"capabilities":[],"kind":"channel","channel":{"name":"echo","label":"Echo chat"}}

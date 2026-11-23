@@ -75,7 +75,7 @@ func TestEveryExampleInThePluginsPageIsAGoldenFixture(t *testing.T) {
 	}
 	fixtures := map[string]bool{}
 	for _, dir := range []string{"host", "plugin"} {
-		files, err := filepath.Glob(filepath.Join("testdata", "v1", dir, "*.json"))
+		files, err := filepath.Glob(filepath.Join("testdata", "v[12]", dir, "*.json"))
 		if err != nil {
 			t.Fatal(err)
 		}

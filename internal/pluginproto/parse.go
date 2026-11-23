@@ -27,6 +27,9 @@ var (
 	evidenceHash   = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
+// ValidName reports whether name can be a plugin or capability name.
+func ValidName(name string) bool { return programName.MatchString(name) }
+
 // Negotiate returns the first offered version that supported contains.
 func Negotiate(offered, supported []string) (string, bool) {
 	for _, version := range offered {
@@ -37,20 +40,40 @@ func Negotiate(offered, supported []string) (string, bool) {
 	return "", false
 }
 
-// ParseHostLine decodes one line a host wrote: *Hello, *Call or *Cancel.
+// ParseHostLine decodes a host line under version 1.
 func ParseHostLine(line []byte) (any, error) {
+	return parseHostLine(line, false)
+}
+
+// ParseHostLineV2 checks host lines against the negotiated kind; an empty kind means capability.
+func ParseHostLineV2(line []byte, kind string) (any, error) {
+	switch kind {
+	case "", KindCapability:
+		return parseHostLine(line, false)
+	case KindChannel:
+		return parseHostLine(line, true)
+	default:
+		return nil, fmt.Errorf("kind: unknown plugin kind %q", kind)
+	}
+}
+
+func parseHostLine(line []byte, channel bool) (any, error) {
 	fields, kind, err := parseLine(line)
 	if err != nil {
 		return nil, err
 	}
 	var frame any
-	switch kind {
-	case TypeHello:
+	switch {
+	case kind == TypeHello:
 		frame = new(Hello)
-	case TypeCall:
+	case !channel && kind == TypeCall:
 		frame = new(Call)
-	case TypeCancel:
+	case !channel && kind == TypeCancel:
 		frame = new(Cancel)
+	case channel && kind == TypeAck:
+		frame = new(Ack)
+	case channel && kind == TypeDeliver:
+		frame = new(Deliver)
 	default:
 		return nil, fmt.Errorf("type: unknown host frame %q", kind)
 	}
@@ -58,38 +81,73 @@ func ParseHostLine(line []byte) (any, error) {
 		return nil, err
 	}
 	switch frame := frame.(type) {
+	case *Ack:
+		err = serviceID("ack.id", frame.ID)
+	case *Deliver:
+		err = validateDeliver(frame)
 	case *Hello:
-		if err := validateHello(frame, fields["limits"]); err != nil {
-			return nil, err
-		}
+		err = validateHello(frame, fields["limits"])
 	case *Call:
-		if err := validateCall(frame, present(fields, "timeout_ms")); err != nil {
-			return nil, err
-		}
+		err = validateCall(frame, present(fields, "timeout_ms"))
 	case *Cancel:
-		if err := validateID("cancel.id", frame.ID); err != nil {
-			return nil, err
-		}
+		err = validateID("cancel.id", frame.ID)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return frame, nil
 }
 
-// ParsePluginLine decodes one line a plugin wrote: *Ready, *Event, *Result or *Error.
+// ParsePluginLine decodes a handshake or a version 1 plugin line.
 func ParsePluginLine(line []byte) (any, error) {
+	return parsePluginLine(line, V1, false)
+}
+
+// ParsePluginLineV2 checks plugin lines against the negotiated kind; ready declares its own kind.
+func ParsePluginLineV2(line []byte, kind string) (any, error) {
+	switch kind {
+	case "", KindCapability:
+		return parsePluginLine(line, V2, false)
+	case KindChannel:
+		return parsePluginLine(line, V2, true)
+	default:
+		return nil, fmt.Errorf("kind: unknown plugin kind %q", kind)
+	}
+}
+
+func parsePluginLine(line []byte, version string, channel bool) (any, error) {
 	fields, kind, err := parseLine(line)
 	if err != nil {
 		return nil, err
 	}
 	var frame any
-	switch kind {
-	case TypeReady:
+	switch {
+	case kind == TypeReady:
+		// Only v2 owns these fields; older plugins can use unknown fields for extensions.
+		var selected string
+		if json.Unmarshal(fields["protocol"], &selected) == nil && selected != V2 {
+			var readyKind string
+			if json.Unmarshal(fields["kind"], &readyKind) == nil && readyKind == KindChannel {
+				return nil, ErrChannelRequiresV2
+			}
+			delete(fields, "kind")
+			delete(fields, "channel")
+		}
 		frame = new(Ready)
-	case TypeEvent:
-		frame = new(Event)
-	case TypeResult:
-		frame = new(Result)
-	case TypeError:
+	case kind == TypeError:
 		frame = new(Error)
+	case !channel && kind == TypeEvent:
+		frame = new(Event)
+	case !channel && kind == TypeResult:
+		frame = new(Result)
+	case channel && kind == TypeInbound:
+		frame = new(Inbound)
+	case channel && kind == TypeDelivered:
+		frame = new(Delivered)
+	case channel && kind == TypeDeliveryFailed:
+		frame = new(DeliveryFailed)
+	case channel && kind == TypeStatus:
+		frame = new(Status)
 	default:
 		return nil, fmt.Errorf("type: unknown plugin frame %q", kind)
 	}
@@ -98,13 +156,21 @@ func ParsePluginLine(line []byte) (any, error) {
 	}
 	switch frame := frame.(type) {
 	case *Ready:
-		err = validateReady(frame)
+		err = validateReady(frame, present(fields, "kind"))
+	case *Inbound:
+		err = validateInbound(frame)
+	case *Delivered:
+		err = validateDelivered(frame)
+	case *DeliveryFailed:
+		err = validateDeliveryFailed(frame)
+	case *Status:
+		err = validateStatus(frame)
 	case *Event:
 		err = validateEvent(frame, present(fields, "text"))
 	case *Result:
-		err = validateResult(frame)
+		err = validateResult(frame, version)
 	case *Error:
-		err = validateError(frame, present(fields, "id"))
+		err = validateError(frame, present(fields, "id"), version)
 	}
 	if err != nil {
 		return nil, err
@@ -189,7 +255,10 @@ func decodeFields(fields objectFields, path string, dst reflect.Value) error {
 	for i := range dst.NumField() {
 		name, options, _ := strings.Cut(dst.Type().Field(i).Tag.Get("json"), ",")
 		raw, ok := fields[name]
-		if !ok || !present(fields, name) && options == "omitempty" {
+		if !ok && dst.Type().Field(i).Tag.Get("required") == "true" {
+			return fmt.Errorf("%s.%s: required", path, name)
+		}
+		if !ok || !present(fields, name) && (options == "omitempty" || options == "omitzero") {
 			continue
 		}
 		if err := decodeValue(raw, path+"."+name, dst.Field(i)); err != nil {
@@ -238,6 +307,10 @@ func decodeList(raw json.RawMessage, path string, dst reflect.Value) error {
 	switch dst.Type().Elem() {
 	case reflect.TypeFor[Capability]():
 		maxEntries = maxCapabilities
+	case reflect.TypeFor[Attachment]():
+		maxEntries = MaxAttachments
+	case reflect.TypeFor[Button]():
+		maxEntries = MaxButtons
 	case reflect.TypeFor[Evidence]():
 		maxEntries = maxEvidence
 	}
@@ -308,7 +381,7 @@ func validateEnvelope(path string, version int, seq int64) error {
 	return nil
 }
 
-func validateReady(frame *Ready) error {
+func validateReady(frame *Ready, hasKind bool) error {
 	if err := validateEnvelope("ready", frame.V, frame.Seq); err != nil {
 		return err
 	}
@@ -318,7 +391,23 @@ func validateReady(frame *Ready) error {
 	if err := validateProgram("ready.plugin", frame.Plugin); err != nil {
 		return err
 	}
-	if len(frame.Capabilities) == 0 {
+	if hasKind && frame.Kind != KindCapability && frame.Kind != KindChannel {
+		return fmt.Errorf("ready.kind: unknown kind %q", frame.Kind)
+	}
+	if frame.Kind == KindChannel {
+		if frame.Channel == nil {
+			return fmt.Errorf("ready.channel: required for channel kind")
+		}
+		if !channelName.MatchString(frame.Channel.Name) {
+			return fmt.Errorf("ready.channel.name: invalid name")
+		}
+		if err := shortString("ready.channel.label", frame.Channel.Label, 0, 128); err != nil {
+			return err
+		}
+	} else if frame.Channel != nil {
+		return fmt.Errorf("ready.channel: requires channel kind")
+	}
+	if frame.Kind != KindChannel && len(frame.Capabilities) == 0 {
 		return fmt.Errorf("ready.capabilities: at least one entry is required")
 	}
 	names := make(map[string]bool, len(frame.Capabilities))
@@ -356,7 +445,7 @@ func validateEvent(frame *Event, hasText bool) error {
 	return nil
 }
 
-func validateResult(frame *Result) error {
+func validateResult(frame *Result, version string) error {
 	if err := validateEnvelope("result", frame.V, frame.Seq); err != nil {
 		return err
 	}
@@ -368,7 +457,7 @@ func validateResult(frame *Result) error {
 		if frame.Error == nil {
 			return fmt.Errorf("result.error: required for failed status")
 		}
-		if err := validateProblem("result.error", frame.Error.Code, frame.Error.Message); err != nil {
+		if err := validateProblem("result.error", frame.Error.Code, frame.Error.Message, version); err != nil {
 			return err
 		}
 	case StatusOK, StatusCanceled:
@@ -389,11 +478,11 @@ func validateResult(frame *Result) error {
 	return nil
 }
 
-func validateError(frame *Error, hasID bool) error {
+func validateError(frame *Error, hasID bool, version string) error {
 	if err := validateEnvelope("error", frame.V, frame.Seq); err != nil {
 		return err
 	}
-	if err := validateProblem("error", frame.Code, frame.Message); err != nil {
+	if err := validateProblem("error", frame.Code, frame.Message, version); err != nil {
 		return err
 	}
 	if hasID {
@@ -436,9 +525,13 @@ func validateID(path, id string) error {
 	return nil
 }
 
-func validateProblem(path, code, message string) error {
+func validateProblem(path, code, message, version string) error {
 	switch code {
 	case CodeUnsupportedProtocol, CodeBadRequest, CodeUnsupported, CodeBusy, CodeInternal:
+	case CodeRateLimited, CodeUnauthorised:
+		if version != V2 {
+			return fmt.Errorf("%s.code: unknown code %q", path, code)
+		}
 	default:
 		return fmt.Errorf("%s.code: unknown code %q", path, code)
 	}
