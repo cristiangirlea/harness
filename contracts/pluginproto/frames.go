@@ -1,10 +1,11 @@
-// Package pluginproto defines the version 1 plugin wire protocol.
+// Package pluginproto defines the plugin wire protocol.
 package pluginproto
 
 import "encoding/json"
 
 const (
 	V1           = "v1"
+	V2           = "v2"
 	MaxLine      = 4 << 20
 	MaxEventText = 256 << 10
 	MaxExcerpt   = 2048
@@ -37,6 +38,8 @@ const (
 	CodeUnsupported         = "unsupported"
 	CodeBusy                = "busy"
 	CodeInternal            = "internal"
+	CodeRateLimited         = "rate_limited"
+	CodeUnauthorised        = "unauthorised"
 )
 
 const (
@@ -85,7 +88,9 @@ type Ready struct {
 	Type         string       `json:"type"`
 	Protocol     string       `json:"protocol"`
 	Plugin       Program      `json:"plugin"`
-	Capabilities []Capability `json:"capabilities"`
+	Capabilities []Capability `json:"capabilities,omitzero"`
+	Kind         string       `json:"kind,omitempty"`
+	Channel      *Channel     `json:"channel,omitempty"`
 }
 
 type Event struct {

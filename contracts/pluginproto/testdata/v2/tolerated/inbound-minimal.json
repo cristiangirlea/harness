@@ -1,0 +1,1 @@
+{"v":1,"seq":2,"type":"inbound","id":"msg:17","time":"2026-01-15T10:30:00Z","sender":{"id":"user:3"},"chat":{"id":"room:8","extension":true},"text":"hello","attachments":null}
