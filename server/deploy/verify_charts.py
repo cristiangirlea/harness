@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -152,6 +153,9 @@ def main():
     assert dockerfile.index("COPY server/go.mod server/go.sum ./server/") < dockerfile.index(
         "RUN cd server && go mod download") < dockerfile.index("COPY server/ ./server/"), (
         "download server modules before copying server sources")
+    go_line = re.search(r"^go (\S+)$", (ROOT.parent.parent / "go.mod").read_text(), re.M).group(1)
+    assert re.fullmatch(rf"FROM golang:{re.escape(go_line)}@sha256:[0-9a-f]{{64}} AS build", dockerfile[1]), (
+        "the build image must be the Go version in server/go.mod, pinned by digest")
     helm("lint", str(ROOT / "tenant-namespace"), *set_args({"tenant.id": TENANT}))
     helm("lint", str(ROOT / "project-worker"), "--namespace",
          NAMESPACE, *set_args(SETS))
