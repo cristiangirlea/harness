@@ -21,6 +21,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/agent"
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
+	"github.com/cristiangirlea/harness/internal/gitenv"
 	"github.com/cristiangirlea/harness/internal/route/table"
 	"github.com/cristiangirlea/harness/internal/runlog"
 	"github.com/cristiangirlea/harness/internal/scripthint"
@@ -47,16 +48,8 @@ func Derive(r Records) ([]Event, error) {
 	r.Runs = agentRuns(r.Runs)
 	var events []Event
 	seen := map[string]bool{}
-	names := map[string]string{}
-	name := func(dir string) string {
-		root := repoRoot(dir)
-		key := cleanPath(root)
-		if n, ok := names[key]; ok {
-			return n
-		}
-		names[key] = repoName(root)
-		return names[key]
-	}
+	finder := newRootFinder()
+	name := finder.name
 	add := func(key, kind string, at time.Time, dir string) {
 		if !seen[key] {
 			seen[key] = true
@@ -130,8 +123,8 @@ func Derive(r Records) ([]Event, error) {
 		if rec.Task.Dir == "" {
 			continue
 		}
-		root, ok := scripthint.Root(rec.Task.Dir)
-		if !ok {
+		root := finder.root(rec.Task.Dir)
+		if root == "" {
 			continue
 		}
 		kept, loaded := scripts[root]
@@ -194,13 +187,13 @@ func Derive(r Records) ([]Event, error) {
 	}
 	roots := map[string]bool{}
 	for _, rec := range r.Runs {
-		if rec.Task.Dir != "" {
-			roots[repoRoot(rec.Task.Dir)] = true
+		if root := finder.root(rec.Task.Dir); root != "" {
+			roots[root] = true
 		}
 	}
 	for _, b := range r.Batches {
-		if b.Dir != "" {
-			roots[repoRoot(b.Dir)] = true
+		if root := finder.root(b.Dir); root != "" {
+			roots[root] = true
 		}
 	}
 	var rootList []string
@@ -208,9 +201,19 @@ func Derive(r Records) ([]Event, error) {
 		rootList = append(rootList, root)
 	}
 	sort.Strings(rootList)
+	type mergedRead struct {
+		root, name string
+		events     []Event
+		answers    map[string]bool
+		settled    bool
+	}
+	known := map[string]bool{}
+	readGameFile(mergedScriptsFile, &known)
+	var merged []*mergedRead
+	var reads []func()
 	repoRoots := map[string]bool{}
 	for _, root := range rootList {
-		name := repoName(root)
+		name := finder.repoName(root)
 		if !strings.Contains(name, "/") || repoRoots[name] {
 			continue
 		}
@@ -218,11 +221,35 @@ func Derive(r Records) ([]Event, error) {
 			continue
 		}
 		repoRoots[name] = true
-		for _, e := range mergedScripts(root) {
+		m := &mergedRead{root: root, name: name}
+		merged = append(merged, m)
+		reads = append(reads, func() { m.events, m.answers, m.settled = mergedScripts(m.root, m.name, known) })
+	}
+	readAll(reads)
+	answers := map[string]bool{}
+	complete := true
+	for _, m := range merged {
+		complete = complete && m.settled
+		for key, kept := range m.answers {
+			answers[key] = kept
+		}
+		for _, e := range m.events {
 			if !seen[e.Key] {
 				seen[e.Key] = true
 				events = append(events, e)
 			}
+		}
+	}
+	if !complete {
+		for key, kept := range known {
+			if _, ok := answers[key]; !ok {
+				answers[key] = kept
+			}
+		}
+	}
+	if len(answers) != len(known) || !sameAnswers(answers, known) {
+		if gitenv.SupportsNoLazyFetch() {
+			writeGameFile(mergedScriptsFile, answers)
 		}
 	}
 	for _, feature := range []string{"batch", "slot", "eval", "routed"} {
@@ -235,14 +262,26 @@ func Derive(r Records) ([]Event, error) {
 
 var commitHash = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 
-func mergedScripts(root string) []Event {
-	ctx := context.Background()
-	name := repoName(root)
-	if !strings.Contains(name, "/") {
-		return nil
+// mergedScriptsFile keeps whether a script file added at a commit carries the kept header.
+const mergedScriptsFile = "merged-scripts.json"
+
+func sameAnswers(a, b map[string]bool) bool {
+	for key, kept := range a {
+		if old, ok := b[key]; !ok || old != kept {
+			return false
+		}
 	}
-	log := gitEvidence(ctx, root, "log", "--first-parent", "--merges", "--diff-merges=first-parent", "--reverse", "--no-show-signature", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-filter=A", "--name-only", "-z", "--format=%x00hrn-merge %H %cI%x00", "refs/remotes/origin/HEAD", "--", "scripts/")
-	var events []Event
+	return true
+}
+
+// mergedScripts lists kept scripts added by merges; known holds earlier answers per commit and file, which never change.
+func mergedScripts(root, name string, known map[string]bool) (events []Event, answers map[string]bool, settled bool) {
+	ctx := context.Background()
+	answers = map[string]bool{}
+	if !strings.Contains(name, "/") {
+		return nil, answers, true
+	}
+	log, _, settled := gitRead(ctx, root, "log", "--first-parent", "--merges", "--diff-merges=first-parent", "--reverse", "--no-show-signature", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-filter=A", "--name-only", "-z", "--format=%x00hrn-merge %H %cI%x00", "refs/remotes/origin/HEAD", "--", "scripts/")
 	var oid string
 	var at time.Time
 	for _, token := range strings.Split(log, "\x00") {
@@ -257,12 +296,23 @@ func mergedScripts(root string) []Event {
 		if oid == "" || !strings.HasPrefix(file, "scripts/") || file == "scripts/" {
 			continue
 		}
-		body := gitEvidence(ctx, root, "show", "--no-ext-diff", "--no-textconv", oid+":"+file)
-		if keptHeader(body) {
+		key := oid + ":" + file
+		kept, ok := known[key]
+		if !ok {
+			body, answered, done := gitRead(ctx, root, "show", "--no-ext-diff", "--no-textconv", key)
+			// Keep only what git returned: a blob missing now may arrive later.
+			if !answered {
+				settled = settled && done
+				continue
+			}
+			kept = keptHeader(body)
+		}
+		answers[key] = kept
+		if kept {
 			events = append(events, Event{Key: "ada:script:" + name + "/" + strings.TrimPrefix(file, "scripts/"), Kind: "ada_script", Track: TrackAda, XP: 10, At: at.UTC(), Repo: name})
 		}
 	}
-	return events
+	return events, answers, settled
 }
 
 func keptHeader(body string) bool {
@@ -446,23 +496,33 @@ func Fold(r Records) error {
 
 // Rebuild skips records that cannot be loaded, but fails if a run's events cannot be read.
 func Rebuild() error {
-	runs, err := runlog.List(0)
+	r, err := LoadRecords()
 	if err != nil {
 		return err
+	}
+	return RebuildFrom(r, NewGitHubSourceFrom(r))
+}
+
+// LoadRecords reads every run, batch and eval record once, for a caller that needs several views of them.
+func LoadRecords() (Records, error) {
+	runs, err := runlog.List(0)
+	if err != nil {
+		return Records{}, err
 	}
 	batches, _, err := batch.List()
 	if err != nil {
-		return err
+		return Records{}, err
 	}
 	evals, _, err := eval.ListAll()
 	if err != nil {
-		return err
+		return Records{}, err
 	}
-	if err := Fold(Records{Runs: runs, Batches: batches, Evals: evals, AllBatches: batches}); err != nil {
-		return err
-	}
-	source, err := NewGitHubSource()
-	if err != nil {
+	return Records{Runs: runs, Batches: batches, Evals: evals, AllBatches: batches}, nil
+}
+
+// RebuildFrom is Rebuild over records already loaded.
+func RebuildFrom(r Records, source *GitHubSource) error {
+	if err := Fold(r); err != nil {
 		return err
 	}
 	if err := NewPractice(source, time.Now()).Rebuild(); err != nil {
@@ -542,6 +602,94 @@ func repoRoot(dir string) string {
 		return root
 	}
 	return filepath.Clean(dir)
+}
+
+// rootFinder answers repoRoot and repoName for many records, checking each parent folder once.
+type rootFinder struct {
+	roots map[string]string
+	names map[string]string
+}
+
+func newRootFinder() *rootFinder {
+	return &rootFinder{roots: map[string]string{}, names: map[string]string{}}
+}
+
+// root is the checkout enclosing dir, or "" when there is none.
+func (f *rootFinder) root(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	var walked []string
+	root := ""
+	for d := abs; ; {
+		if r, ok := f.roots[d]; ok {
+			root = r
+			break
+		}
+		walked = append(walked, d)
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			root = d
+			break
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	for _, d := range walked {
+		f.roots[d] = root
+	}
+	return root
+}
+
+// name is repoName(dir): outside a checkout, the folder's own name.
+func (f *rootFinder) name(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	root := f.root(dir)
+	if root == "" {
+		return filepath.Base(filepath.Clean(dir))
+	}
+	return f.repoName(root)
+}
+
+func (f *rootFinder) repoName(root string) string {
+	name, ok := f.names[root]
+	if !ok {
+		name = repoName(root)
+		f.names[root] = name
+	}
+	return name
+}
+
+// readGameFile reads a kept answer file; a missing or broken one reads as empty.
+func readGameFile(name string, v any) {
+	if data, err := os.ReadFile(filepath.Join(Dir(), name)); err == nil {
+		_ = json.Unmarshal(data, v)
+	}
+}
+
+// writeGameFile replaces a kept answer file whole; failing to keep answers only costs a re-read.
+func writeGameFile(name string, v any) {
+	data, err := json.Marshal(v)
+	if err != nil || os.MkdirAll(Dir(), 0700) != nil {
+		return
+	}
+	f, err := os.CreateTemp(Dir(), "."+name+"-*")
+	if err != nil {
+		return
+	}
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr != nil || cerr != nil || os.Rename(f.Name(), filepath.Join(Dir(), name)) != nil {
+		os.Remove(f.Name())
+	}
 }
 
 // parseRemote returns owner/name for a GitHub remote URL, or "" for any other.

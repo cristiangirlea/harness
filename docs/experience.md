@@ -118,9 +118,11 @@ evidence of a repository not fully read in time is left out (its practice reads 
 count), and `hrn bot stats` says so (`familiarity: time limit
 reached, some repositories were skipped`). Reads are kept in `familiarity-cache.json` so the
 next call gets further: a batch's evidence is kept while the batch record exists, since its
-full commit IDs fix it; a repository's recent commits are reused for 10 minutes, and a copy up
-to a day old stands in when a fresh read does not finish in time. Familiarity is therefore
-usually up to 10 minutes old, and up to a day when a read runs out of time.
+full commit IDs fix it, and a batch whose commits git refuses (pruned) is read again after a
+day. A repository's recent commits are reused for 10 minutes, and a copy up to a day old
+stands in when a fresh read does not finish in time or git refuses it (a refusal is kept
+for 10 minutes like an answer). Familiarity is
+therefore usually up to 10 minutes old, and up to a day when a read runs out of time.
 
 ## Levels and badges
 
@@ -157,7 +159,10 @@ card. It uses the same formula over the `ada` track only.
 A rule nobody measured earns her nothing. Lesson admission verdicts live in the control
 service, so `ada:lesson` derives nothing from local records. Script events use first-parent
 merges in the locally known `origin/HEAD` history of repositories named by runs or batches;
-a repository without that reference yields no script events.
+a repository without that reference yields no script events. Whether a file added at a commit
+carries the header never changes, so the answer is kept in `merged-scripts.json` and a file is
+read again only when no answer is kept for it; a file git could not return is not kept.
+Records whose folder is not inside a Git checkout name no repository here or for practice.
 
 ## The ledger
 
@@ -175,6 +180,8 @@ a repository without that reference yields no script events.
 - `settings.json`: `enabled` (the game switch); voice preferences are planned.
 - `familiarity-cache.json`: Git reads kept for familiarity (commit IDs, their dates and
   areas). Safe to delete; the next read rebuilds it.
+- `merged-scripts.json`: for each script file added by a merge (commit ID and path), whether
+  it carries the kept-script header. Safe to delete; the next rebuild reads the files again.
 
 The rules that make it rebuildable and safe to prune:
 

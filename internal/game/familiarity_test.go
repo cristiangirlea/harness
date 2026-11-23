@@ -497,3 +497,167 @@ func TestFamiliarityCacheRejectsWhatItCannotTrust(t *testing.T) {
 		t.Fatalf("future-dated read was trusted: %+v", got)
 	}
 }
+
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return string(out)
+}
+
+func refusingGit(part string, reads *atomic.Int32) func(context.Context, *exec.Cmd) ([]byte, error) {
+	return func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+		joined := strings.Join(cmd.Args, " ")
+		if strings.Contains(joined, " rev-list ") || strings.Contains(joined, " log ") && !strings.Contains(joined, " --all ") {
+			reads.Add(1)
+		}
+		if part != "" && strings.Contains(joined, part) && !strings.Contains(joined, " --all ") {
+			return nil, &exec.ExitError{}
+		}
+		return cmd.Output()
+	}
+}
+
+func TestFamiliarityKeepsRefusedBatchEvidenceForADay(t *testing.T) {
+	for _, tc := range []struct{ name, refuse string }{{"rev-list", " rev-list "}, {"log", " log "}, {"no base", " log "}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HRN_HOME", t.TempDir())
+			dir := familiarityRepo(t)
+			base := strings.TrimSpace(gitOut(t, dir, "rev-parse", "HEAD"))
+			gitOut(t, dir, "checkout", "-b", "hrn/task")
+			gitOut(t, dir, "commit", "--allow-empty", "-m", "agent")
+			head := strings.TrimSpace(gitOut(t, dir, "rev-parse", "HEAD"))
+			if tc.name == "no base" {
+				base = ""
+			}
+			records := Records{Batches: []batch.Result{{Dir: dir, Base: base, Tasks: []batch.TaskResult{{Branch: "hrn/task", Commit: head}}}}}
+			now := time.Now()
+			var reads atomic.Int32
+			stubGit(t, refusingGit(tc.refuse, &reads))
+			got, err := deriveFamiliarity(context.Background(), records, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Partial {
+				t.Fatalf("a refused read is an answer for this call: %+v", got)
+			}
+			c := loadFamiliarityCache()
+			if len(c.Batches) != 1 {
+				t.Fatalf("batches: %+v", c.Batches)
+			}
+			for _, e := range c.Batches {
+				if !e.Refused.Equal(now) {
+					t.Fatalf("refusal not dated: %+v", e)
+				}
+			}
+			before, err := os.Stat(filepath.Join(Dir(), familiarityCacheFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(20 * time.Millisecond)
+			reads.Store(0)
+			stubGit(t, refusingGit("", &reads))
+			if _, err := deriveFamiliarity(context.Background(), records, now.Add(5*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			if n := reads.Load(); n != 0 {
+				t.Fatalf("a refusal under a day old was read again %d times", n)
+			}
+			if after, err := os.Stat(filepath.Join(Dir(), familiarityCacheFile)); err != nil || !after.ModTime().Equal(before.ModTime()) {
+				t.Fatalf("cache rewritten for a kept refusal: %v", err)
+			}
+			if _, err := deriveFamiliarity(context.Background(), records, now.Add(25*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			if reads.Load() == 0 {
+				t.Fatal("a refusal over a day old was not read again")
+			}
+			for _, e := range loadFamiliarityCache().Batches {
+				if !e.Refused.IsZero() {
+					t.Fatalf("answered evidence still dated as refused: %+v", e)
+				}
+			}
+		})
+	}
+}
+
+func TestFamiliarityRefusedRepositoryLogKeepsTheCachedCopy(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	dir := familiarityRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, dir, "add", ".")
+	gitOut(t, dir, "commit", "-m", "person")
+	runs := []runlog.Record{{Task: agent.Task{Dir: dir}}}
+	now := time.Now()
+	if got, err := deriveFamiliarity(context.Background(), Records{Runs: runs}, now); err != nil || len(got.Known) != 1 {
+		t.Fatalf("first: %+v %v", got, err)
+	}
+	var logs atomic.Int32
+	refuseLog := func(ctx context.Context, cmd *exec.Cmd) ([]byte, error) {
+		if strings.Contains(strings.Join(cmd.Args, " "), " --all ") {
+			logs.Add(1)
+			return nil, &exec.ExitError{}
+		}
+		return cmd.Output()
+	}
+	twice := func(at time.Time) Familiarity {
+		t.Helper()
+		logs.Store(0)
+		var got Familiarity
+		for _, when := range []time.Time{at, at.Add(5 * time.Minute)} {
+			var err error
+			if got, err = deriveFamiliarity(context.Background(), Records{Runs: runs}, when); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if n := logs.Load(); n != 1 {
+			t.Fatalf("a refused log ran %d times in 10 minutes", n)
+		}
+		return got
+	}
+	stubGit(t, refuseLog)
+	got := twice(now.Add(time.Hour))
+	if got.Partial || len(got.Known) != 1 || got.Known[0].Area != "f" {
+		t.Fatalf("cached copy not used: %+v", got)
+	}
+	if c := loadFamiliarityCache(); len(c.Repos) != 1 {
+		t.Fatalf("cached copy dropped: %+v", c.Repos)
+	}
+	for _, h := range []time.Duration{12, 23} {
+		if got := twice(now.Add(h * time.Hour)); got.Partial || len(got.Known) != 1 {
+			t.Fatalf("copy at +%dh: %+v", h, got)
+		}
+	}
+	if got := twice(now.Add(25 * time.Hour)); got.Partial || len(got.Known) != 0 {
+		t.Fatalf("a copy over a day old stood in for a refusal: %+v", got)
+	}
+	t.Setenv("HRN_HOME", t.TempDir())
+	got = twice(now)
+	if got.Partial || len(got.Known) != 0 || len(loadFamiliarityCache().Repos) != 1 {
+		t.Fatalf("refused with no copy: %+v, cache %+v", got, loadFamiliarityCache())
+	}
+	stubGit(t, hangingGit)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if got, err := deriveFamiliarity(ctx, Records{Runs: runs}, now.Add(15*time.Minute)); err != nil || !got.Partial {
+		t.Fatalf("a refusal stood in as a copy for a cut read: %+v %v", got, err)
+	}
+}
+
+func TestFamiliarityDropsACacheFromAnOlderBuild(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	if err := os.MkdirAll(Dir(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"batches":{"k":{"excluded":[],"areas":["a"]}},"repos":{}}`
+	if err := os.WriteFile(filepath.Join(Dir(), familiarityCacheFile), []byte(old), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if c := loadFamiliarityCache(); len(c.Batches) != 0 {
+		t.Fatalf("old cache read: %+v", c)
+	}
+}
