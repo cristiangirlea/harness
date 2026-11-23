@@ -297,6 +297,20 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-23: #882, the first plugin in its own repository (PR #989), the third code slice of
+  #878. The synthesizer from draft PR #572 moved to the public repository
+  `cristiangirlea/hrn-search` as the plugin `hrn-search` with the capability `search`, released
+  as `v0.1.0`; #572 was closed. Two defects of the draft were fixed on the way: the subtraction
+  overflow check was inverted, so no expression with `-` could be found, and the validation
+  examples steered the choice instead of being held out (the search now sees only training
+  examples, and validation can reject its answer). `scripts/plugin-pin.sh` runs in CI on Linux and
+  Windows and in the check skill: it builds hrn, installs the pinned release by its short name
+  through the `plugins` settings, calls it, and checks the verdict and the run record. The pin
+  covers the bytes as well as the tag: each platform's SHA-256 is checked against the release's
+  `SHA256SUMS` before hrn installs (install starts the plugin) and against the installed
+  executable after. Left for a maintainer: immutable releases on `hrn-search`, an expected-hash
+  option for `hrn plugin install` (would close the gap between the two downloads), and token
+  support if GitHub's anonymous limit makes the step flaky. Next: #883.
 - 2026-11-23: #982, plugin protocol v2 with a channel kind (PR #986). v2 keeps all of v1 and
   adds `kind: channel` for long-lived plugins that send `inbound` messages on their own; the host
   answers `ack` once it has stored one, sends `deliver` (text, reply, up to 8 buttons) and reads
