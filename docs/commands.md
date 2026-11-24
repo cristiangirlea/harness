@@ -18,7 +18,7 @@
 | `hrn remote cancel --tenant ID --project ID JOB_ID` | Request cancellation of a remote job. |
 | `hrn knowledge import\|search\|inspect\|active\|activate\|disable\|rollback request.json` | Manage approved project knowledge through the control service (see [Project knowledge](#project-knowledge)). |
 | `hrn knowledge markdown -request base.json [-min-words 100] [-max-words 800] [-overlap-words 40] FILE...` | Build a JSON import request from Markdown headings without calling the service. |
-| `hrn knowledge propose -request base.json -b claude\|codex [-run ID]... [-repo host/owner/name] [-purpose P] [-since DURATION\|DATE] [-limit N] [-o FILE]` | Draft knowledge entries from successful runs and carry forward the active entries. |
+| `hrn knowledge propose -request base.json -b claude\|codex [-run ID]... [-repo host/owner/name] [-purpose P] [-since DURATION\|DATE] [-limit N] [-o FILE [-json]]` | Draft knowledge entries from successful runs and carry forward the active entries. With `-json`, print a review summary on stdout. |
 | `hrn knowledge admit --version ID --spec FILE -b BACKEND [--held-out SHARE --seed N --source-run ID]` | Compare a candidate with active knowledge and record the gated verdict. |
 | `hrn retrieval fixture [--json]` | Compare bundled synthetic accounting samples without a model call; the fixture proves no real savings. |
 | `hrn retrieval compare --manifest FILE --samples FILE [--baseline-preparation FILE] [--candidate-preparation FILE] [--reuse N] [--runs] [--json]` | Compare saved retrieval evidence and verify measured run references locally, without a model call. Match each run on the requested model in `task.json`; a run without a requested model matches only when its reported result model exactly equals the variant model. Text output shows a differing provider-reported model. |
@@ -429,6 +429,24 @@ as an identifier. Entries that cite another run in their content or evidence are
 The draft's review fields are empty, so a maintainer must read and edit it and fill in `origin`,
 `reviewed_by`, and `review_evidence`. After import, only a passing `knowledge admit`
 verdict activates the candidate in this workflow.
+
+`-json` requires `-o FILE`. It writes one object to stdout and keeps diagnostics on stderr.
+`draft` is the path written, or `""` when nothing was kept. `proposed` and `kept` count new
+entries before and after filtering. `reviewed` lists source run IDs in review order, including
+parsed replies with zero entries. `skipped` lists `{run, reason}` for permanent refusals.
+`deferred` lists `{run, reason}` for runs that may be judged later. Its reasons are
+`over -limit`, `incomplete`, `batch task running`, and `unreadable run` (a run folder
+whose record files are not written yet). A run ID with no folder is skipped as `no such run`.
+`failed` lists `{run, review_run, error}` for review calls that failed or
+returned an unusable reply. An empty `review_run` means no review run ID was available.
+Each considered ID appears in exactly one of these four lists. A repeated `-run` ID keeps
+the outcome of its first occurrence. Reasons and errors fit on one line of at most 500 bytes.
+
+In both output modes, exit 0 means no review call failed. Deferred runs do not change the exit code.
+Exit 3 means at least one review failed. Any entries kept from other runs still form a draft.
+With `-json` and explicit `-run` IDs, a selection containing only skipped or deferred runs
+exits 0, with or without `-repo`. Other empty selections remain errors. Errors before review, such as
+an unreadable base request or an unreachable control service, exit non-zero with stdout empty.
 
 `hrn knowledge markdown -request base.json FILE...` reads only the named files,
 resolved inside the repository root with files under `.git` refused, and writes

@@ -233,7 +233,7 @@ func main() {
 	case "remote":
 		err = runRemote(os.Args[2:], os.Stdout)
 	case "knowledge":
-		err = runKnowledge(os.Args[2:], os.Stdout)
+		code, err = cmdKnowledge(os.Args[2:], os.Stdout)
 	case "retrieval":
 		err = runRetrieval(os.Args[2:], os.Stdout)
 	case "runs":

@@ -58,9 +58,11 @@ func TestProposalFlags(t *testing.T) {
 	for _, tc := range []struct{ args, want string }{
 		{"-b api -repo x", "-b"}, {"-repo x", "-b"}, {"-b codex -repo x -limit 26", "-limit"},
 		{"-b claude", "-run"}, {"-b claude -run ../bad", "-run"}, {"-b claude -repo x -since never", "-since"},
+		{"-b claude -repo x -json", "requires -o"},
 	} {
 		args := append([]string{"propose", "-request", path}, strings.Fields(tc.args)...)
-		if err := runKnowledge(args, io.Discard); err == nil || !strings.Contains(err.Error(), tc.want) {
+		var out bytes.Buffer
+		if _, err := cmdKnowledge(args, &out); err == nil || !strings.Contains(err.Error(), tc.want) || out.Len() != 0 {
 			t.Errorf("%s: %v", tc.args, err)
 		}
 	}
@@ -264,8 +266,8 @@ func TestProposalGrounding(t *testing.T) {
 			return "review", string(answer), err
 		}
 		var out, log bytes.Buffer
-		if err := runKnowledgePropose([]string{"-request", path, "-b", "claude", "-run", id}, &out, &log); err != nil {
-			t.Fatal(err)
+		if code, err := runKnowledgePropose([]string{"-request", path, "-b", "claude", "-run", id}, &out, &log); code != 0 || err != nil {
+			t.Fatalf("exit %d: %v", code, err)
 		}
 		if len(want) == 0 {
 			if out.Len() != 0 || !strings.Contains(log.String(), "ungrounded: 1") {
@@ -437,6 +439,7 @@ func TestKnowledgeProposeDraft(t *testing.T) {
 		return w.ID()
 	}
 	bad, good, candidate, badJSON, broken := record("bad"), record("good"), record("failed candidate"), record("invalid response"), record("broken review")
+	empty := record("empty review")
 	err := batch.SaveResult(batch.Result{ID: "batch", Tasks: []batch.TaskResult{{Status: batch.StatusPass, Attempts: []batch.Attempt{
 		{RunID: bad, Gates: []batch.GateResult{{Command: "old-test", ExitCode: 1, Output: "old failure"}}},
 		{RunID: good, Gates: []batch.GateResult{{Command: "go test ./...", Output: "now passes"}}},
@@ -445,7 +448,7 @@ func TestKnowledgeProposeDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry := retrieval.Entry{ID: "e_existing", Excerpt: true, Key: "existing", Content: "Existing\u202efact", Source: "doc", Evidence: "manual", Identifiers: []string{"doc"}}
-	check := func(version string, active []retrieval.Entry, run func() error) error {
+	check := func(version string, active []retrieval.Entry, wantCode int, run func() (int, error)) error {
 		t.Helper()
 		var routes []string
 		var mu sync.Mutex
@@ -474,8 +477,11 @@ func TestKnowledgeProposeDraft(t *testing.T) {
 			}
 		}))
 		t.Setenv("HRN_SERVER_URL", server.URL)
-		err := run()
+		code, err := run()
 		server.Close()
+		if code != wantCode {
+			t.Errorf("exit %d, want %d: %v", code, wantCode, err)
+		}
 		want := []string{"/v1/knowledge/active"}
 		if version != "" {
 			want = append(want, "/v1/knowledge/inspect")
@@ -501,9 +507,11 @@ func TestKnowledgeProposeDraft(t *testing.T) {
 		}
 		switch {
 		case strings.Contains(p, badJSON):
-			return "review-json", "invalid", nil
+			return "review-json", "private raw reply", nil
 		case strings.Contains(p, broken):
-			return "review-error", "", errors.New("failed")
+			return "", "private raw reply", errors.New("backend\r\nfailed " + strings.Repeat("界", 200))
+		case strings.Contains(p, empty):
+			return "review-empty", `{"entries":[]}`, nil
 		case strings.Contains(p, good):
 			for _, s := range []string{"old failure", "now passes", proposeBegin, proposeEnd} {
 				if !strings.Contains(p, s) {
@@ -518,8 +526,8 @@ func TestKnowledgeProposeDraft(t *testing.T) {
 	}
 	args := []string{"-request", path, "-b", "claude", "-run", bad, "-run", candidate, "-run", badJSON, "-run", broken, "-run", good}
 	var out, log bytes.Buffer
-	run := func() error { return runKnowledgePropose(args, &out, &log) }
-	if err = check("v_active", []retrieval.Entry{entry}, run); err != nil {
+	run := func() (int, error) { return runKnowledgePropose(args, &out, &log) }
+	if err = check("v_active", []retrieval.Entry{entry}, 3, run); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "\u202e") {
@@ -538,7 +546,7 @@ func TestKnowledgeProposeDraft(t *testing.T) {
 	if err != nil || !slices.Equal(ids, []string{good}) {
 		t.Fatalf("sources %v: %v", ids, err)
 	}
-	for _, s := range []string{bad, "failed gate old-test", candidate, "failed gate infra", "review-json", "review-error", good, "reviewed_source", "reviewed_by", "review_evidence", "hrn knowledge import", "hrn knowledge admit", "6 proposed, 1 kept, 5 dropped", "ungrounded: 1", "duplicate content: 1", "key collision: 1", "over 5 entries: 1", `content matched "ghp_"`} {
+	for _, s := range []string{bad, "failed gate old-test", candidate, "failed gate infra", "review-json", "backend", good, "reviewed_source", "reviewed_by", "review_evidence", "hrn knowledge import", "hrn knowledge admit", "6 proposed, 1 kept, 5 dropped", "ungrounded: 1", "duplicate content: 1", "key collision: 1", "over 5 entries: 1", `content matched "ghp_"`} {
 		if !strings.Contains(log.String(), s) {
 			t.Errorf("missing diagnostic %q: %s", s, log.String())
 		}
@@ -548,23 +556,154 @@ func TestKnowledgeProposeDraft(t *testing.T) {
 	}
 	output := filepath.Join(t.TempDir(), "draft.json")
 	args = append(args, "-o", output)
-	if err = check("v_active", []retrieval.Entry{{Key: draft.Entries[1].Key, Content: "different text"}, {Key: "other", Content: draft.Entries[1].Content}}, run); err != nil {
+	if err = check("v_active", []retrieval.Entry{{Key: draft.Entries[1].Key, Content: "different text"}, {Key: "other", Content: draft.Entries[1].Content}}, 3, run); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = os.Stat(output); !os.IsNotExist(err) {
 		t.Fatalf("key collision wrote output: %v", err)
 	}
-	if err = check("v_active", make([]retrieval.Entry, 100), run); err == nil || !strings.Contains(err.Error(), "100") {
+	if err = check("v_active", make([]retrieval.Entry, 100), 1, run); err == nil || !strings.Contains(err.Error(), "100") {
 		t.Fatal("missing size refusal", err)
 	}
 	if _, err = os.Stat(output); !os.IsNotExist(err) {
 		t.Fatal("oversized draft wrote output")
 	}
-	if err = check("", nil, func() error { return runKnowledge(append([]string{"propose"}, args...), io.Discard) }); err != nil {
+	if err = check("", nil, 3, func() (int, error) { return cmdKnowledge(append([]string{"propose"}, args...), io.Discard) }); err != nil {
 		t.Fatal(err)
 	}
 	if err = readRetrievalJSON(output, &draft); err != nil || len(draft.Entries) != 1 {
 		t.Fatalf("first version has %d entries: %v", len(draft.Entries), err)
+	}
+	t.Run("mixed explicit partition", func(t *testing.T) {
+		const overLimit = "20261103-000000-ffffff"
+		output := filepath.Join(t.TempDir(), "mixed.json")
+		args = append(args, "-json", "-o", output, "-run", empty, "-run", good, "-run", broken, "-limit", "4", "-run", overLimit)
+		out.Reset()
+		log.Reset()
+		if err := check("", nil, 3, run); err != nil {
+			t.Fatal(err)
+		}
+		if err := readRetrievalJSON(output, &draft); err != nil || len(draft.Entries) != 1 || draft.Entries[0].Source != "run:"+good {
+			t.Fatalf("partial draft: %+v, %v", draft.Entries, err)
+		}
+		for _, id := range []string{good, broken} {
+			if !strings.Contains(log.String(), "skip run "+id+": duplicate -run\n") {
+				t.Errorf("missing duplicate diagnostic for %s", id)
+			}
+		}
+		checkProposalJSON(t, out.Bytes(), map[string]any{
+			"draft": output, "proposed": 6, "kept": 1, "reviewed": []string{good, empty},
+			"skipped": []map[string]string{
+				{"run": bad, "reason": "failed gate old-test"}, {"run": candidate, "reason": "failed gate infra"},
+			},
+			"deferred": []map[string]string{{"run": overLimit, "reason": "over -limit"}},
+			"failed": []map[string]string{
+				{"run": badJSON, "review_run": "review-json", "error": "expected one JSON object with an entries array"},
+				{"run": broken, "review_run": "", "error": "backend failed " + strings.Repeat("界", 161)},
+			},
+		})
+	})
+	for _, id := range []string{empty, badJSON} {
+		output := filepath.Join(t.TempDir(), "absent.json")
+		args = []string{"-request", path, "-b", "claude", "-json", "-o", output, "-run", id}
+		out.Reset()
+		failed := []map[string]string{}
+		reviewed := []string{}
+		wantCode := 0
+		if id == badJSON {
+			wantCode = 3
+			failed = append(failed, map[string]string{"run": id, "review_run": "review-json", "error": "expected one JSON object with an entries array"})
+		} else {
+			reviewed = append(reviewed, id)
+		}
+		if err := check("", nil, wantCode, run); err != nil {
+			t.Fatal(err)
+		}
+		checkProposalJSON(t, out.Bytes(), map[string]any{"draft": "", "proposed": 0, "kept": 0, "reviewed": reviewed, "skipped": []any{}, "deferred": []any{}, "failed": failed})
+		if _, err := os.Stat(output); !os.IsNotExist(err) {
+			t.Fatalf("unexpected draft: %v", err)
+		}
+	}
+}
+
+func checkProposalJSON(t *testing.T, data []byte, want map[string]any) {
+	t.Helper()
+	var got, expected map[string]any
+	b, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, &expected); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &got); err != nil || !reflect.DeepEqual(got, expected) {
+		t.Fatalf("stdout %s, want %s: %v", data, b, err)
+	}
+}
+
+func TestProposalJSONNoEligible(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close()
+	t.Setenv("HRN_SERVER_URL", server.URL)
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 32))
+	path := filepath.Join(t.TempDir(), "base.json")
+	writeJSONFile(t, path, proposalBase())
+	const missing = "20261101-000000-abcdef"
+	const timedOut = "20261102-000000-abcdef"
+	const halfWritten = "20261103-000000-abcdef"
+	const inBatch = "20261104-000000-abcdef"
+	writeJSONFile(t, filepath.Join(runlog.Root(), timedOut, "result.json"), runlog.Record{Repo: "repo", Result: agent.Result{Status: agent.StatusTimeout}})
+	if err := os.MkdirAll(filepath.Join(runlog.Root(), halfWritten), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeJSONFile(t, filepath.Join(runlog.Root(), inBatch, "result.json"), runlog.Record{Repo: "repo", Result: agent.Result{Status: agent.StatusOK}})
+	if err := batch.SaveResult(batch.Result{ID: "running", Tasks: []batch.TaskResult{{Status: batch.StatusRunning, Attempts: []batch.Attempt{{RunID: inBatch}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{"-request", path, "-b", "claude", "-o", path + ".out"}
+	for _, tc := range []struct {
+		outcome, id, reason string
+	}{
+		{"skipped", timedOut, "timed out"},
+		{"skipped", missing, "no such run"},
+		{"deferred", halfWritten, "unreadable run"},
+		{"deferred", inBatch, "batch task running"},
+	} {
+		for _, repo := range []string{"", "repo"} {
+			t.Run(tc.outcome+"/repo="+repo, func(t *testing.T) {
+				args := append(base, "-json", "-run", tc.id)
+				if repo != "" {
+					args = append(args, "-repo", repo)
+				}
+				var out bytes.Buffer
+				if code, err := runKnowledgePropose(args, &out, io.Discard); code != 0 || err != nil {
+					t.Fatalf("exit %d: %v", code, err)
+				}
+				want := map[string]any{"draft": "", "proposed": 0, "kept": 0, "reviewed": []any{}, "failed": []any{}, "skipped": []any{}, "deferred": []any{}}
+				want[tc.outcome] = []map[string]string{{"run": tc.id, "reason": tc.reason}}
+				checkProposalJSON(t, out.Bytes(), want)
+			})
+		}
+	}
+	args := append(base, "-run", missing, "-run", timedOut)
+	var out, log bytes.Buffer
+	for _, tc := range []struct {
+		flags []string
+		want  string
+	}{
+		{nil, "no eligible source runs"},
+		{[]string{"-json", "-request", path + ".missing"}, ".missing"}, {[]string{"-json", "-since", "invalid"}, "-since"},
+	} {
+		out.Reset()
+		if code, err := runKnowledgePropose(append(args, tc.flags...), &out, &log); code != 1 || err == nil || !strings.Contains(err.Error(), tc.want) || out.Len() != 0 {
+			t.Errorf("%v: stdout %q, exit %d, err %v", tc.flags, &out, code, err)
+		}
+	}
+	writeJSONFile(t, filepath.Join(runlog.Root(), timedOut, "result.json"), runlog.Record{Result: agent.Result{Status: agent.StatusOK}})
+	if code, err := runKnowledgePropose(append(args, "-json"), &out, &log); code != 1 || err == nil || out.Len() != 0 {
+		t.Errorf("unreachable service: stdout %q, exit %d, err %v", &out, code, err)
 	}
 }
 
@@ -588,7 +727,7 @@ func TestProposalRepositoryWindow(t *testing.T) {
 	}{
 		{"", nil, []string{want}}, {"72h", nil, []string{want}}, {now.AddDate(0, 0, -9).Format(time.DateOnly), nil, []string{want, old}}, {"", []string{old}, []string{old}},
 	} {
-		runs, err := proposalRuns(tc.ids, "repo", "fix", tc.since, 10, nil, io.Discard)
+		runs, _, err := proposalRuns(tc.ids, "repo", "fix", tc.since, 10, nil, io.Discard, false)
 		var ids []string
 		for _, r := range runs {
 			ids = append(ids, r.ID)
@@ -597,4 +736,45 @@ func TestProposalRepositoryWindow(t *testing.T) {
 			t.Errorf("%q %v: %v %v", tc.since, tc.ids, ids, err)
 		}
 	}
+}
+
+func TestProposalJSONRepositorySkips(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "{}") }))
+	defer server.Close()
+	t.Setenv("HRN_SERVER_URL", server.URL)
+	t.Setenv("HRN_SERVER_CA_FILE", "")
+	t.Setenv("HRN_TENANT_TOKEN", strings.Repeat("t", 32))
+	path := filepath.Join(t.TempDir(), "base.json")
+	writeJSONFile(t, path, proposalBase())
+	now := time.Now()
+	prefix := now.Format("20060102-150405-")
+	put := func(suffix, repo string, status agent.Status) {
+		writeJSONFile(t, filepath.Join(runlog.Root(), prefix+suffix, "result.json"), runlog.Record{Repo: repo, Started: now, Result: agent.Result{Status: status}})
+	}
+	put("eeeeee", "other", agent.StatusOK)
+	writeJSONFile(t, filepath.Join(runlog.Root(), prefix+"ffffff", "task.json"), runlog.Record{Repo: "repo", Started: now})
+	writeJSONFile(t, filepath.Join(runlog.Root(), prefix+"dddddd", "result.json"), "corrupt")
+	longStatus := strings.Repeat("界", 200)
+	put("cccccc", "repo", agent.Status(longStatus))
+	put("bbbbbb", "repo", agent.StatusOK)
+	put("aaaaaa", "repo", agent.StatusOK)
+	original := proposeReview
+	t.Cleanup(func() { proposeReview = original })
+	proposeReview = func(context.Context, string, string) (string, string, error) { return "review", `{"entries":[]}`, nil }
+	var out bytes.Buffer
+	if code, err := runKnowledgePropose([]string{"-request", path, "-b", "claude", "-json", "-o", path + ".out", "-repo", "repo", "-limit", "1"}, &out, io.Discard); code != 0 || err != nil {
+		t.Fatalf("exit %d: %v", code, err)
+	}
+	checkProposalJSON(t, out.Bytes(), map[string]any{
+		"draft": "", "proposed": 0, "kept": 0, "reviewed": []string{prefix + "bbbbbb"}, "failed": []any{},
+		"skipped": []map[string]string{
+			{"run": prefix + "eeeeee", "reason": "other repository"},
+			{"run": prefix + "cccccc", "reason": `failed ("` + strings.Repeat("界", 163)},
+		},
+		"deferred": []map[string]string{
+			{"run": prefix + "ffffff", "reason": "incomplete"}, {"run": prefix + "dddddd", "reason": "unreadable run"},
+			{"run": prefix + "aaaaaa", "reason": "over -limit"},
+		},
+	})
 }

@@ -20,7 +20,32 @@ import (
 	"github.com/cristiangirlea/harness/internal/retrieval"
 )
 
-const proposeUsage = "hrn knowledge propose -request base.json -b claude|codex [-run ID]... [-repo host/owner/name] [-purpose P] [-since 72h|2026-11-01] [-limit N] [-o out.json]"
+const proposeUsage = "hrn knowledge propose -request base.json -b claude|codex [-run ID]... [-repo host/owner/name] [-purpose P] [-since 72h|2026-11-01] [-limit N] [-o out.json [-json]]"
+
+type proposalReason struct {
+	Run    string `json:"run"`
+	Reason string `json:"reason"`
+}
+
+type proposalFailure struct {
+	Run       string `json:"run"`
+	ReviewRun string `json:"review_run"`
+	Error     string `json:"error"`
+}
+
+type proposalSummary struct {
+	Draft    string            `json:"draft"`
+	Proposed int               `json:"proposed"`
+	Kept     int               `json:"kept"`
+	Reviewed []string          `json:"reviewed"`
+	Skipped  []proposalReason  `json:"skipped"`
+	Deferred []proposalReason  `json:"deferred"`
+	Failed   []proposalFailure `json:"failed"`
+}
+
+func proposalDiagnostic(s string) string {
+	return proposalHead(strings.Join(strings.Fields(strings.ToValidUTF8(s, "\uFFFD")), " "), 500)
+}
 
 func validateProposalBase(base retrieval.Import) error {
 	for _, field := range []struct{ name, value string }{
@@ -79,7 +104,7 @@ func activeProposalEntries(ctx context.Context, scope retrieval.Scope) ([]retrie
 	return version.Entries, nil
 }
 
-func runKnowledgePropose(args []string, out, log io.Writer) error {
+func runKnowledgePropose(args []string, out, log io.Writer) (int, error) {
 	fs := flag.NewFlagSet("knowledge propose", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	request := fs.String("request", "", "base import request")
@@ -89,49 +114,58 @@ func runKnowledgePropose(args []string, out, log io.Writer) error {
 	since := fs.String("since", "", "start date or duration")
 	limit := fs.Int("limit", 10, "maximum source runs")
 	output := fs.String("o", "", "draft output file")
+	jsonOut := fs.Bool("json", false, "print the review summary")
 	var ids admissionRuns
 	fs.Var(&ids, "run", "source run ID")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return 1, err
 	}
 	switch {
 	case *request == "" || fs.NArg() != 0:
-		return errors.New("usage: " + proposeUsage)
+		return 1, errors.New("usage: " + proposeUsage)
+	case *jsonOut && *output == "":
+		return 2, errors.New("-json requires -o")
 	case *backend != "claude" && *backend != "codex":
-		return errors.New("knowledge propose requires -b claude or codex")
+		return 1, errors.New("knowledge propose requires -b claude or codex")
 	case *limit < 1 || *limit > 25:
-		return errors.New("-limit must be from 1 to 25")
+		return 1, errors.New("-limit must be from 1 to 25")
 	case len(ids) == 0 && *repo == "":
-		return errors.New("knowledge propose requires -run or -repo")
+		return 1, errors.New("knowledge propose requires -run or -repo")
 	}
 	for _, id := range ids {
 		if !admissionRunID.MatchString(id) {
-			return fmt.Errorf("invalid -run ID %q", id)
+			return 1, fmt.Errorf("invalid -run ID %q", id)
 		}
 	}
 	var draft retrieval.Import
 	if err := readRetrievalJSON(*request, &draft); err != nil {
-		return err
+		return 1, err
 	}
 	if err := validateProposalBase(draft); err != nil {
-		return err
+		return 1, err
 	}
 	batches, unreadable, err := batch.List()
 	if err != nil {
-		return err
+		return 1, err
 	}
 	if unreadable > 0 {
-		return fmt.Errorf("cannot verify gates: %d unreadable batch records", unreadable)
+		return 1, fmt.Errorf("cannot verify gates: %d unreadable batch records", unreadable)
 	}
 	attempts := proposalAttempts(batches)
-	runs, err := proposalRuns(ids, *repo, *purpose, *since, *limit, attempts, log)
+	runs, summary, err := proposalRuns(ids, *repo, *purpose, *since, *limit, attempts, log, *jsonOut)
 	if err != nil {
-		return err
+		return 1, err
+	}
+	if len(runs) == 0 {
+		if *jsonOut && len(ids) > 0 {
+			return 0, encodeTerminalSafeJSON(out, summary)
+		}
+		return 1, errors.New("no eligible source runs")
 	}
 	ctx := context.Background()
 	active, err := activeProposalEntries(ctx, draft.Scope)
 	if err != nil {
-		return err
+		return 1, err
 	}
 	keys := map[string]bool{}
 	for _, e := range active {
@@ -139,21 +173,23 @@ func runKnowledgePropose(args []string, out, log io.Writer) error {
 	}
 	var kept []retrieval.Entry
 	var sources []string
-	proposed := 0
 	drops := map[string]int{}
 	for _, r := range runs {
 		evidence := proposalEvidence(r, attempts[r.ID])
 		reviewID, final, err := proposeReview(ctx, *backend, proposePrompt+evidence)
 		if err != nil {
 			fmt.Fprintf(log, "skip run %s: review %s failed: %v\n", r.ID, reviewID, err)
+			summary.Failed = append(summary.Failed, proposalFailure{r.ID, reviewID, proposalDiagnostic(err.Error())})
 			continue
 		}
 		entries, err := parseProposal(final)
 		if err != nil {
 			fmt.Fprintf(log, "skip run %s: review %s: %v\n", r.ID, reviewID, err)
+			summary.Failed = append(summary.Failed, proposalFailure{r.ID, reviewID, err.Error()})
 			continue
 		}
-		proposed += len(entries)
+		summary.Reviewed = append(summary.Reviewed, r.ID)
+		summary.Proposed += len(entries)
 		before := len(kept)
 		grounding := proposalGrounding(r, attempts[r.ID])
 		for i, p := range entries {
@@ -181,27 +217,37 @@ func runKnowledgePropose(args []string, out, log io.Writer) error {
 		}
 	}
 	if len(active)+len(kept) > 100 {
-		return errors.New("draft exceeds 100 entries")
+		return 1, errors.New("draft exceeds 100 entries")
 	}
 	if len(kept) > 0 {
 		draft.Entries = append(active, kept...)
 		if err := writeProposalDraft(draft, *output, out); err != nil {
-			return err
+			return 1, err
 		}
+		summary.Draft = *output
 	}
-	fmt.Fprintf(log, "%d proposed, %d kept, %d dropped\n", proposed, len(kept), proposed-len(kept))
+	summary.Kept = len(kept)
+	fmt.Fprintf(log, "%d proposed, %d kept, %d dropped\n", summary.Proposed, summary.Kept, summary.Proposed-summary.Kept)
 	for _, why := range slices.Sorted(maps.Keys(drops)) {
 		fmt.Fprintf(log, "  %s: %d\n", why, drops[why])
 	}
 	if len(kept) == 0 {
 		fmt.Fprintln(log, "No proposal kept. No draft written.")
-		return nil
+	} else {
+		fmt.Fprintf(log, "Source runs: %s\n", strings.Join(sources, ", "))
+		fmt.Fprintln(log, `Read and edit the entries. Set origin to "reviewed_source" and fill in reviewed_by and review_evidence.`)
+		fmt.Fprintln(log, "hrn knowledge import FILE")
+		fmt.Fprintln(log, "hrn knowledge admit --version <printed id> --spec SPEC -b claude|codex")
 	}
-	fmt.Fprintf(log, "Source runs: %s\n", strings.Join(sources, ", "))
-	fmt.Fprintln(log, `Read and edit the entries. Set origin to "reviewed_source" and fill in reviewed_by and review_evidence.`)
-	fmt.Fprintln(log, "hrn knowledge import FILE")
-	fmt.Fprintln(log, "hrn knowledge admit --version <printed id> --spec SPEC -b claude|codex")
-	return nil
+	if *jsonOut {
+		if err := encodeTerminalSafeJSON(out, summary); err != nil {
+			return 1, err
+		}
+	}
+	if len(summary.Failed) > 0 {
+		return 3, nil
+	}
+	return 0, nil
 }
 
 func writeProposalDraft(draft retrieval.Import, path string, out io.Writer) error {
