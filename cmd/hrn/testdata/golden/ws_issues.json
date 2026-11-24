@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "issues": [
+    {
+      "issue": "org/repo#3",
+      "state": "held"
+    }
+  ]
+}

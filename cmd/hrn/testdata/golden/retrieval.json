@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "token_savings_supported": false,
+  "baseline_median_tokens": null,
+  "candidate_median_tokens": null,
+  "median_token_reduction": null,
+  "cost_savings_supported": false,
+  "evidence_kind": "fixture",
+  "expected_pairs": 2,
+  "observed_pairs": 0,
+  "comparable_pairs": 0,
+  "baseline": {
+    "preparation_tokens_known": false,
+    "preparation_cost_known": false,
+    "tasks": 0,
+    "successes": 0,
+    "known_token_tasks": 0,
+    "known_cost_tasks": 0,
+    "estimated": false,
+    "known_tokens": 0,
+    "known_cost_usd": 0,
+    "known_tokens_per_success": null,
+    "known_cost_per_success": null,
+    "preparation": {
+      "model_tokens": null,
+      "cost_usd": null,
+      "duration_ns": 0
+    },
+    "preparation_reuse": 0,
+    "amortized_preparation_usd": null
+  },
+  "candidate": {
+    "preparation_tokens_known": false,
+    "preparation_cost_known": false,
+    "tasks": 0,
+    "successes": 0,
+    "known_token_tasks": 0,
+    "known_cost_tasks": 0,
+    "estimated": false,
+    "known_tokens": 0,
+    "known_cost_usd": 0,
+    "known_tokens_per_success": null,
+    "known_cost_per_success": null,
+    "preparation": {
+      "model_tokens": null,
+      "cost_usd": null,
+      "duration_ns": 0
+    },
+    "preparation_reuse": 0,
+    "amortized_preparation_usd": null
+  },
+  "median_paired_saving": null,
+  "gate": "",
+  "reason": ""
+}

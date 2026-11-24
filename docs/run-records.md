@@ -4,6 +4,10 @@
 
 ## Run records
 
+New `task.json` and `result.json` files start with `"record_version": 1`. A missing
+version reads as 0. hrn also loads records with higher versions and ignores unknown fields.
+The command output has its own [JSON version](json-outputs.md).
+
 Non-durable results optionally include `tool_stats`, keyed by tool name, for example
 `{"tool_stats":{"read_file":{"calls":2,"errors":1,"result_bytes":120}}}`.
 Calls exclude partial call events; errors count error results, and result bytes sum
@@ -496,6 +500,8 @@ than half from the turn before as a *probable* compaction; that is a reading of 
 numbers, never written to the record.
 
 Runs recorded before these events existed have none; the result's totals still hold.
+`hrn show --usage --json` puts the per-turn rows in `turns`. A run with no rows
+prints `{"version":1,"turns":[]}`.
 
 ## Quota
 

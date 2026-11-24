@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "record": {
+    "record_version": 1,
+    "id": "run",
+    "backend": "codex",
+    "started": "0001-01-01T00:00:00Z",
+    "task": {
+      "prompt": "",
+      "dir": ""
+    },
+    "result": {
+      "backend": "",
+      "status": "",
+      "turns": 0,
+      "duration_ns": 0
+    }
+  },
+  "events": [
+    {
+      "t": "0001-01-01T00:00:00Z",
+      "kind": "text",
+      "text": "done"
+    }
+  ]
+}

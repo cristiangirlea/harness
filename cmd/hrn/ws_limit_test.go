@@ -100,7 +100,7 @@ func TestWSListSlotLimit(t *testing.T) {
 			if populated {
 				rows = append(rows, ws.Status{N: 4, Path: folder, State: "free", Folder: true, Contents: "not a worktree"})
 			}
-			encoded, _ := json.MarshalIndent(rows, "", "  ")
+			encoded, _ := json.MarshalIndent(workspacesJSON{Version: 1, Workspaces: rows}, "", "  ")
 			if err != nil || out != string(encoded)+"\n" {
 				t.Errorf("JSON = %q, %s, %v; want %s", out, stderr, err, encoded)
 			}

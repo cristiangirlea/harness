@@ -4,6 +4,8 @@
 
 ## Commands
 
+For the shapes and compatibility rules of `--json` output, see [Versioned JSON outputs](json-outputs.md).
+
 | Command | What it does |
 |---|---|
 | `hrn run [flags] [--purpose CATEGORY] [--account NAME] <prompt>` | Run a task. Prompt from args, or stdin when omitted / `-`; optionally declare its purpose (see [Declared purpose](#declared-purpose)). |
@@ -55,7 +57,7 @@
 | `hrn gc [--apply] [--grace 1h] [--idle 24h] [--min-idle 2h] [--free-below SIZE] [--slot-cap SIZE] [PATH…]` | Remove merged worktrees and idle build caches; trim slot caches instead (see [Clearing merged worktrees](batches.md#clearing-merged-worktrees) and [Build caches](batches.md#build-caches)). |
 | `hrn ws take [--repo DIR] [--branch NAME] [--base REF] [--for TEXT] [--max N] [--no-fetch]` | Lease a reusable worktree of the repository and print only its path, on `--branch` or detached at origin's default branch. `--max` defaults to the `ws.json` limit, or 5 without settings; values above the configured limit are refused (see [Reusable workspaces](workspaces.md#take)). |
 | `hrn ws free [PATH]` | Give the slot back once its work is pushed: HEAD detached, lease removed (see [Free](workspaces.md#free)). |
-| `hrn ws list [--repo DIR] [--json]` | The slots: who holds each, since when, its branch and what is in it. Text output ends with the limit and its source; JSON remains an array of slot rows (see [List](workspaces.md#list)). |
+| `hrn ws list [--repo DIR] [--json]` | The slots: who holds each, since when, its branch and what is in it. Text output ends with the limit and its source. JSON lists the slot rows in `workspaces` (see [List](workspaces.md#list)). |
 | `hrn ws issues [--json] [--free owner/name#N]` | The issue leases: state (`held`, `held by pull request`, `stale`, `released`), holder, run, backend, branch, pull request and since; `--free` removes one no running process holds (see [Issue leases](workspaces.md#issue-leases)). |
 | `hrn plugin list [--json]` | List available plugins without starting them (see [Plugins](plugins.md#plugins-in-hrn)). |
 | `hrn plugin info <name> [--json]` | Show a plugin's version, protocol, executable hash and capabilities (see [Plugins](plugins.md#plugins-in-hrn)). |

@@ -66,8 +66,8 @@ func TestShowUsagePrintsATurnTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var turns []runlog.Turn
-	if err := json.Unmarshal(out, &turns); err != nil || len(turns) != 3 || turns[2].Compaction != runlog.CompactionRecorded {
+	var usage usageJSON
+	if err := json.Unmarshal(out, &usage); err != nil || usage.Version != 1 || len(usage.Turns) != 3 || usage.Turns[2].Compaction != runlog.CompactionRecorded {
 		t.Errorf("json = %s (%v)", out, err)
 	}
 }
@@ -81,6 +81,14 @@ func TestShowUsageSaysWhenARunRecordedNoTurns(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "no per-turn usage") {
 		t.Errorf("output = %q", out)
+	}
+	out, err = captureStdout(t, func() error { return cmdShow([]string{"--usage", "--json", id}) })
+	var usage usageJSON
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out, &usage); err != nil || usage.Version != 1 || usage.Turns == nil || len(usage.Turns) != 0 {
+		t.Errorf("empty usage = %s (%v)", out, err)
 	}
 	if err := cmdShow([]string{"--usage", "--follow", id}); err == nil {
 		t.Error("--usage with --follow must be refused")

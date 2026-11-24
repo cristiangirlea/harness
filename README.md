@@ -111,6 +111,7 @@ today; the rest are planned, and each README says so.
 | See the dashboard and Ada in pictures | [hrn watch and Ada, in pictures](docs/presentation.md) |
 | Score tasks or compare models | [Evaluations and reports](docs/evaluations.md) |
 | Inspect or prune saved data | [Run records](docs/run-records.md) |
+| Read command output from a script | [Versioned JSON outputs](docs/json-outputs.md) |
 | Understand local and GitHub work in an owner-only watch map | [Work map](docs/work-map.md) |
 | Integrate hrn with a supervising program | [Exec protocol](docs/exec-protocol.md) |
 | Use or write a plugin, or import the plugin protocol's Go types | [Plugins](docs/plugins.md) |
