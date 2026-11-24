@@ -166,8 +166,8 @@ Text output ends with `limit: 3 slots (<main checkout>/.hrn/ws.json)`, using the
 configured number and the repository or machine file that supplied it. Without
 either file it says `limit: 5 slots by default, --max up to 10`. This line also
 prints when there are no slots yet. Slots above a lowered limit still list and can
-still be freed. `--json` keeps the same array of slot rows, without a limit field
-or extra line. Invalid settings are an error in either format.
+still be freed. With `--json`, the `workspaces` array holds the slot rows. An empty
+list prints `{"version":1,"workspaces":[]}`. Invalid settings are an error in either format.
 
 ## Issue leases
 
@@ -229,6 +229,7 @@ workspace's `origin` remote. Owner and name are lower-cased, as GitHub ignores t
   removed by the next take, which also releases its claim); an open pull request, or gh
   failing, keeps it held. Nothing polls.
 
+`hrn ws issues --json` puts the leases in `issues`, with `{"version":1,"issues":[]}` for an empty list.
 `hrn ws issues [--json]` lists every issue lease: `held`, `held by pull request`, `stale` (and
 why) or `released`, with holder, run, backend, branch, since and pull request. It removes
 nothing and asks GitHub only for the state of a holding pull request. `--free owner/name#N`

@@ -93,9 +93,7 @@ func runRetrieval(args []string, out io.Writer) error {
 		return err
 	}
 	if *asJSON {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(result)
+		return printRetrievalJSON(out, &result)
 	}
 	_, err = fmt.Fprintf(out, "Evidence: %s\nGate: %s — %s\nCells: %d/%d; comparable usage: %d/%d\nSuccess: baseline %d/%d, candidate %d/%d\nMedian tokens: baseline %s, candidate %s; reduction %s\nPreparation coverage (tokens/cost): baseline %t/%t, candidate %t/%t\nSupported full-workflow token/cost savings: %t/%t\n", result.EvidenceKind, result.Gate, result.Reason, result.ObservedPairs, result.ExpectedPairs, result.ComparablePairs, result.ExpectedPairs, result.Baseline.Successes, result.Baseline.Tasks, result.Candidate.Successes, result.Candidate.Tasks, numberPtr(result.BaselineMedian), numberPtr(result.CandidateMedian), numberPtr(result.MedianReduction), result.Baseline.PreparationTokensKnown, result.Baseline.PreparationCostKnown, result.Candidate.PreparationTokensKnown, result.Candidate.PreparationCostKnown, result.TokenSavingsSupported, result.CostSavingsSupported)
 	if err == nil && resolvedRuns {

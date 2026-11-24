@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -65,9 +64,7 @@ func cmdFlow(args []string) error {
 	tree := flowview.Filter(view.Tree, *level)
 	issues := safeIssues(view.Issues)
 	if *jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(flowDocument{Version: view.Version, Issues: issues, Events: view.Events, Tree: tree})
+		return printFlowJSON(os.Stdout, flowDocument{Version: view.Version, Issues: issues, Events: view.Events, Tree: tree})
 	}
 	return flowview.WriteText(os.Stdout, safeFlowText(view.Summary), issues, safeTree(tree), *level)
 }

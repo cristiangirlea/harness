@@ -17,7 +17,7 @@ The cost ceiling is enforced using the same usage estimates as the in-process wo
 The client preserves the complete terminal result, including failed status, error and usage.
 The child accepts only the `api` backend and an HTTP base URL whose host is
 `localhost` or a loopback IP, with no user information, using the same test as `RunOnce`. It
-offers no tools; a start frame containing `mcp` or an unknown `tools` field is rejected. The API
+offers no tools; a start frame containing `mcp`, `skills` or an unknown `tools` field is rejected. The API
 endpoint comes from `ANTHROPIC_BASE_URL`, which must be set. Redirects and proxy use are disabled.
 Worker mode rejects continuation and retrieval options as unsupported.
 Plain exec retains its existing rules. Credentials

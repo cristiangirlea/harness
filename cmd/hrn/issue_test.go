@@ -66,11 +66,14 @@ func TestWSIssuesListsAsJSONAndFreesAnEndedHolder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var rows []ws.IssueStatus
-		if err := json.Unmarshal(out, &rows); err != nil {
+		var doc issuesJSON
+		if err := json.Unmarshal(out, &doc); err != nil {
 			t.Fatalf("not JSON: %v: %s", err, out)
 		}
-		return rows
+		if doc.Version != 1 {
+			t.Errorf("version = %d, want 1", doc.Version)
+		}
+		return doc.Issues
 	}
 	if rows := listIssues(); rows == nil || len(rows) != 0 {
 		t.Errorf("no leases must list as an empty array: %#v", rows)

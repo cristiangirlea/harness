@@ -4,6 +4,10 @@
 
 ## Run records
 
+New `task.json` and `result.json` files start with `"record_version": 1`. A missing
+version reads as 0. hrn also loads records with higher versions and ignores unknown fields.
+The command output has its own [JSON version](json-outputs.md).
+
 Non-durable results optionally include `tool_stats`, keyed by tool name, for example
 `{"tool_stats":{"read_file":{"calls":2,"errors":1,"result_bytes":120}}}`.
 Calls exclude partial call events; errors count error results, and result bytes sum
@@ -183,7 +187,8 @@ home cannot be resolved, record operations fail; set `HRN_HOME` to a usable dire
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load; `lean` is `true`, `false` when a spec or task turned it
   off, or absent when the run left it to the default, which is lean; `skills` is `true` when a
-  lean claude run kept its skills, absent otherwise; `compact_window` is a number or `"auto"`;
+  lean claude run kept its skills, `false` when the caller set it off, and absent
+  when nothing set it; `compact_window` is a number or `"auto"`;
   `append_system_prompt` and `no_skills` are omitted when unset; `inherit_env` is `true` when
   the CLI got the operator's whole environment, absent otherwise; `egress` lists the hosts
   given with `--egress`, omitted when unset, see
@@ -496,6 +501,8 @@ than half from the turn before as a *probable* compaction; that is a reading of 
 numbers, never written to the record.
 
 Runs recorded before these events existed have none; the result's totals still hold.
+`hrn show --usage --json` puts the per-turn rows in `turns`. A run with no rows
+prints `{"version":1,"turns":[]}`.
 
 ## Quota
 

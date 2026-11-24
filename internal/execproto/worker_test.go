@@ -23,6 +23,8 @@ func TestWorkerRestrictions(t *testing.T) {
 		{"https", "api", "https://localhost", ""},
 		{"userinfo", "api", "http://user@localhost", ""},
 		{"missing endpoint", "api", "", ""},
+		{"skills true", "api", "http://localhost", `,"skills":true`},
+		{"skills false", "api", "http://localhost", `,"skills":false`},
 		{"mcp requested", "api", "http://localhost", `,"mcp":["tools.json"]`},
 		{"tools requested", "api", "http://localhost", `,"tools":["shell"]`},
 		{"continuation", "api", "http://localhost", `,"continue_run_id":"previous"`},

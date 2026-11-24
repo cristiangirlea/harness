@@ -17,7 +17,7 @@ import (
 )
 
 func TestStartKeysMustUseTheirExactNamesBeforeValidation(t *testing.T) {
-	for _, key := range []string{"MAX_TURNS", "MCP", "Prompt", "Task", "TYPE", "Attempt_ID"} {
+	for _, key := range []string{"MAX_TURNS", "MCP", "skils", "Prompt", "Task", "TYPE", "Attempt_ID"} {
 		t.Run(key, func(t *testing.T) {
 			name := registerFake(t, func(ctx context.Context, task agent.Task, emit func(agent.Event)) agent.Result {
 				return agent.Result{Backend: "codex", Status: agent.StatusOK}
@@ -37,6 +37,9 @@ func TestStartKeysMustUseTheirExactNamesBeforeValidation(t *testing.T) {
 				task[key] = 5
 			case "MCP":
 				task[key] = []string{"unused.json"}
+			case "skils":
+				task["skills"] = true
+				task[key] = true
 			case "Prompt":
 				delete(task, "prompt")
 				task[key] = "work"

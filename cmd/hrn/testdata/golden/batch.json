@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "id": "batch",
+  "started": "0001-01-01T00:00:00Z",
+  "dir": "",
+  "base": "",
+  "parallel": 0,
+  "tasks": [
+    {
+      "id": "task",
+      "prompt": "",
+      "status": "pass",
+      "branch": "",
+      "worktree": "",
+      "attempts": null,
+      "duration_ns": 0
+    }
+  ],
+  "duration_ns": 0
+}

@@ -120,6 +120,9 @@ func (c *CLIBackend) Capabilities() Capabilities {
 	if c.mapsMCP {
 		caps.Options = append(caps.Options, "mcp")
 	}
+	if c.mapsLean && c.mapsNoSkills {
+		caps.Options = append(caps.Options, "skills")
+	}
 	if c.forks {
 		caps.Sessions = "fork"
 		if c.resumesInPlace {
