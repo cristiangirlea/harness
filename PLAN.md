@@ -297,6 +297,18 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-24: #883, a version on run records and on the listed `--json` outputs (PR #1004),
+  contracts C5 and C6 of #878. Run records carry `record_version` 1, read leniently: no load
+  refuses an old or newer record. `show`, `show --usage`, `flow`, `batch`, `batch show`, `eval
+  diff`, `report`, `ws list`, `ws issues` and `retrieval fixture|compare` print `version` first,
+  each from one emitter in `cmd/hrn/jsonversions.go` that its golden test also calls; object
+  outputs keep their keys through an envelope embedding the existing type, so `batch.Result` (the
+  batch record on disk) is unchanged. Deviation: the bare arrays of `ws list`, `ws issues` and
+  `show --usage` became objects (`workspaces`, `issues`, `turns`), as `runs --json` had, a breaking
+  change taken before the first release. Not versioned, and listed as such in
+  `docs/json-outputs.md`: `run --json` (an event stream), `eval` and `eval setup`, the plugin
+  commands (their `version` is the plugin's), `knowledge propose` and `retrieval samples`; the MCP
+  server's tools keep their own shapes. Next: #884.
 - 2026-11-24: #975, hrn bot stats --json folds new runs into the ledger (PR #988). This revises
   the 2026-10-31 decision (#728; PR #730) that the JSON form is read-only with no ledger rebuild:
   its readers poll it, so its XP went stale while runs finished. A maintainer chose to fold in the
