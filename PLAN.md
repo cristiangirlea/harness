@@ -297,6 +297,15 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-24: #975, hrn bot stats --json folds new runs into the ledger (PR #988). This revises
+  the 2026-10-31 decision (#728; PR #730) that the JSON form is read-only with no ledger rebuild:
+  its readers poll it, so its XP went stale while runs finished. A maintainer chose to fold in the
+  JSON form. It loads the records once, folds new ones (`game.Fold`) and reads familiarity beside
+  the fold; it still picks no exercise, makes no gh or network call, and skips the practice
+  rebuild, which stays with the text form. It may write `events.jsonl`, `merged-scripts.json` and
+  `familiarity-cache.json`; a fold error ends it with no JSON. On about 4,800 runs a call takes
+  about 4 s, a second under the desktop app's 5 s timeout; an incremental fold would cut that and
+  is not built. A Windows CI flake in `hrn feed` seen on the way is #991.
 - 2026-11-24: #977, knowledge proposals from runs that ended well (PR #994). `hrn knowledge
   propose -request base.json -b claude|codex` reviews named runs, or an exact repository's recent
   runs, with one read-only plan-backend review per run, and writes a draft import of the active
