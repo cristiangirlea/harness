@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +25,7 @@ import (
 	"github.com/cristiangirlea/harness/internal/prefs"
 	"github.com/cristiangirlea/harness/internal/resolve"
 	"github.com/cristiangirlea/harness/internal/retrieval"
+	"github.com/cristiangirlea/harness/internal/route/table"
 	"github.com/cristiangirlea/harness/internal/runlog"
 )
 
@@ -34,6 +38,12 @@ func (b detectedBackend) Capabilities() agent.Capabilities {
 }
 
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "-p" {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]string{
+			"type": "result", "session_id": "session-01", "result": strings.Join(os.Args[1:], "\n"),
+		})
+		return
+	}
 	for _, name := range agent.Names() {
 		b, _ := agent.Get(name)
 		agent.Register(detectedBackend{b})
@@ -171,7 +181,7 @@ func TestHelloPrecedesInputAndReportsConservativeCapabilities(t *testing.T) {
 	}
 	wants := map[string]agent.Capabilities{
 		"api":      {Modes: []agent.Mode{"readonly", "auto", "yolo"}, Efforts: agent.EffortLevels, Sessions: "fork", Options: []string{"model", "mode", "effort", "timeout", "max_turns", "mcp"}},
-		"claude":   {Modes: []agent.Mode{"readonly", "auto", "yolo"}, Efforts: agent.EffortLevels, Sessions: "fork", Options: []string{"model", "mode", "effort", "timeout", "max_turns", "mcp"}},
+		"claude":   {Modes: []agent.Mode{"readonly", "auto", "yolo"}, Efforts: agent.EffortLevels, Sessions: "fork", Options: []string{"model", "mode", "effort", "timeout", "max_turns", "mcp", "skills"}},
 		"codex":    {Modes: []agent.Mode{"readonly", "auto", "yolo"}, Efforts: agent.EffortLevels, Sessions: "fork", Options: []string{"model", "mode", "effort", "timeout", "mcp"}},
 		"gemini":   {Modes: []agent.Mode{"auto", "yolo"}, Efforts: []string{}, Sessions: "none", Options: []string{"model", "mode", "timeout"}},
 		"opencode": {Modes: []agent.Mode{"yolo"}, Efforts: []string{}, Sessions: "none", Options: []string{"model", "mode", "timeout"}},
@@ -236,6 +246,92 @@ func TestAcceptedRunStreamsCompleteEventsAndRecordsTheAttempt(t *testing.T) {
 		t.Errorf("setup = %+v, want %+v", rec.Setup, want)
 	}
 
+}
+
+func TestExecClaudeSkills(t *testing.T) {
+	t.Setenv("HRN_HOME", t.TempDir())
+	binDir := t.TempDir()
+	name := "claude"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, name), binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	if _, err := exec.LookPath("claude"); err != nil {
+		t.Fatalf("stub CLI lookup: %v", err)
+	}
+	original, _ := agent.Get("claude")
+	agent.Register(agent.NewClaudeBackend())
+	t.Cleanup(func() { agent.Register(original) })
+	dir := t.TempDir()
+	run := func(skills *bool, previous string, edit func(map[string]any)) string {
+		t.Helper()
+		h := openHarness(t, nil)
+		h.next(t, "hello")
+		req := start(dir, "claude")
+		task := req["task"].(map[string]any)
+		if skills != nil {
+			task["skills"] = *skills
+		}
+		if previous != "" {
+			task["continue_run_id"] = previous
+		}
+		if edit != nil {
+			edit(task)
+		}
+		fresh, _ := task["fresh"].(bool)
+		h.send(t, req)
+		id := h.next(t, "accepted")["run_id"].(string)
+		for msg := h.nextAny(t); msg["type"] != "result"; msg = h.nextAny(t) {
+			if msg["type"] != "event" {
+				t.Fatalf("unexpected frame: %v", msg)
+			}
+		}
+		h.exit(t, 0)
+		rec, err := runlog.Load(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Result.Status != agent.StatusOK || !reflect.DeepEqual(rec.Task.Skills, skills) {
+			t.Fatalf("recorded skills=%v, want %v; result=%+v", rec.Task.Skills, skills, rec.Result)
+		}
+		args := strings.Split(rec.Result.Final, "\n")
+		if slices.Contains(args, "--fork-session") != (previous != "" && !fresh) {
+			t.Fatalf("unexpected session arguments for previous run %q: %q", previous, args)
+		}
+		wantDisabled := skills == nil || !*skills
+		if !slices.Contains(args, "--strict-mcp-config") || slices.Contains(args, "--disable-slash-commands") != wantDisabled {
+			t.Fatalf("want lean argv with skills disabled=%t, got %q", wantDisabled, args)
+		}
+		return id
+	}
+	run(nil, "", nil)
+	enabled := run(agent.Bool(true), "", nil)
+	disabled := run(agent.Bool(false), enabled, nil)
+	run(agent.Bool(true), disabled, nil)
+	run(nil, enabled, nil)
+	freshHandOver := func(task map[string]any) { task["fresh"] = true }
+	run(agent.Bool(true), disabled, freshHandOver)
+	run(nil, enabled, freshHandOver)
+	if err := table.Save(runlog.Home(), table.Table{"review": {Backend: "claude", Set: "manual"}}); err != nil {
+		t.Fatal(err)
+	}
+	routed := func(task map[string]any) {
+		delete(task, "backend")
+		task["purpose"] = "review"
+	}
+	for _, skills := range []*bool{agent.Bool(true), nil} {
+		rec, err := runlog.Load(run(skills, "", routed))
+		if err != nil || rec.RoutedBy == nil || rec.Backend != "claude" {
+			t.Fatalf("routed run: backend %q routed_by %+v, %v", rec.Backend, rec.RoutedBy, err)
+		}
+	}
 }
 
 func TestClaudeReviewTurnDefaultAndUnlimited(t *testing.T) {
@@ -316,6 +412,8 @@ func TestInvalidStartsAreRejectedWithoutRecords(t *testing.T) {
 	}{
 		{name: "malformed", code: "bad_request", raw: "{\n"},
 		{name: "unknown field", code: "bad_request", edit: func(m map[string]any) { m["typo"] = true }},
+		{name: "skills true", code: "unsupported", edit: func(m map[string]any) { m["task"].(map[string]any)["skills"] = true }},
+		{name: "skills false", code: "unsupported", edit: func(m map[string]any) { m["task"].(map[string]any)["skills"] = false }},
 		{name: "unknown task field", code: "bad_request", edit: func(m map[string]any) { m["task"].(map[string]any)["max_cost_usd"] = 1 }},
 		{name: "missing prompt", code: "bad_request", edit: func(m map[string]any) { delete(m["task"].(map[string]any), "prompt") }},
 		{name: "missing dir", code: "bad_request", edit: func(m map[string]any) { delete(m["task"].(map[string]any), "dir") }},
@@ -338,6 +436,10 @@ func TestInvalidStartsAreRejectedWithoutRecords(t *testing.T) {
 			m["task"].(map[string]any)["effort"] = "high"
 		}},
 		{name: "effort typo", code: "unsupported", edit: func(m map[string]any) { m["task"].(map[string]any)["effort"] = "HIGH" }},
+		{name: "codex skills", code: "unsupported", edit: func(m map[string]any) {
+			m["task"].(map[string]any)["backend"] = "codex"
+			m["task"].(map[string]any)["skills"] = true
+		}},
 		{name: "codex max turns", code: "unsupported", edit: func(m map[string]any) {
 			m["task"].(map[string]any)["backend"] = "codex"
 			m["task"].(map[string]any)["max_turns"] = 0

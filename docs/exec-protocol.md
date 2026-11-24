@@ -89,6 +89,10 @@ value sets the limit. When the default is applied, an `info` event announces it.
   select one. A named model or effort bypasses routing. The run record stores `routed_by` for a
   selected route, or `route_note` explaining the default or named choice; a named backend records
   `backend X was named for this run`. `accepted.requested.backend` reports the resolved backend.
+- `skills` is an optional boolean for the claude backend. Set it to `true` to keep the Claude
+  CLI's skills and slash commands in a lean run. Omitting it or setting it to `false` keeps
+  them disabled. A continuation uses the new task's setting. Other backends and worker mode
+  reject the field as `unsupported` whenever it is present, even as `false`.
 - `continue_run_id` continues a finished run, as `hrn run --continue` does; `accepted` says how
   (`notes`). A continuation is never routed: with `backend` omitted it stays on the earlier run's
   backend, and its record carries no `route_note`.

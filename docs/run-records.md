@@ -183,7 +183,8 @@ home cannot be resolved, record operations fail; set `HRN_HOME` to a usable dire
   (`timeout` as a duration such as `20m0s`; records written before 0.3 hold it as
   `timeout_ns` and still load; `lean` is `true`, `false` when a spec or task turned it
   off, or absent when the run left it to the default, which is lean; `skills` is `true` when a
-  lean claude run kept its skills, absent otherwise; `compact_window` is a number or `"auto"`;
+  lean claude run kept its skills, `false` when the caller set it off, and absent
+  when nothing set it; `compact_window` is a number or `"auto"`;
   `append_system_prompt` and `no_skills` are omitted when unset; `inherit_env` is `true` when
   the CLI got the operator's whole environment, absent otherwise; `egress` lists the hosts
   given with `--egress`, omitted when unset, see

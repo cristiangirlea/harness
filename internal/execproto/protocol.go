@@ -159,7 +159,7 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 	if err != nil {
 		return w.reject(req.AttemptID, "storage", "cannot load worker backend preferences")
 	}
-	opts := agent.Options{Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP, MaxCostUSD: t.MaxCostUSD, TaskBudget: t.TaskBudget}
+	opts := agent.Options{Model: t.Model, Mode: t.Mode, Effort: t.Effort, Timeout: t.Timeout, MaxTurns: t.MaxTurns, MCP: t.MCP, Skills: t.Skills, MaxCostUSD: t.MaxCostUSD, TaskBudget: t.TaskBudget}
 	var routed *runlog.RoutedBy
 	var routeNote string
 	if t.ContinueRunID != "" {
@@ -218,7 +218,7 @@ func runMode(ctx context.Context, in io.Reader, out io.Writer, now func() time.T
 		Task map[string]json.RawMessage `json:"task"`
 	}
 	_ = json.Unmarshal(first.data, &fields)
-	for _, option := range []string{"model", "mode", "effort", "timeout", "max_turns", "mcp"} {
+	for _, option := range []string{"model", "mode", "effort", "timeout", "max_turns", "mcp", "skills"} {
 		if _, set := fields.Task[option]; set && !slices.Contains(caps.Options, option) {
 			return w.reject(req.AttemptID, "unsupported", "backend cannot honour option "+option)
 		}
@@ -476,6 +476,7 @@ type taskRequest struct {
 	MaxCostUSD        float64        `json:"max_cost_usd"`
 	TaskBudget        int            `json:"task_budget"`
 	MCP               []string       `json:"mcp"`
+	Skills            *bool          `json:"skills,omitempty"`
 	ContinueRunID     string         `json:"continue_run_id"`
 	Purpose           string         `json:"purpose"`
 	Fresh             *bool          `json:"fresh,omitempty"`
@@ -554,7 +555,7 @@ func checkTaskKeys(data json.RawMessage, worker bool) error {
 	if len(data) == 0 || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return nil
 	}
-	names := []string{"prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "continue_run_id", "purpose", "fresh", "retrieval_refresh"}
+	names := []string{"prompt", "dir", "backend", "mode", "model", "effort", "timeout", "max_turns", "mcp", "skills", "continue_run_id", "purpose", "fresh", "retrieval_refresh"}
 	if worker {
 		names = append(names, "max_cost_usd", "task_budget", "retrieval", "retrieval_tenant", "retrieval_project", "retrieval_revision", "retrieval_version")
 	}
