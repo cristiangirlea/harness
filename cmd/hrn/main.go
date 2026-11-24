@@ -874,7 +874,7 @@ func cmdRuns(args []string) error {
 		return err
 	}
 	if *jsonOut {
-		return printRunsJSON(recs)
+		return printRunsJSON(os.Stdout, recs)
 	}
 	if len(recs) == 0 {
 		fmt.Println("no runs yet")
@@ -905,7 +905,7 @@ type runJSON struct {
 }
 
 // printRunsJSON prints runs without their prompts or answers.
-func printRunsJSON(recs []runlog.Record) error {
+func printRunsJSON(w io.Writer, recs []runlog.Record) error {
 	runs := []runJSON{}
 	for _, rec := range recs {
 		r := runJSON{ID: rec.ID, Backend: rec.Backend, Status: "running", Started: rec.Started, Repo: rec.Repo, Branch: rec.Branch}
@@ -914,10 +914,7 @@ func printRunsJSON(recs []runlog.Record) error {
 		}
 		runs = append(runs, r)
 	}
-	return json.NewEncoder(os.Stdout).Encode(struct {
-		Version int       `json:"version"`
-		Runs    []runJSON `json:"runs"`
-	}{1, runs})
+	return json.NewEncoder(w).Encode(runsDocument{runsVersion, runs})
 }
 
 func cmdShow(args []string) error {
@@ -956,9 +953,7 @@ func cmdShow(args []string) error {
 		return err
 	}
 	if *jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]any{"record": rec, "events": events})
+		return printShowJSON(os.Stdout, rec, events)
 	}
 	r := newRenderer(true)
 	showHeader(r, rec)
@@ -984,12 +979,7 @@ func showUsage(id string, jsonOut bool) error {
 		return err
 	}
 	if jsonOut {
-		if turns == nil {
-			turns = []runlog.Turn{}
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(turns)
+		return printUsageJSON(os.Stdout, turns)
 	}
 	if len(turns) == 0 {
 		fmt.Printf("run %s recorded no per-turn usage: the %s backend writes none, or the run is older than the usage events\n",
@@ -1180,9 +1170,7 @@ func cmdEval(args []string) (int, error) {
 		}
 		d := eval.Compare(a, b)
 		if *jsonOut {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			return 0, enc.Encode(d)
+			return 0, printEvalDiffJSON(os.Stdout, &d)
 		}
 		printEvalDiff(newRenderer(false), d)
 		return 0, nil

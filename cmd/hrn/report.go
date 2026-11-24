@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -47,9 +46,7 @@ func cmdReport(args []string) error {
 	}
 
 	if *jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(rep)
+		return printReportJSON(os.Stdout, &rep)
 	}
 
 	scope := "all time"

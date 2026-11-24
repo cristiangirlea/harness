@@ -53,8 +53,11 @@ type PluginRun struct {
 	Reported []kernel.Evidence `json:"reported_evidence,omitempty"`
 }
 
+const RecordVersion = 1
+
 type Record struct {
-	StartHead string `json:"start_head,omitempty"`
+	RecordVersion int    `json:"record_version,omitempty"`
+	StartHead     string `json:"start_head,omitempty"`
 	// Repo is the run's remote as host/path, never its URL; Branch is empty on a detached HEAD.
 	Repo      string    `json:"repo,omitempty"`
 	Branch    string    `json:"branch,omitempty"`
@@ -151,7 +154,7 @@ func create(backend string, task kernel.Task, setup *kernel.Setup, continues, ro
 			_ = os.RemoveAll(dir)
 		}
 	}()
-	w = &Writer{dir: dir, rec: Record{ID: id, Owner: owner.Local(), Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
+	w = &Writer{dir: dir, rec: Record{RecordVersion: RecordVersion, ID: id, Owner: owner.Local(), Backend: backend, Started: time.Now(), Task: task, Continues: continues, ContinueRoute: route,
 		Setup: setup, RouteNote: note, Plugin: plugin}}
 	w.gitRoot, w.rec.StartHead = startGit(task.Dir)
 	if w.gitRoot != "" {

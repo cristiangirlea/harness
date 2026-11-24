@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -140,12 +139,7 @@ func wsList(ctx context.Context, args []string) (int, error) {
 		return 1, err
 	}
 	if *asJSON {
-		if rows == nil {
-			rows = []ws.Status{}
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return 0, enc.Encode(rows)
+		return 0, printWorkspacesJSON(os.Stdout, rows)
 	}
 	limit, err := ws.ReadLimit(ctx, *repo)
 	if err != nil {
@@ -191,12 +185,7 @@ func wsIssues(ctx context.Context, args []string) (int, error) {
 		return 1, err
 	}
 	if *asJSON {
-		if rows == nil {
-			rows = []ws.IssueStatus{}
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return 0, enc.Encode(rows)
+		return 0, printIssuesJSON(os.Stdout, rows)
 	}
 	if len(rows) == 0 {
 		fmt.Println("no issue leases; hrn run --issue takes one")

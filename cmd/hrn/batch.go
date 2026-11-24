@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -80,9 +79,7 @@ func cmdBatchShow(args []string) (int, error) {
 		return code, err
 	}
 	if *jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return 0, enc.Encode(res)
+		return 0, printBatchJSON(os.Stdout, &res)
 	}
 	printBatch(newRenderer(false), res)
 	return 0, nil
@@ -286,9 +283,7 @@ func cmdBatchRun(args []string) (int, error) {
 	}
 
 	if *jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(res)
+		_ = printBatchJSON(os.Stdout, &res)
 	} else {
 		r.Line("")
 		printBatch(r, res)
