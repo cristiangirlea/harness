@@ -38,12 +38,16 @@ func readRetrievalJSON(path string, v any) error {
 	return nil
 }
 
+func cmdKnowledge(args []string, out io.Writer) (int, error) {
+	if len(args) > 0 && args[0] == "propose" {
+		return runKnowledgePropose(args[1:], out, os.Stderr)
+	}
+	return 0, runKnowledge(args, out)
+}
+
 func runKnowledge(args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "markdown" {
 		return runKnowledgeMarkdown(args[1:], out)
-	}
-	if len(args) > 0 && args[0] == "propose" {
-		return runKnowledgePropose(args[1:], out, os.Stderr)
 	}
 	if len(args) > 0 && args[0] == "admit" {
 		return runKnowledgeAdmit(args[1:], out)

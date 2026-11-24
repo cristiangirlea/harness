@@ -10,10 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -333,27 +333,35 @@ func ListSince(since time.Time) ([]Record, int, error) {
 
 const idTimeLayout = "20060102-150405"
 
-func list(since time.Time, limit int, keep func(Record) bool) (recs []Record, unreadable int, err error) {
+// IDsSince yields recent run folder names newest first, including runs whose records cannot be loaded.
+func IDsSince(since time.Time) (iter.Seq[string], error) {
 	if _, err := ResolveHome(); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	entries, err := os.ReadDir(Root())
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, 0, nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
 	}
-	if err != nil {
-		return nil, 0, err
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() > entries[j].Name() })
 	var cutoff time.Time
 	if !since.IsZero() {
 		cutoff = since.Add(-24 * time.Hour)
 	}
-	for _, e := range entries {
-		if !e.IsDir() || idBefore(e.Name(), cutoff) {
-			continue
+	return func(yield func(string) bool) {
+		for _, e := range slices.Backward(entries) {
+			if e.IsDir() && !idBefore(e.Name(), cutoff) && !yield(e.Name()) {
+				return
+			}
 		}
-		rec, err := Load(e.Name())
+	}, nil
+}
+
+func list(since time.Time, limit int, keep func(Record) bool) (recs []Record, unreadable int, err error) {
+	ids, err := IDsSince(since)
+	if err != nil {
+		return nil, 0, err
+	}
+	for id := range ids {
+		rec, err := Load(id)
 		if err != nil {
 			unreadable++
 			continue
