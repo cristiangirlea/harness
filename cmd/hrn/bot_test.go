@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -570,5 +571,115 @@ func TestBotStatsSaysWhenFamiliarityWasCutShort(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `"partial":false`) {
 		t.Fatalf("json: %s", b)
+	}
+}
+
+func TestBotStatsJSONFoldsNewRecordsIntoTheLedger(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	runID, _, _ := oldRecords(t, home)
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats", "--json"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ledgerEvent(t, "review:"+runID); !ok {
+		t.Errorf("hrn bot stats --json left review:%s out of the ledger", runID)
+	}
+	var got struct {
+		XP int `json:"xp"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("hrn bot stats --json printed %q: %v", out, err)
+	}
+	events, _, err := game.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := game.Sum(events).Person; got.XP != want || want == 0 {
+		t.Errorf("hrn bot stats --json shows %d xp; the folded ledger holds %d:\n%s", got.XP, want, out)
+	}
+}
+
+func TestBotStatsJSONFoldsNewRecordsWhenTheGameIsOff(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	if err := os.MkdirAll(game.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(game.Dir(), "settings.json"), []byte(`{"enabled":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runID, _, _ := oldRecords(t, home)
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats", "--json"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(out)) != `{"version":1,"enabled":false}` {
+		t.Errorf("hrn bot stats --json with the game off printed %s", out)
+	}
+	if _, ok := ledgerEvent(t, "review:"+runID); !ok {
+		t.Errorf("hrn bot stats --json with the game off left review:%s out of the ledger", runID)
+	}
+}
+
+func TestBotStatsJSONWithRepoFoldsNewRecordsToo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	runID, _, _ := oldRecords(t, home)
+	if _, err := captureStdout(t, func() error { return cmdBot([]string{"stats", "--json", "--repo", "example/app"}) }); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ledgerEvent(t, "review:"+runID); !ok {
+		t.Errorf("hrn bot stats --json --repo left review:%s out of the ledger", runID)
+	}
+}
+
+func TestBotStatsJSONPrintsNothingWhenTheRecordsCannotBeFolded(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	oldRecords(t, home)
+	// Settings still load, so the failure comes from the fold's ledger read.
+	if err := os.MkdirAll(filepath.Join(game.Dir(), "events.jsonl"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return cmdBot([]string{"stats", "--json"}) })
+	if err == nil || !strings.Contains(err.Error(), "events.jsonl") || len(out) != 0 {
+		t.Errorf("hrn bot stats --json with an unreadable ledger = %v, printed %q; want an error naming events.jsonl and no JSON", err, out)
+	}
+}
+
+// The practice rebuild asks gh about unsettled reads; the JSON form must leave it to the text form.
+func TestBotStatsJSONCallsNoGh(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HRN_HOME", home)
+	oldRecords(t, home)
+	reps := filepath.Join(game.Dir(), "reps")
+	if err := os.MkdirAll(reps, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	answered := time.Now().UTC().AddDate(0, 0, -1)
+	date := answered.Format("2006-01-02")
+	rep := `{"date":"` + date + `","reads":[{"kind":"read","source":"owner/repo#1","attempt":1,"answer":"a","answered_at":"` + answered.Format(time.RFC3339) + `"}]}`
+	if err := os.WriteFile(filepath.Join(reps, date+".json"), []byte(rep), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "gh-called")
+	t.Setenv("HRN_TEST_GH_MARKER", marker)
+	fake, script := "gh", "#!/bin/sh\necho called > \"$HRN_TEST_GH_MARKER\"\n"
+	if runtime.GOOS == "windows" {
+		fake, script = "gh.bat", "@echo called>\"%HRN_TEST_GH_MARKER%\"\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(bin, fake), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, args := range [][]string{{"stats", "--json"}, {"stats", "--json", "--repo", "example/app"}} {
+		if _, err := captureStdout(t, func() error { return cmdBot(args) }); err != nil {
+			t.Fatal(err)
+		}
+		if pathExists(marker) {
+			t.Fatalf("hrn bot %s called gh", strings.Join(args, " "))
+		}
 	}
 }

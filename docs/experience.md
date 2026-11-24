@@ -220,8 +220,11 @@ the answer to a plan backend (a CLI backend, never the api backend).
 
 ## JSON stats
 
-`hrn bot stats --json` reads existing records without rebuilding the ledger or
-selecting an exercise; the only file it may write is `familiarity-cache.json`. It prints one JSON object, versioned by `version`
+`hrn bot stats --json` first folds new run, batch and eval records into the ledger, as
+the text form does, so a reader sees current numbers; it skips the practice rebuild (no
+`gh`, no network) and selects no exercise. It may write `events.jsonl`,
+`merged-scripts.json` and `familiarity-cache.json`, and fails with no JSON output if the
+records cannot be folded. It prints one JSON object, versioned by `version`
 (currently `1`). The version changes only when a reader would break; fields may
 be added within a version, so a reader ignores fields it does not know. When the game is off the object contains only `version` and
 `enabled: false`. Otherwise it contains `enabled: true`, `level`, total `xp`,
@@ -239,7 +242,7 @@ be incomplete; it is null only when it cannot be read. The command fails with an
 error on stderr and no JSON output if settings or the ledger cannot be read.
 
 `hrn bot stats --json --repo OWNER/NAME` answers for one repository and quickly: it
-skips the familiarity walk, which reads every run record, so `familiarity` is null.
+folds new records the same way but skips the familiarity walk, which reads every run record, so `familiarity` is null.
 It adds `repo` and `top`. `repo` has `name` (as given), `week` (delivery XP in the
 repository since `week_start`), `days` (35 integers, oldest first, today last: delivery
 XP per UTC day), `kinds` (how many counted delivery events of each kind those 35 days
