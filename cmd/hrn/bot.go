@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -258,8 +259,28 @@ func jsonFamiliarity(f game.Familiarity) *statsFamiliarity {
 
 // cmdBotStatsJSON prints the stats; given a repository it adds that repository's delivery and skips familiarity.
 func cmdBotStatsJSON(repo string) error {
+	records, err := game.LoadRecords()
+	if err != nil {
+		return err
+	}
 	settings, err := game.LoadSettings()
 	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	// Familiarity needs only the records, so it runs beside the fold to keep the call within readers' timeouts.
+	var familiarity *statsFamiliarity
+	var familiarityRead sync.WaitGroup
+	defer familiarityRead.Wait()
+	if settings.On() && repo == "" {
+		familiarityRead.Add(1)
+		go func() {
+			defer familiarityRead.Done()
+			familiarity = readStatsFamiliarity(records, now)
+		}()
+	}
+	// Readers of the JSON form get current numbers, so new records are folded in; the practice rebuild stays with the text form.
+	if err := game.Fold(records); err != nil {
 		return err
 	}
 	if !settings.On() {
@@ -275,7 +296,6 @@ func cmdBotStatsJSON(repo string) error {
 	if unreadable > 0 {
 		fmt.Fprintf(os.Stderr, "hrn bot stats: %d ledger lines could not be read and were left out\n", unreadable)
 	}
-	now := time.Now().UTC()
 	totals := game.Sum(events)
 	week := game.WeekStart(now)
 	weekly := totals.Since(week)
@@ -301,11 +321,8 @@ func cmdBotStatsJSON(repo string) error {
 	for _, badge := range totals.Badges {
 		badges = append(badges, game.BadgeName(badge.Key))
 	}
-	var familiarity *statsFamiliarity
-	// Familiarity walks every run record; a caller asking for one repository wants a quick answer.
-	if repo == "" {
-		familiarity = readStatsFamiliarity(now)
-	}
+	// Familiarity walks every run record, so a caller asking for one repository gets none.
+	familiarityRead.Wait()
 	result := struct {
 		Version   int    `json:"version"`
 		Enabled   bool   `json:"enabled"`
@@ -340,8 +357,8 @@ func cmdBotStatsJSON(repo string) error {
 }
 
 // readStatsFamiliarity is nil when familiarity cannot be read, with the reason on stderr.
-func readStatsFamiliarity(now time.Time) *statsFamiliarity {
-	f, err := game.ReadFamiliarity(context.Background(), now)
+func readStatsFamiliarity(records game.Records, now time.Time) *statsFamiliarity {
+	f, err := game.ReadFamiliarityFrom(context.Background(), records, now)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hrn bot stats: familiarity: %v\n", err)
 		return nil
