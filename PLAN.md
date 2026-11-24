@@ -297,6 +297,19 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-24: #1001, `hrn exec` accepts `skills` (PR #1003). A supervisor that measures a
+  repository skill with `hrn eval setup` (spec `"skills": true`) can now run its delegated claude
+  tasks the same way. Only claude lists the option, since it is the backend whose lean runs can
+  keep skills. Codex, the api backend and worker mode refuse the key as `unsupported` whenever it
+  is present, even as `false`, because presence is what a caller asked for. A continuation, a
+  fresh hand-over and a routed start take the new task's value and inherit nothing.
+- 2026-11-24: #998, `hrn knowledge propose -json` (PR #999). The summary is a contract for a
+  caller that retries by run: every run ID appears in exactly one of `reviewed`, `skipped`
+  (final: failed or timed out, another repository or purpose, before `-since`, its own review,
+  no such run), `deferred` (not judged this time: over `-limit`, incomplete, a batch task still
+  running, a record not written yet) or `failed` (its review call failed). Exit 3 means `failed`
+  is non-empty, and a draft from the other runs may still be written. Explicit `-run` IDs with
+  nothing eligible exit 0 with the JSON, so a caller does not retry them forever.
 - 2026-11-24: #975, hrn bot stats --json folds new runs into the ledger (PR #988). This revises
   the 2026-10-31 decision (#728; PR #730) that the JSON form is read-only with no ledger rebuild:
   its readers poll it, so its XP went stale while runs finished. A maintainer chose to fold in the
