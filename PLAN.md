@@ -297,6 +297,18 @@ Things kept but not active (2026-10-16). Each says what would bring it back.
   a maintainer approves the plan usage for that run.
 
 ## Decisions log
+- 2026-11-24: #977, knowledge proposals from runs that ended well (PR #994). `hrn knowledge
+  propose -request base.json -b claude|codex` reviews named runs, or an exact repository's recent
+  runs, with one read-only plan-backend review per run, and writes a draft import of the active
+  entries plus grounded new ones citing their run. Deviation from the issue: the draft keeps
+  `origin`, `reviewed_by` and `review_evidence` empty, because the server already refuses
+  model-generated imports; a maintainer reads and signs it before `hrn knowledge import`, and only
+  `admit` activates it. Automatic import would need a server change and a maintainer's decision.
+  A run counts only when it ended `ok`; a batch run also needs its task `pass`, no attempt error,
+  every gate passed, and, for a retry candidate, the win. Each new entry keeps only identifiers
+  found verbatim in the run's record values, and entries naming another run are dropped. The
+  client copies the server's import deny list (the server is its own module); the server still
+  decides. A CI flake in `internal/egress` seen on the way is #995.
 - 2026-11-23: #882, the first plugin in its own repository (PR #989), the third code slice of
   #878. The synthesizer from draft PR #572 moved to the public repository
   `cristiangirlea/hrn-search` as the plugin `hrn-search` with the capability `search`, released
