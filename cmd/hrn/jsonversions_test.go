@@ -11,6 +11,7 @@ import (
 
 	"github.com/cristiangirlea/harness/internal/batch"
 	"github.com/cristiangirlea/harness/internal/eval"
+	"github.com/cristiangirlea/harness/internal/flow"
 	"github.com/cristiangirlea/harness/internal/kernel"
 	"github.com/cristiangirlea/harness/internal/report"
 	"github.com/cristiangirlea/harness/internal/runlog"
@@ -32,6 +33,12 @@ func TestJSONOutputs(t *testing.T) {
 		func(w io.Writer) error { return printRunsJSON(w, []runlog.Record{rec}) })
 	testJSONOutput(t, "show", showJSON{Record: rec, Events: events},
 		func(w io.Writer) error { return printShowJSON(w, rec, events) })
+	fe := []flow.Event{{V: flow.Version, Seq: 1, Run: "run"}}
+	tree := []*flow.Node{{Step: "run", Kind: flow.KindRun, Run: "run"}}
+	testJSONOutput(t, "flow", flowDocument{Issues: issues, Events: fe, Tree: tree},
+		func(w io.Writer) error {
+			return printFlowJSON(w, flowDocument{Version: flow.Version, Issues: issues, Events: fe, Tree: tree})
+		})
 	testJSONOutput(t, "show_usage", usageJSON{Turns: turns},
 		func(w io.Writer) error { return printUsageJSON(w, turns) })
 	testJSONOutput(t, "batch", batchJSON{Result: &b},
@@ -46,6 +53,22 @@ func TestJSONOutputs(t *testing.T) {
 		func(w io.Writer) error { return printIssuesJSON(w, issues) })
 	testJSONOutput(t, "retrieval", retrievalJSON{RetrievalComparison: &c},
 		func(w io.Writer) error { return printRetrievalJSON(w, &c) })
+}
+
+func TestShowJSONPrintsAnEmptyEventListForARunWithoutEvents(t *testing.T) {
+	var out bytes.Buffer
+	if err := printShowJSON(&out, runlog.Record{ID: "run"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Events json.RawMessage `json:"events"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Events) != "[]" {
+		t.Errorf("events = %s, want []", got.Events)
+	}
 }
 
 func testJSONOutput[T any](t *testing.T, name string, unversioned T, emit func(io.Writer) error) {

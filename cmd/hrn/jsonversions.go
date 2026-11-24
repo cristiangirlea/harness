@@ -83,6 +83,10 @@ func printShowJSON(w io.Writer, rec runlog.Record, events []kernel.Event) error 
 	return writeIndentedJSON(w, showJSON{showVersion, rec, events})
 }
 
+func printFlowJSON(w io.Writer, doc flowDocument) error {
+	return writeIndentedJSON(w, doc)
+}
+
 func printUsageJSON(w io.Writer, turns []runlog.Turn) error {
 	if turns == nil {
 		turns = []runlog.Turn{}

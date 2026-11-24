@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "issues": [
+    {
+      "issue": "org/repo#3",
+      "state": "held"
+    }
+  ],
+  "events": [
+    {
+      "v": 1,
+      "seq": 1,
+      "t": "0001-01-01T00:00:00Z",
+      "run": "run",
+      "step": "",
+      "kind": ""
+    }
+  ],
+  "tree": [
+    {
+      "step": "run",
+      "kind": "run",
+      "run": "run",
+      "started": "0001-01-01T00:00:00Z"
+    }
+  ]
+}
