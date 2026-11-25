@@ -7,6 +7,8 @@
 **hrn** is one Go binary that hands a coding task to an agent (Claude Code, Codex, Gemini,
 opencode, agy, or its own Anthropic API loop), saves everything that happened, and lets you
 watch it live, replay it, run several in parallel, and score agents against each other.
+You can also [test whether a lesson from one run helps on other tasks](#test-a-lesson-from-a-run)
+before giving it to future agents.
 
 ![The hrn watch index: runs grouped by purpose, a running batch, and the runs list](docs/images/watch-index.png)
 
@@ -82,6 +84,21 @@ Updating an existing install is `hrn update`; see [hrn update](docs/commands.md#
 
 The Go code uses only the standard library. Agent CLIs are optional external programs: install
 the ones you want.
+
+## Test a lesson from a run
+
+Suppose an agent finds the fixture a repository's integration tests need. With the hrn control
+service configured, `hrn knowledge propose` can draft a note from the successful run and cite
+its source. You review the note and import it as a candidate. Then `hrn knowledge admit` runs
+the same held-out tasks with the current and proposed project knowledge. It compares pass rates
+and token use, activates a candidate that passes, and leaves an inconclusive result pending.
+You can roll back to the previous version. [Project knowledge commands](docs/commands.md#project-knowledge)
+
+In a separate retrieval pilot, Codex answered ten questions about a repository three times each,
+with and without retrieved project notes (60 runs). Human review found all 30 answers correct
+in each condition. Retrieval cut median model tokens per run by 44%. On the 12 runs where
+retrieval supplied no guide to the answer, the median increase over the paired run without
+retrieval was about 7%. [Pilot results](docs/retrieval-pilot-report.md)
 
 ## Where it fits
 
