@@ -102,8 +102,10 @@ retrieval was about 7%. [Pilot results](docs/retrieval-pilot-report.md)
 
 ## Where it fits
 
-hrn is one part of a small set of AdaNext tools. Only the first two links below exist in code
-today; the rest are planned, and each README says so.
+hrn runs the coding agent and records its work in AdaNext. The technical brief walks through
+how one agent hands work to another. In the engineering dossier, pages 4–10 follow a handoff
+through review and recovery, and pages 14–18 cover the 60-run retrieval pilot.
+[AdaNext engineering guides](https://github.com/cristiangirlea/adanext-guides)
 
 | Repository | How it relates to hrn | Status |
 |---|---|---|
