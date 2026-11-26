@@ -1,7 +1,6 @@
 # hrn: run coding agents, keep every run, compare them
 
 [![CI](https://github.com/cristiangirlea/harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cristiangirlea/harness/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/cristiangirlea/harness)](https://github.com/cristiangirlea/harness/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **hrn** is one Go binary that hands a coding task to an agent (Claude Code, Codex, Gemini,
